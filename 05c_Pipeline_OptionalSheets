@@ -28,6 +28,9 @@ function __normalizeHeaderText05c_(v) {
     .trim();
 }
 
+// Merge resolution choice:
+// - keep normalized required-columns constant + optional lastColOpt reader
+//   for deterministic metadata reads and lower repeated API calls.
 const __REQUIRED_SCHEMA_COLUMNS05C = Object.freeze(
   ['Claim Number', 'Start Date', 'End Date', 'Details'].map(__normalizeHeaderText05c_)
 );

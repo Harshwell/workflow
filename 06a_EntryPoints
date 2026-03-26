@@ -146,6 +146,7 @@ function buildRoutingIndex06_(routingMap) {
 
 function getUnmappedPartnerMinSubmissionDate06_() {
   // Cache per execution to avoid reparsing the same policy value repeatedly.
+  // Return defensive copies so callers cannot mutate cached Date by reference.
   if (typeof RUNTIME !== 'undefined' && RUNTIME && RUNTIME._unmappedPartnerMinSubmissionDate instanceof Date) {
     return new Date(RUNTIME._unmappedPartnerMinSubmissionDate.getTime());
   }
