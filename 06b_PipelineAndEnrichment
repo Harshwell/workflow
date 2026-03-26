@@ -1,0 +1,1486 @@
+/***************************************************************
+ * 06b_PipelineAndEnrichment.gs  (SPLIT FROM 06.gs)
+ * Pipeline orchestrator + enrichment helpers (RAW → Operational)
+ ***************************************************************/
+'use strict';
+/** =========================
+ * Pipeline Orchestrator
+ * ========================= */
+function runPipeline_(pic, fileIds, opts) {
+  const key = resolveSpreadsheetKey_(pic);
+  validateConfigForPic_(key);
+
+  const profileName = key || 'Master';
+  const options = opts || {};
+
+  // Flow context (default: main). Used by enrichment/sorting and Overview tagging.
+  const flowName = (options.flow || options.Flow || options.flowName || 'main').toString().trim().toLowerCase();
+  try { if (typeof RUNTIME !== 'undefined' && RUNTIME) RUNTIME.flowName = flowName; } catch (e) {}
+
+  // Defer trashing uploaded files until end of a successful run.
+  try {
+    if (typeof RUNTIME !== 'undefined' && RUNTIME) {
+      RUNTIME.deferTrashUploadedFiles = !!(PIPELINE_FLAGS && PIPELINE_FLAGS.TRASH_UPLOADED_FILES) && (typeof DRY_RUN === 'undefined' || !DRY_RUN);
+      if (!Array.isArray(RUNTIME.filesToTrash)) RUNTIME.filesToTrash = [];
+    }
+  } catch (e) {}
+
+  // Single-master: always enable optional processors unless explicitly disabled elsewhere.
+  RUNTIME.enableEvBike = (RUNTIME.enableEvBike !== false);
+  RUNTIME.enableB2B = (RUNTIME.enableB2B !== false);
+
+  setProgress_(0.02, 'Opening master workbook…');
+
+  const segOpen = startSegment_('OPEN', 'Open target workbook');
+  const ssId = (CONFIG && CONFIG.spreadsheets && CONFIG.spreadsheets[key]) ? CONFIG.spreadsheets[key] : (CONFIG && CONFIG.masterSpreadsheetId);
+  const ss = SpreadsheetApp.openById(ssId);
+  endSegment_(segOpen, 'ok', 'spreadsheet=' + profileName, 'INFO');
+
+  // Ensure sheets + validation/formatting
+  setProgress_(0.06, 'Ensuring sheets/layout…');
+  const segEnsure = startSegment_('ENSURE', 'Ensure sheets/layout');
+  try { ensureMasterSheets_(ss); } catch (e) {}
+  try { if (typeof ensurePicSheets_ === 'function') ensurePicSheets_(ss, profileName); } catch (e) {} // best-effort for legacy templates
+  try { validateWorkbook_(ss, profileName); } catch (e) {}
+  endSegment_(segEnsure, 'ok', 'profile=MASTER', 'INFO');
+
+  // Best-effort: Tag current run flow in Overview sheet (non-destructive).
+  try { tagOverviewFlow06b_(ss, profileName, flowName); } catch (e) {}
+
+  // Resolve main/aging files (best-effort; single-master defaults to first file as main)
+  setProgress_(0.10, 'Resolving uploaded files…');
+  const segClass = startSegment_('FILES', 'Resolve files');
+
+  const idsAll = Array.isArray(fileIds) ? fileIds.map(String).map(s => s.trim()).filter(Boolean) : [];
+  let buckets = { main: [], aging: [], agingStd: [], unknown: [] };
+
+  try {
+    if (typeof classifyFiles_ === 'function') buckets = classifyFiles_(idsAll);
+  } catch (e) {}
+
+  if (!buckets.main || !buckets.main.length) {
+    buckets.main = idsAll.length ? [idsAll[0]] : [];
+  }
+
+  endSegment_(
+    segClass,
+    'files=' + idsAll.length + ' main=' + (buckets.main ? buckets.main.length : 0) +
+      ' aging=' + ((buckets.aging || []).length) + ' agingStd=' + ((buckets.agingStd || []).length),
+    (buckets.main && buckets.main.length ? 'OK' : 'No file to ingest.'),
+    (buckets.main && buckets.main.length ? 'INFO' : 'ERROR')
+  );
+
+  if (!buckets.main || !buckets.main.length) {
+    if (PIPELINE_FLAGS.FAIL_IF_MAIN_NOT_FOUND) throw new Error('No uploaded file found (fileIds empty).');
+    return { severity: 'WARN', message: 'No uploaded file found; run skipped.', routedTotal: 0 };
+  }
+
+  // Parse main + aging
+  setProgress_(0.18, 'Parsing main/aging files…');
+  const segParse = startSegment_('PARSE', 'Parse files');
+
+  const mainDataRaw = parseUploadedFile_(buckets.main[0], 'PARSE_MAIN');
+  const mainData = coerceDatasetToRawSchema_(mainDataRaw);
+
+  let agingStdMap = null, agingMap = null;
+  if (buckets.agingStd.length) {
+    const aStd = parseUploadedFile_(buckets.agingStd[0], 'PARSE_AGING_STD');
+    agingStdMap = buildAgingMap_(coerceDatasetToRawSchema_(aStd), CONFIG.headers.claimNumber);
+  }
+  if (buckets.aging.length) {
+    const a = parseUploadedFile_(buckets.aging[0], 'PARSE_AGING');
+    agingMap = buildAgingMap_(coerceDatasetToRawSchema_(a), CONFIG.headers.claimNumber);
+  }
+  RUNTIME.hasAgingFiles = !!(agingStdMap || agingMap);
+
+  endSegment_(
+    segParse,
+    'mainRows=' + (mainData.rows ? mainData.rows.length : 0),
+    'agingFiles=' + (RUNTIME.hasAgingFiles ? 'yes' : 'no'),
+    'INFO'
+  );
+
+  // Raw sheet prep
+  setProgress_(0.26, 'Preparing Raw Data…');
+  const segRaw = startSegment_('RAW', 'Prepare Raw Data');
+
+  const rawSheetName = (CONFIG && CONFIG.masterRawSheetName) ? CONFIG.masterRawSheetName : 'Raw Data';
+  const rawSheet = ss.getSheetByName(rawSheetName);
+  if (!rawSheet) throw new Error(rawSheetName + ' sheet missing.');
+
+  // Ensure raw headers (before we read/merge carry-forward)
+  let headerIndexRaw = ensureRawHeaders_(rawSheet, mainData.header || []);
+  // ensure additional manual tail columns exist (per 2026 spec)
+  ensureRawTailColumns06_(rawSheet);
+  // Ensure Remarks column exists in Raw Data for persistence.
+  try { ensureRawRemarksColumn06b_(rawSheet); } catch (e) {}
+  const rawHeader = getRawHeader_(rawSheet);
+  headerIndexRaw = buildHeaderIndex_(rawHeader);
+
+  // Apply RAW number formats (bounded rows, buffer-safe)
+  applyRawSchemaFormats_(rawSheet, rawHeader, (mainData.rows ? mainData.rows.length : 0), 300);
+
+  // Carry forward from existing Raw
+  const carry = buildRawCarryForwardMap_(rawSheet, headerIndexRaw);
+
+  // Clear raw contents + write main columns
+  clearRawDataContents_(rawSheet);
+  writeMainDataToRaw_(rawSheet, mainData.header || [], mainData.rows || [], headerIndexRaw);
+
+  // Build in-memory rawValues aligned to rawHeader (avoid re-read)
+  const rawValues = buildRawValuesFromMain_(rawHeader, headerIndexRaw, mainData.header || [], mainData.rows || []);
+
+  // Apply carry-forward
+  applyCarryForwardToRawValues_(rawValues, headerIndexRaw, carry);
+
+  // DB classification (OLD/NEW) based on Claim Number codes (SFP/SFX/SMR => OLD; VVMAR/GADLD => NEW)
+  try { applyDbClassification06_(rawValues, headerIndexRaw, carry); } catch (eDb) { try { logLine_('WARN', 'DB classify failed', '', String(eDb), 'WARN'); } catch (e2) {} }
+
+  // Persist Remarks: backup from operational sheets into in-memory Raw (non-empty only).
+  // This makes Main/Form idempotent even if Raw is fully rewritten.
+  try {
+    const rb = backupRemarksOpsToRawInMemory06b_(ss, rawValues, headerIndexRaw, profileName);
+    try { logLine_('REMARKS', 'Backup ops→raw', String(profileName || ''), 'updated=' + (rb && rb.updated != null ? rb.updated : 0), 'INFO'); } catch (eLog) {}
+  } catch (eRemBk) {
+    try { logLine_('WARN', 'Remarks backup failed', '', String(eRemBk), 'WARN'); } catch (e2) {}
+  }
+
+  endSegment_(segRaw, 'rows=' + rawValues.length, 'carryClaims=' + carry.count, 'INFO');
+
+  let didFullBackup = false;
+
+  // Backup ops -> raw
+  if (PIPELINE_FLAGS.ENABLE_BACKUP_FROM_OPS) {
+    setProgress_(0.34, 'Backing up ops fields…');
+    const segBk = startSegment_('BKUP', 'Backup ops -> raw (full format)');
+    const bk = backupOpsToRawFull_(ss, rawSheet, rawValues, headerIndexRaw, profileName);
+    didFullBackup = true;
+    endSegment_(segBk, 'updated=' + bk.updated, bk.notes || '', 'INFO');
+  }
+
+  // Mutate raw in memory
+  setProgress_(0.42, 'Mutating Raw (aging/derived)…');
+  const segMut = startSegment_('MUT', 'Mutate raw in memory');
+
+  let assocMap = { Meilani: new Set(), Farhan: new Set(), Suci: new Set() };
+  try { assocMap = loadAssociateMapping_(); } catch (e) {}
+
+  const mut = mutateRawInMemory_(rawValues, headerIndexRaw, agingStdMap, agingMap, assocMap);
+
+  // Mapping-based details are deprecated in single-master (mapping disabled)
+  if (CONFIG && CONFIG.mappingEnabled) {
+    if (mut.unknownRowsForLog && mut.unknownRowsForLog.length) {
+      appendDetailsRows_(mut.unknownRowsForLog.map(x => ({
+        targetSheet: profileName + ' - Unmapped Partner',
+        rowNumber: x.rowNumber,
+        claim: x.claim || '',
+        partner: x.partner || '',
+        lastStatus: x.lastStatus || '',
+        reason: 'Partner is not mapped to any Associate (Associate left blank).',
+        submissionDateVal: x.submissionDateVal
+      })), { profile: profileName });
+    }
+  }
+
+  endSegment_(
+    segMut,
+    'ok',
+    (RUNTIME.hasAgingFiles ? 'agingApplied' : 'agingComputedOrSkipped'),
+    'INFO'
+  );
+
+  // Write back only derived columns
+  setProgress_(0.52, 'Writing back derived Raw columns…');
+  const segWr = startSegment_('RAW_W', 'Write raw derived columns');
+
+  const colsToWrite = [];
+
+  // Resolve derived columns robustly to support renamed headers:
+  // LSA -> Last Status Aging
+  // ALA -> Activity Log Aging
+  const idxInsuranceCodeW = resolveRawIdx06_(headerIndexRaw, [
+    (CONFIG && CONFIG.headers && CONFIG.headers.insuranceCode) ? CONFIG.headers.insuranceCode : null,
+    'Insurance Code',
+    'insurance_code',
+    'Insurance'
+  ]);
+  pushIdx_(colsToWrite, idxInsuranceCodeW);
+
+  const idxLastStatusAgingW = resolveRawIdx06_(headerIndexRaw, [
+    (CONFIG && CONFIG.headers && CONFIG.headers.lastStatusAging) ? CONFIG.headers.lastStatusAging : null,
+    'Last Status Aging',
+    'LSA',
+    'last_status_aging'
+  ]);
+  pushIdx_(colsToWrite, idxLastStatusAgingW);
+
+  const idxActivityLogAgingW = resolveRawIdx06_(headerIndexRaw, [
+    (CONFIG && CONFIG.headers && CONFIG.headers.activityLogAging) ? CONFIG.headers.activityLogAging : null,
+    'Activity Log Aging',
+    'ALA',
+    'activity_log_aging'
+  ]);
+  pushIdx_(colsToWrite, idxActivityLogAgingW);
+
+  const idxClaimSubmittedDtW = resolveRawIdx06_(headerIndexRaw, [
+    (CONFIG && CONFIG.headers && CONFIG.headers.claimSubmittedDatetime) ? CONFIG.headers.claimSubmittedDatetime : null,
+    'Claim Submitted Datetime',
+    'claim_submitted_datetime',
+    'Claim Submitted Date',
+    'claim_submitted_date'
+  ]);
+  pushIdx_(colsToWrite, idxClaimSubmittedDtW);
+
+  // Associate is optional (do not create a new column here; write only if it already exists)
+  const idxAssociateW = resolveRawIdx06_(headerIndexRaw, [
+    (CONFIG && CONFIG.headers && CONFIG.headers.associate) ? CONFIG.headers.associate : null,
+    'Associate'
+  ]);
+  pushIdx_(colsToWrite, idxAssociateW);
+  pushIdx_(colsToWrite, headerIndexRaw['Q-L (Months)']);
+  pushIdx_(colsToWrite, headerIndexRaw['M-L (Months)']);
+  pushIdx_(colsToWrite, headerIndexRaw['M-Q (Months)']);
+  pushIdx_(colsToWrite, headerIndexRaw['Update Status Asso']);
+  pushIdx_(colsToWrite, headerIndexRaw['Timestamp Asso']);
+  pushIdx_(colsToWrite, headerIndexRaw['Update Status Admin']);
+  pushIdx_(colsToWrite, headerIndexRaw['Timestamp Admin']);
+
+  pushIdx_(colsToWrite, headerIndexRaw[CONFIG.headers.orColumn]);
+  if (!didFullBackup) pushIdx_(colsToWrite, headerIndexRaw[CONFIG.headers.updateStatus]);
+  pushIdx_(colsToWrite, headerIndexRaw[CONFIG.headers.timestamp]);
+  pushIdx_(colsToWrite, headerIndexRaw[CONFIG.headers.status]);
+
+  // DB (OLD/NEW) — write if exists in Raw header
+  const idxDbRaw = resolveRawIdx06_(headerIndexRaw, [
+    (CONFIG && CONFIG.headers && (CONFIG.headers.db || CONFIG.headers.dbClass || CONFIG.headers.dbStatus))
+      ? (CONFIG.headers.db || CONFIG.headers.dbClass || CONFIG.headers.dbStatus)
+      : null,
+    'DB'
+  ]);
+  pushIdx_(colsToWrite, idxDbRaw);
+
+  // Remarks — ensure persisted in Raw Data
+  const idxRemarksRaw = resolveRawIdx06_(headerIndexRaw, [
+    (CONFIG && CONFIG.headers && (CONFIG.headers.remarks || CONFIG.headers.remark)) ? (CONFIG.headers.remarks || CONFIG.headers.remark) : null,
+    'Remarks',
+    'remarks',
+    'Remark'
+  ]);
+  pushIdx_(colsToWrite, idxRemarksRaw);
+
+  writeRawColumns_(rawSheet, rawValues, colsToWrite);
+  endSegment_(segWr, 'cols=' + Array.from(new Set(colsToWrite)).length, 'ok', 'INFO');
+
+  // SAFETY GATE: Do not clear ops if 0 routable rows
+  const pre = preflightRoutableCount_(rawValues, headerIndexRaw, null);
+  if (!pre.total) {
+    logLine_('SAFE', 'Skip clear+route', '0 routable', pre.reason, 'WARN');
+    appendDetailsRows_([{
+      targetSheet: profileName + ' - Pipeline',
+      claim: '',
+      partner: '',
+      lastStatus: '',
+      reason: 'Safety stop: operational sheets NOT cleared because no routable rows (' + pre.reason + ').',
+      submissionDateVal: ''
+    }], { profile: profileName });
+
+    // Finalize Raw Data column order (non-destructive)
+    try { reorderRawDataColumns06_(rawSheet); } catch (eR) { try { logLine_('WARN', 'Raw Data reorder failed', '', String(eR), 'WARN'); } catch (e2) {} }
+
+    setProgress_(1.0, 'Done (safety stop).');
+    return {
+      severity: 'WARN',
+      message: '0 routable rows; ops not cleared.',
+      pic: profileName,
+      routedTotal: 0,
+      routedPerSheet: {},
+      b2bCount: 0,
+      specialCaseCount: 0,
+      evBikeCount: 0,
+      unknownFiles: buckets.unknown || []
+    };
+  }
+
+  
+  // Snapshot user-managed columns (rich text + wrap) from ops BEFORE clearing.
+  // This preserves per-cell formatting that is not representable in Raw (e.g., Wrap Strategy).
+  let opsManualSnapshot = null;
+  try {
+    if (typeof snapshotOpsManualColumnsRich06c_ === 'function') {
+      opsManualSnapshot = snapshotOpsManualColumnsRich06c_(ss, profileName);
+    }
+  } catch (eSnap) {}
+
+// Clear operational sheets and route
+  setProgress_(0.60, 'Clearing operational sheets…');
+  const segClr = startSegment_('CLR', 'Clear operational sheets');
+  clearOperationalSheets_(ss, profileName);
+  endSegment_(segClr, 'ok', '', 'INFO');
+
+  setProgress_(0.68, 'Routing to operational sheets…');
+  const segRoute = startSegment_('ROUTE', 'Route raw -> ops');
+  const routeRes = routeRawToOperationalSheetsInMemory_(ss, rawValues, headerIndexRaw, profileName);
+
+  if (routeRes.missingStatus && routeRes.missingStatus.length) {
+    appendDetailsRows_(routeRes.missingStatus.map(x => ({
+      targetSheet: profileName + ' - Raw Data',
+      rowNumber: x.rowNumber,
+      claim: x.claim || '',
+      partner: '',
+      lastStatus: '',
+      reason: 'Missing last_status in Raw Data row.',
+      submissionDateVal: x.submissionDateVal
+    })), { profile: profileName });
+  }
+
+  endSegment_(
+    segRoute,
+    'total=' + routeRes.total,
+    'unknown=' + (routeRes.unknown ? routeRes.unknown.length : 0) + ' missingStatus=' + (routeRes.missingStatus ? routeRes.missingStatus.length : 0),
+    (routeRes.total ? 'INFO' : 'WARN')
+  );
+
+  // Apply template DV + formats to operational sheets
+  try { applyTemplateRowToOperationalSheets_(ss, profileName); } catch (e) {}
+
+  // Round-trip restore operational fields from Raw backup AFTER clear+route.
+  if (PIPELINE_FLAGS.ENABLE_BACKUP_FROM_OPS && didFullBackup) {
+    try { restoreOpsFieldsFromRawBackup_(ss, rawSheet, headerIndexRaw, profileName); } catch (e) {}
+  }
+
+  // Restore Update Status rich text in operational sheets
+  if (PIPELINE_FLAGS.ENABLE_BACKUP_FROM_OPS && didFullBackup) {
+    try { applyUpdateStatusRichTextToOperational_(ss, rawSheet, headerIndexRaw, profileName); } catch (e) {}
+  }
+
+  // Restore Remarks rich text in operational sheets
+  if (PIPELINE_FLAGS.ENABLE_BACKUP_FROM_OPS && didFullBackup) {
+    try { if (typeof applyRemarksRichTextToOperational_ === 'function') applyRemarksRichTextToOperational_(ss, rawSheet, headerIndexRaw, profileName); } catch (e) {}
+  }
+
+  
+  // Restore per-cell formatting (wrap + rich text) from pre-clear snapshot (best effort).
+  try {
+    if (opsManualSnapshot && typeof restoreOpsManualColumnsRich06c_ === 'function') {
+      restoreOpsManualColumnsRich06c_(ss, profileName, opsManualSnapshot);
+    }
+  } catch (eSnapRestore) {}
+
+// Re-apply Claim Number markers AFTER template format copy
+  try { applyOperationalClaimHighlightsByRaw_(ss, rawValues, headerIndexRaw, profileName); } catch (e) {}
+
+  // Post-route enrichment: ensure required columns exist + fill from Raw
+  // - Optional: Activity Log (from Raw Data: last_activity_log)
+  // - Mandatory: Status Type (derived from Last Status)
+  // - Optional: Last Status Date (date-only for main/form; datetime for sub elsewhere)
+  try { enrichOperationalSheetsFromRaw06_(ss, rawValues, headerIndexRaw, profileName, { flow: flowName }); } catch (eEn) { try { logLine_('WARN', 'Ops enrichment failed', '', String(eEn), 'WARN'); } catch (e2) {} }
+
+  // Remarks values are restored by restoreOpsFieldsFromRawBackup_ (value-level) and applyRemarksRichTextToOperational_ (format-level).
+
+  // 2026 patch: SC enrichment (Branch autofill + Finish Type tagging)
+  // Safe-call: functions live in 06c; do not fail pipeline if missing.
+  try {
+    if (typeof autofillBranchInScSheets06_ === 'function') autofillBranchInScSheets06_(ss);
+  } catch (eBr) { try { logLine_('WARN', 'SC Branch autofill failed', '', String(eBr), 'WARN'); } catch (e2) {} }
+
+  try {
+    if (typeof applyFinishTypeInScSheets06_ === 'function') applyFinishTypeInScSheets06_(ss);
+  } catch (eFin) { try { logLine_('WARN', 'SC Finish Type tagging failed', '', String(eFin), 'WARN'); } catch (e2) {} }
+
+  // Exclusion: recompute TAT
+  let exTatCount = 0;
+  try { exTatCount = recomputeExclusionTat_(ss, profileName) || 0; } catch (e) {}
+
+  // Optional sheets (always enabled in master)
+  let b2bCount = 0, evCount = 0, scCount = 0;
+  let scMetrics = {};
+
+  setProgress_(0.78, 'Optional sheets…');
+  const segOpt = startSegment_('OPT', 'Process optional sheets');
+
+  if (RUNTIME.enableB2B) {
+    try { b2bCount = processB2B_(ss, rawValues, headerIndexRaw, profileName) || 0; } catch (e1) {
+      try { logLine_('ERR', 'B2B failed', String(e1)); } catch (e) {}
+    }
+  }
+
+  try {
+    const sc = processSpecialCase_(ss, rawValues, headerIndexRaw, profileName);
+    scCount = (sc && sc.count) ? sc.count : 0;
+    scMetrics = (sc && sc.metrics) ? sc.metrics : {};
+    try { logInfo_('SC_METRICS', 'count=' + scCount + ' ' + JSON.stringify(scMetrics)); } catch (e) {}
+  } catch (e2) {
+    try { logLine_('ERR', 'Special Case failed', String(e2)); } catch (e) {}
+  }
+
+  if (RUNTIME.enableEvBike) {
+    try { evCount = processEVBike_(ss, rawValues, headerIndexRaw, profileName) || 0; } catch (e3) {
+      try { logLine_('ERR', 'EV-Bike failed', String(e3)); } catch (e) {}
+    }
+  }
+
+  endSegment_(segOpt, 'b2b=' + b2bCount + ' sc=' + scCount + ' ev=' + evCount, scMetrics || '', 'INFO');
+
+  // Finalize Raw Data column order
+  try { reorderRawDataColumns06_(rawSheet); } catch (eR) { try { logLine_('WARN', 'Raw Data reorder failed', '', String(eR), 'WARN'); } catch (e2) {} }
+
+  // Trash uploaded files only after successful run (best effort)
+  try {
+    if (PIPELINE_FLAGS && PIPELINE_FLAGS.TRASH_UPLOADED_FILES && (typeof DRY_RUN === 'undefined' || !DRY_RUN)) {
+      if (typeof flushTrashQueueBestEffort_ === 'function') flushTrashQueueBestEffort_('MAIN');
+    }
+  } catch (eT) { try { logLine_('WARN', 'Trash flush failed', '', String(eT), 'WARN'); } catch (e2) {} }
+
+  // Sort (preserve filter; enforce Last Status Date then Last Status)
+  setProgress_(0.90, 'Sorting sheets…');
+  const segSort = startSegment_('SORT', 'Sort sheets');
+  try { sortOperationalSheetsPreserveFilter06b_(ss, profileName); } catch (e) {
+    try { sortOperationalSheets_(ss, profileName); } catch (e2) {}
+  }
+  endSegment_(segSort, 'ok', '', 'INFO');
+
+  setProgress_(1.0, 'Done.');
+  logLine_(
+    'DONE',
+    'Pipeline finished',
+    'routed=' + (routeRes.total || 0) + ' | b2b=' + b2bCount + ' | sc=' + scCount + ' | ev=' + evCount,
+    (buckets.unknown.length ? ('UnknownFiles=' + buckets.unknown.length) : 'OK'),
+    'INFO'
+  );
+
+  return {
+    severity: 'INFO',
+    message: 'OK',
+    pic: profileName,
+    routedTotal: routeRes.total || 0,
+    routedPerSheet: routeRes.perSheet || {},
+    b2bCount: b2bCount,
+    specialCaseCount: scCount,
+    evBikeCount: evCount,
+    exclusionTatCount: exTatCount,
+    unknownFiles: buckets.unknown || []
+  };
+}
+
+/** =========================
+ * Helpers (local to 06)
+ * ========================= */
+function pushIdx_(arr, idx0) {
+  if (idx0 == null) return;
+  if (idx0 < 0) return;
+  arr.push(idx0);
+}
+
+function normalizeHeaderKey06_(s) {
+  // Normalize header text to reduce false negatives caused by NBSP/extra spaces/BOM.
+  const t = String(s == null ? '' : s)
+    .replace(/^\uFEFF/, '')      // BOM
+    .replace(/\u00A0/g, ' ')     // NBSP
+    .replace(/\s+/g, ' ')        // collapse spaces
+    .trim()
+    .toLowerCase();
+  return t.replace(/[^a-z0-9]+/g, '');
+}
+
+/**
+ * Resolve column index from headerIndex using candidates (exact match first, then fuzzy normalize).
+ * Returns 0-based index or null.
+ */
+function resolveRawIdx06_(headerIndex, candidates) {
+  if (!headerIndex) return null;
+  const cand = (candidates || []).filter(Boolean).map(x => String(x).trim()).filter(Boolean);
+
+  for (let i = 0; i < cand.length; i++) {
+    const k = cand[i];
+    if (headerIndex[k] != null) return headerIndex[k];
+  }
+
+  if (!cand.length) return null;
+
+  const want = cand.map(normalizeHeaderKey06_).filter(Boolean);
+  if (!want.length) return null;
+
+  const keys = Object.keys(headerIndex);
+  for (let i = 0; i < keys.length; i++) {
+    const hk = keys[i];
+    const nh = normalizeHeaderKey06_(hk);
+    for (let j = 0; j < want.length; j++) {
+      if (nh === want[j]) return headerIndex[hk];
+    }
+  }
+  return null;
+}
+
+function toNumber06_(v) {
+  if (v == null || v === '') return null;
+  if (typeof v === 'number') return isFinite(v) ? v : null;
+  // avoid Date
+  if (Object.prototype.toString.call(v) === '[object Date]') return null;
+
+  // Money strings (e.g. 1.000.000 / 750,000 / Rp 1.000.000)
+  const s = String(v).trim();
+  const digits = s.replace(/[^0-9-]+/g, '');
+  if (!digits || digits === '-' ) return null;
+
+  const n = Number(digits);
+  return isFinite(n) ? n : null;
+}
+
+function buildRawClaimMap06_(rawValues, idxClaimRaw) {
+  const map = Object.create(null);
+  if (!rawValues || !rawValues.length || idxClaimRaw == null) return map;
+  for (let i = 0; i < rawValues.length; i++) {
+    const c = String((rawValues[i] && rawValues[i][idxClaimRaw]) || '').trim();
+    if (!c) continue;
+    const k = c.toUpperCase();
+    // first-win to keep deterministic
+    if (map[k] == null) map[k] = rawValues[i];
+  }
+  return map;
+}
+
+function buildOpsHeaderIndex06_(headerRow) {
+  const header = Array.isArray(headerRow) ? headerRow : [];
+  const byExact = Object.create(null);
+  const byNorm = Object.create(null);
+  for (let i = 0; i < header.length; i++) {
+    const h = String(header[i] == null ? '' : header[i]).trim();
+    if (!h) continue;
+    byExact[h] = i;
+    byNorm[normalizeHeaderKey06_(h)] = i;
+  }
+  return { byExact: byExact, byNorm: byNorm, header: header };
+}
+
+function resolveOpsColIdx06_(headerIndex, candidates) {
+  if (!headerIndex) return -1;
+  const cand = (candidates || []).filter(Boolean).map(x => String(x).trim()).filter(Boolean);
+  for (let i = 0; i < cand.length; i++) {
+    const k = cand[i];
+    if (headerIndex.byExact[k] != null) return headerIndex.byExact[k];
+  }
+  for (let i = 0; i < cand.length; i++) {
+    const nk = normalizeHeaderKey06_(cand[i]);
+    if (nk && headerIndex.byNorm[nk] != null) return headerIndex.byNorm[nk];
+  }
+  return -1;
+}
+
+/** Ensure headers exist at the far right (non-destructive). Returns true if modified. */
+function ensureHeadersAtEnd06_(sh, headersToEnsure) {
+  if (!sh) return false;
+  const list = (headersToEnsure || []).map(h => String(h || '').trim()).filter(Boolean);
+  if (!list.length) return false;
+
+  const lastCol = sh.getLastColumn();
+  if (lastCol < 1) return false;
+
+  const header = sh.getRange(1, 1, 1, lastCol).getValues()[0].map(v => String(v == null ? '' : v).trim());
+  const missing = list.filter(h => header.indexOf(h) === -1);
+  if (!missing.length) return false;
+
+  if (DRY_RUN) return false;
+  sh.insertColumnsAfter(lastCol, missing.length);
+  const hdrRg = sh.getRange(1, lastCol + 1, 1, missing.length);
+  hdrRg.setValues([missing]);
+  // Spec: operational headers must be horizontally centered and vertically middle.
+  try { hdrRg.setHorizontalAlignment('center').setVerticalAlignment('middle'); } catch (e) {}
+  return true;
+}
+
+/**
+ * DB helper:
+ * Determine DB value based on Claim Number (case-insensitive).
+ * - OLD: contains SFP, SFX, SMR
+ * - NEW: contains VVMAR, GADLD
+ * - '' : no match (leave DB as-is)
+ */
+function computeDbValueFromClaimNumber06_(claimNumber) {
+  const s = String(claimNumber == null ? '' : claimNumber).trim().toUpperCase();
+  if (!s) return '';
+  if (s.indexOf('SFP') !== -1 || s.indexOf('SFX') !== -1 || s.indexOf('SMR') !== -1) return 'OLD';
+  if (s.indexOf('VVMAR') !== -1 || s.indexOf('GADLD') !== -1) return 'NEW';
+  return '';
+}
+
+/**
+ * Normalize Insurance name in Operational sheets to a short code.
+ * Case-insensitive substring matching (per 2026 spec).
+ * If no match, returns the original trimmed value.
+ */
+function normalizeInsuranceShort06_(insuranceVal) {
+  const s0 = String(insuranceVal == null ? '' : insuranceVal).trim();
+  if (!s0) return '';
+  const s = s0.toLowerCase();
+
+  if (s.indexOf('great eastern general insurance') !== -1) return 'GEGI';
+  if (s.indexOf('tokio marine') !== -1) return 'TMI';
+  if (s.indexOf('msig indonesia') !== -1) return 'MSIG';
+  if (s.indexOf('seainsure') !== -1) return 'MIGI';
+  if (s.indexOf('sompo insurance') !== -1) return 'Sompo';
+  if (s.indexOf('axa mandiri insurance') !== -1) return 'AXA';
+  if (s.indexOf('simas insurtech') !== -1) return 'Simas';
+
+  return s0;
+}
+
+/**
+ * DB classification (OLD/NEW) by Claim Number code:
+ * - OLD if Claim Number contains: SFP, SFX, SMR
+ * - NEW if Claim Number contains: VVMAR, GADLD
+ *
+ * Note:
+ * - Only sets DB when a rule matches (does not clear DB for other claims).
+ */
+function applyDbClassification06_(rawValues, headerIndexRaw, carry) {
+  if (!rawValues || !rawValues.length || !headerIndexRaw) return;
+
+  const idxClaim = resolveRawIdx06_(headerIndexRaw, [
+    (CONFIG && CONFIG.headers && CONFIG.headers.claimNumber) ? CONFIG.headers.claimNumber : null,
+    'claim_number',
+    'Claim Number'
+  ]);
+  const idxDb = resolveRawIdx06_(headerIndexRaw, [
+    (CONFIG && CONFIG.headers && (CONFIG.headers.db || CONFIG.headers.dbClass || CONFIG.headers.dbStatus))
+      ? (CONFIG.headers.db || CONFIG.headers.dbClass || CONFIG.headers.dbStatus)
+      : null,
+    'DB'
+  ]);
+  if (idxClaim == null || idxDb == null) return;
+
+  for (let i = 0; i < rawValues.length; i++) {
+    const row = rawValues[i];
+    const claim = String(row[idxClaim] || '').trim();
+    if (!claim) continue;
+
+    const db = computeDbValueFromClaimNumber06_(claim);
+    if (!db) continue;
+
+    // Enforce when a rule matches (even if DB was previously filled by older logic).
+    row[idxDb] = db;
+  }
+}
+
+/**
+ * Enrich operational sheets (non-optional) with:
+ * - Derived/Raw passthrough: DB, Partner Name, Insurance, Device Type, Service Center,
+ *   Activity Log Aging (ALA), Last Status Aging (LSA), TAT (only if column exists)
+ * - Mandatory new columns (insert if missing): Product, Device Brand, IMEI/SN,
+ *   Sum Insured Amount, Claim Amount, Claim Own Risk Amount, Nett Claim Amount, % Approval
+ *
+ * Notes (2026 spec):
+ * - Do NOT add Associate columns to Operational sheets or Raw Data.
+ * - Do NOT add Update Status/Timestamp columns to Ask Detail / Start / Finish.
+ */
+function enrichOperationalSheetsFromRaw06_(ss, rawValues, headerIndexRaw, pic, opts) {
+  if (DRY_RUN) return;
+  if (!ss || !rawValues || !rawValues.length || !headerIndexRaw) return;
+
+  const isAdmin = (pic === 'Admin');
+  let sheets = isAdmin
+    ? (CONFIG && CONFIG.sheetsByPic && CONFIG.sheetsByPic.adminOperational ? CONFIG.sheetsByPic.adminOperational : [])
+    : (CONFIG && CONFIG.sheetsByPic && CONFIG.sheetsByPic.picOperational ? CONFIG.sheetsByPic.picOperational : []);
+
+  if (!Array.isArray(sheets) || !sheets.length) {
+    sheets = ['Submission','Ask Detail','OR - OLD','Start','Finish','SC - Farhan','SC - Meilani','SC - Ivan','PO','Exclusion'];
+  }
+
+  // Flow context for formatting decisions (default: main)
+  const flowName = ((opts && (opts.flow || opts.Flow || opts.flowName)) || (typeof RUNTIME !== 'undefined' && RUNTIME ? RUNTIME.flowName : '') || 'main')
+    .toString().trim().toLowerCase();
+
+  // Only core operational sheets (exclude optional modules)
+  sheets = sheets.filter(n => n !== 'B2B' && n !== 'EV-Bike' && n !== 'Special Case' && n !== 'Raw Data');
+
+  const idxClaimRaw = resolveRawIdx06_(headerIndexRaw, [
+    (CONFIG && CONFIG.headers && CONFIG.headers.claimNumber) ? CONFIG.headers.claimNumber : null,
+    'claim_number',
+    'Claim Number'
+  ]);
+  if (idxClaimRaw == null) return;
+
+  const rawClaimMap = buildRawClaimMap06_(rawValues, idxClaimRaw);
+
+  // Raw indices (best-effort; will stay null if header missing)
+  const idxDbRaw = resolveRawIdx06_(headerIndexRaw, [
+    (CONFIG && CONFIG.headers && (CONFIG.headers.db || CONFIG.headers.dbClass || CONFIG.headers.dbStatus))
+      ? (CONFIG.headers.db || CONFIG.headers.dbClass || CONFIG.headers.dbStatus)
+      : null,
+    'DB'
+  ]);
+
+  const idxPartnerRaw = resolveRawIdx06_(headerIndexRaw, [
+    (CONFIG && CONFIG.headers && (CONFIG.headers.partnerName || CONFIG.headers.partner)) ? (CONFIG.headers.partnerName || CONFIG.headers.partner) : null,
+    'partner_name',
+    'Partner Name',
+    'Partner'
+  ]);
+
+  const idxInsuranceRaw = resolveRawIdx06_(headerIndexRaw, [
+    (CONFIG && CONFIG.headers && (CONFIG.headers.insurance || CONFIG.headers.insuranceName || CONFIG.headers.insuranceCode)) ? (CONFIG.headers.insurance || CONFIG.headers.insuranceName || CONFIG.headers.insuranceCode) : null,
+    'insurance',
+    'insurance_name',
+    'insurance_code',
+    'Insurance',
+    'Insurance Code'
+  ]);
+
+  const idxDeviceTypeRaw = resolveRawIdx06_(headerIndexRaw, [
+    (CONFIG && CONFIG.headers && (CONFIG.headers.deviceType || CONFIG.headers.device_type)) ? (CONFIG.headers.deviceType || CONFIG.headers.device_type) : null,
+    'device_type',
+    'Device Type'
+  ]);
+
+  const idxServiceCenterRaw = resolveRawIdx06_(headerIndexRaw, [
+    (CONFIG && CONFIG.headers && (CONFIG.headers.serviceCenter || CONFIG.headers.scName)) ? (CONFIG.headers.serviceCenter || CONFIG.headers.scName) : null,
+    'service_center',
+    'sc_name',
+    'Service Center',
+    'SC Name'
+  ]);
+
+  const idxLsaRaw = resolveRawIdx06_(headerIndexRaw, [
+    (CONFIG && CONFIG.headers && CONFIG.headers.lastStatusAging) ? CONFIG.headers.lastStatusAging : null,
+    'Last Status Aging',
+    'LSA',
+    'last_status_aging',
+    'lsa'
+  ]);
+
+  const idxAlaRaw = resolveRawIdx06_(headerIndexRaw, [
+    (CONFIG && CONFIG.headers && CONFIG.headers.activityLogAging) ? CONFIG.headers.activityLogAging : null,
+    (CONFIG && CONFIG.headers && (CONFIG.headers.ala || CONFIG.headers.ALA)) ? (CONFIG.headers.ala || CONFIG.headers.ALA) : null,
+    'Activity Log Aging',
+    'ALA',
+    'activity_log_aging',
+    'ala'
+  ]);
+
+  const idxTatRaw = resolveRawIdx06_(headerIndexRaw, [
+    (CONFIG && CONFIG.headers && (CONFIG.headers.tat || CONFIG.headers.TAT)) ? (CONFIG.headers.tat || CONFIG.headers.TAT) : null,
+    'TAT',
+    'tat'
+  ]);
+
+  // Mandatory columns (from Raw)
+  const idxProductRaw = resolveRawIdx06_(headerIndexRaw, [
+    (CONFIG && CONFIG.headers && (CONFIG.headers.productName || CONFIG.headers.product)) ? (CONFIG.headers.productName || CONFIG.headers.product) : null,
+    'product_name',
+    'Product Name',
+    'Product'
+  ]);
+
+  const idxBrandRaw = resolveRawIdx06_(headerIndexRaw, [
+    (CONFIG && CONFIG.headers && (CONFIG.headers.deviceBrand || CONFIG.headers.brand)) ? (CONFIG.headers.deviceBrand || CONFIG.headers.brand) : null,
+    'device_brand',
+    'Device Brand',
+    'Brand'
+  ]);
+
+  const idxImeiRaw = resolveRawIdx06_(headerIndexRaw, [
+    (CONFIG && CONFIG.headers && (CONFIG.headers.imeiNumber || CONFIG.headers.imei || CONFIG.headers.serialNumber)) ? (CONFIG.headers.imeiNumber || CONFIG.headers.imei || CONFIG.headers.serialNumber) : null,
+    'imei_number',
+    'IMEI',
+    'IMEI/SN',
+    'SN',
+    'Serial Number'
+  ]);
+
+  const idxSumInsuredRaw = resolveRawIdx06_(headerIndexRaw, [
+    (CONFIG && CONFIG.headers && (CONFIG.headers.sumInsuredAmount || CONFIG.headers.sumInsured)) ? (CONFIG.headers.sumInsuredAmount || CONFIG.headers.sumInsured) : null,
+    'sum_insured_amount',
+    'Sum Insured Amount',
+    'Sum Insured'
+  ]);
+
+  const idxClaimAmtRaw = resolveRawIdx06_(headerIndexRaw, [
+    (CONFIG && CONFIG.headers && (CONFIG.headers.claimAmount)) ? CONFIG.headers.claimAmount : null,
+    'claim_amount',
+    'Claim Amount'
+  ]);
+
+  const idxOwnRiskRaw = resolveRawIdx06_(headerIndexRaw, [
+    (CONFIG && CONFIG.headers && (CONFIG.headers.claimOwnRiskAmount || CONFIG.headers.ownRiskAmount)) ? (CONFIG.headers.claimOwnRiskAmount || CONFIG.headers.ownRiskAmount) : null,
+    'claim_own_risk_amount',
+    'Claim Own Risk Amount',
+    'Own Risk Amount'
+  ]);
+
+  const idxNettRaw = resolveRawIdx06_(headerIndexRaw, [
+    (CONFIG && CONFIG.headers && (CONFIG.headers.nettClaimAmount || CONFIG.headers.netClaimAmount)) ? (CONFIG.headers.nettClaimAmount || CONFIG.headers.netClaimAmount) : null,
+    'nett_claim_amount',
+    'Nett Claim Amount',
+    'Net Claim Amount'
+  ]);
+  // Optional (new): Activity Log from Raw
+  // Main flow uses Raw Data → prefer last_activity_log, fallback to activity_log.
+  const idxActivityLogRaw = resolveRawIdx06_(headerIndexRaw, [
+    (CONFIG && CONFIG.headers && (CONFIG.headers.lastActivityLog || CONFIG.headers.last_activity_log)) ? (CONFIG.headers.lastActivityLog || CONFIG.headers.last_activity_log) : null,
+    'last_activity_log',
+    'Last Activity Log',
+    'Last Activity',
+    'activity_log',
+    'Activity Log'
+  ]);
+
+  // Optional (new): Claim last updated datetime for Last Status Date
+  const idxClaimLastUpdatedRaw = resolveRawIdx06_(headerIndexRaw, [
+    (CONFIG && CONFIG.headers && (CONFIG.headers.claimLastUpdatedDatetime || CONFIG.headers.claim_last_updated_datetime)) ? (CONFIG.headers.claimLastUpdatedDatetime || CONFIG.headers.claim_last_updated_datetime) : null,
+    'claim_last_updated_datetime',
+    'Claim Last Updated Datetime',
+    'Claim Last Updated Date',
+    'claim_last_updated_date'
+  ]);
+
+  // Optional (legacy but widely present in MAIN/FORM exports): last_update / Last Update Datetime
+  // This is the primary source for Last Status Date when flow is main/form.
+  const idxLastUpdateRaw = resolveRawIdx06_(headerIndexRaw, [
+    (CONFIG && CONFIG.headers && CONFIG.headers.lastUpdate) ? CONFIG.headers.lastUpdate : null,
+    'last_update',
+    'Last Update Datetime',
+    'Last Update',
+    'last update datetime'
+  ]);
+
+  // Optional: Remarks in Raw (for restore)
+  const idxRemarksRaw = resolveRawIdx06_(headerIndexRaw, [
+    (CONFIG && CONFIG.headers && (CONFIG.headers.remarks || CONFIG.headers.remark)) ? (CONFIG.headers.remarks || CONFIG.headers.remark) : null,
+    'Remarks',
+    'remarks',
+    'Remark'
+  ]);
+
+  const fmt = _fmt06_();
+  const moneyFmt = fmt && fmt.MONEY0 ? fmt.MONEY0 : '#,##0';
+  const pctFmt = '0%';
+
+  const mandatoryOpsHeaders = [
+    'Product',
+    'Device Brand',
+    'IMEI/SN',
+    'Sum Insured Amount',
+    'Claim Amount',
+    'Claim Own Risk Amount',
+    'Nett Claim Amount',
+    '% Approval'
+  ];
+
+  sheets.forEach(sheetName => {
+    const sh = ss.getSheetByName(sheetName);
+    if (!sh) return;
+
+    const lastRow = sh.getLastRow();
+    if (lastRow < 2) return;
+
+    // 2026 spec: do NOT add Update Status/Timestamp columns to Ask Detail / Start / Finish.
+
+    // Ensure mandatory columns everywhere
+    // Mandatory (new): Status Type
+    try { ensureHeadersAtEnd06_(sh, ['Status Type']); } catch (e) {}
+    try { ensureHeadersAtEnd06_(sh, mandatoryOpsHeaders); } catch (e) {}
+
+    // Re-read header after possible insertions
+    const lastCol = sh.getLastColumn();
+    const headerRow = sh.getRange(1, 1, 1, lastCol).getValues()[0];
+    const hidx = buildOpsHeaderIndex06_(headerRow);
+
+    const idxClaimOps = resolveOpsColIdx06_(hidx, ['Claim Number', (CONFIG && CONFIG.headers && CONFIG.headers.claimNumber) ? CONFIG.headers.claimNumber : null]);
+    if (idxClaimOps === -1) return;
+
+    const rowCount = lastRow - 1;
+    const claims = sh.getRange(2, idxClaimOps + 1, rowCount, 1).getValues();
+
+    // Resolve ops columns (fill only if exists)
+    const idxDbOps = resolveOpsColIdx06_(hidx, ['DB']);
+    const idxPartnerOps = resolveOpsColIdx06_(hidx, ['Partner Name']);
+    const idxInsuranceOps = resolveOpsColIdx06_(hidx, ['Insurance']);
+    const idxDeviceTypeOps = resolveOpsColIdx06_(hidx, ['Device Type']);
+    const idxServiceCenterOps = resolveOpsColIdx06_(hidx, ['Service Center']);
+    const idxLsaOps = resolveOpsColIdx06_(hidx, ['Last Status Aging', 'LSA']);
+    const idxAlaOps = resolveOpsColIdx06_(hidx, ['Activity Log Aging', 'ALA']);
+    const idxTatOps = resolveOpsColIdx06_(hidx, ['TAT']);
+
+    const idxProductOps = resolveOpsColIdx06_(hidx, ['Product']);
+    const idxBrandOps = resolveOpsColIdx06_(hidx, ['Device Brand']);
+    const idxImeiOps = resolveOpsColIdx06_(hidx, ['IMEI/SN']);
+    const idxSumOps = resolveOpsColIdx06_(hidx, ['Sum Insured Amount']);
+    const idxClaimOpsAmt = resolveOpsColIdx06_(hidx, ['Claim Amount']);
+    const idxOwnRiskOps = resolveOpsColIdx06_(hidx, ['Claim Own Risk Amount']);
+    const idxNettOps = resolveOpsColIdx06_(hidx, ['Nett Claim Amount']);
+    const idxApprovalOps = resolveOpsColIdx06_(hidx, ['% Approval']);
+    const idxLastStatusOps = resolveOpsColIdx06_(hidx, ['Last Status', (CONFIG && CONFIG.headers && CONFIG.headers.lastStatus) ? CONFIG.headers.lastStatus : null, 'last_status']);
+    const idxStatusTypeOps = resolveOpsColIdx06_(hidx, ['Status Type']);
+    const idxActivityLogOps = resolveOpsColIdx06_(hidx, ['Activity Log']);
+    const idxLastStatusDateOps = resolveOpsColIdx06_(hidx, ['Last Status Date']);
+
+
+    const lastStatuses = (idxLastStatusOps !== -1)
+      ? sh.getRange(2, idxLastStatusOps + 1, rowCount, 1).getValues()
+      : null;
+
+    // Build column outputs
+    const colOut = (idx) => (idx === -1 ? null : new Array(rowCount));
+    const outDb = colOut(idxDbOps);
+    const outPartner = colOut(idxPartnerOps);
+    const outInsurance = colOut(idxInsuranceOps);
+    const outDeviceType = colOut(idxDeviceTypeOps);
+    const outServiceCenter = colOut(idxServiceCenterOps);
+    const outLsa = colOut(idxLsaOps);
+    const outAla = colOut(idxAlaOps);
+    const outTat = colOut(idxTatOps);
+
+    const outProduct = colOut(idxProductOps);
+    const outBrand = colOut(idxBrandOps);
+    const outImei = colOut(idxImeiOps);
+    const outSum = colOut(idxSumOps);
+    const outClaim = colOut(idxClaimOpsAmt);
+    const outOwnRisk = colOut(idxOwnRiskOps);
+    const outNett = colOut(idxNettOps);
+    const outApproval = colOut(idxApprovalOps);
+    const outStatusType = colOut(idxStatusTypeOps);
+    const outActivityLog = colOut(idxActivityLogOps);
+    const outLastStatusDate = colOut(idxLastStatusDateOps);
+
+    for (let r = 0; r < rowCount; r++) {
+      const claim = String((claims[r] && claims[r][0]) || '').trim();
+      const rawRow = claim ? rawClaimMap[claim.toUpperCase()] : null;
+
+      const rawGet = (idx) => (rawRow && idx != null ? rawRow[idx] : '');
+
+      const dbComputed = computeDbValueFromClaimNumber06_(claim);
+      if (outDb) outDb[r] = [ (dbComputed || (idxDbRaw != null ? rawGet(idxDbRaw) : '')) ];
+      if (outPartner) outPartner[r] = [ idxPartnerRaw != null ? rawGet(idxPartnerRaw) : '' ];
+      if (outInsurance) outInsurance[r] = [ idxInsuranceRaw != null ? normalizeInsuranceShort06_(rawGet(idxInsuranceRaw)) : '' ];
+      if (outDeviceType) outDeviceType[r] = [ idxDeviceTypeRaw != null ? rawGet(idxDeviceTypeRaw) : '' ];
+      if (outServiceCenter) outServiceCenter[r] = [ idxServiceCenterRaw != null ? rawGet(idxServiceCenterRaw) : '' ];
+      if (outLsa) outLsa[r] = [ idxLsaRaw != null ? rawGet(idxLsaRaw) : '' ];
+      if (outAla) outAla[r] = [ idxAlaRaw != null ? rawGet(idxAlaRaw) : '' ];
+      if (outTat) outTat[r] = [ idxTatRaw != null ? rawGet(idxTatRaw) : '' ];
+
+      if (outProduct) outProduct[r] = [ idxProductRaw != null ? rawGet(idxProductRaw) : '' ];
+      if (outBrand) outBrand[r] = [ idxBrandRaw != null ? rawGet(idxBrandRaw) : '' ];
+      if (outImei) outImei[r] = [ idxImeiRaw != null ? rawGet(idxImeiRaw) : '' ];
+
+      const sumN = idxSumInsuredRaw != null ? toNumber06_(rawGet(idxSumInsuredRaw)) : null;
+      const claimN = idxClaimAmtRaw != null ? toNumber06_(rawGet(idxClaimAmtRaw)) : null;
+      const ownRiskN = idxOwnRiskRaw != null ? toNumber06_(rawGet(idxOwnRiskRaw)) : null;
+      const nettN = idxNettRaw != null ? toNumber06_(rawGet(idxNettRaw)) : null;
+
+      if (outSum) outSum[r] = [ sumN == null ? '' : sumN ];
+      if (outClaim) outClaim[r] = [ claimN == null ? '' : claimN ];
+      if (outOwnRisk) outOwnRisk[r] = [ ownRiskN == null ? '' : ownRiskN ];
+      if (outNett) outNett[r] = [ nettN == null ? '' : nettN ];
+
+      // Activity Log (optional)
+      if (outActivityLog) outActivityLog[r] = [ idxActivityLogRaw != null ? rawGet(idxActivityLogRaw) : '' ];
+
+      // Last Status Date (optional)
+      // - Sub flow: strict source = claim_last_updated_datetime (RAW OLD/NEW)
+      // - Main/Form: prefer last_update (Metabase export), fallback to claim_last_updated_datetime if present
+      if (outLastStatusDate) {
+        const coerceDt = (v) => {
+          if (v == null || v === '') return null;
+          if (Object.prototype.toString.call(v) === '[object Date]') return isNaN(v.getTime()) ? null : v;
+          const s = String(v).trim();
+          if (!s) return null;
+          const d0 = new Date(s);
+          if (!isNaN(d0.getTime())) return d0;
+          return parseClaimLastUpdatedDatetime06b_(s);
+        };
+
+        const prefer = (flowName === 'sub')
+          ? (idxClaimLastUpdatedRaw != null ? rawGet(idxClaimLastUpdatedRaw) : '')
+          : (idxLastUpdateRaw != null ? rawGet(idxLastUpdateRaw) : (idxClaimLastUpdatedRaw != null ? rawGet(idxClaimLastUpdatedRaw) : ''));
+
+        const dt = coerceDt(prefer);
+        outLastStatusDate[r] = [ dt || '' ];
+      }
+
+      // Status Type (mandatory)
+      if (outStatusType) {
+        const ls = lastStatuses ? String((lastStatuses[r] && lastStatuses[r][0]) || '').trim() : '';
+        outStatusType[r] = [ getStatusTypeFromLastStatus06b_(ls) ];
+      }
+
+      if (outApproval) {
+        const ratio = (sumN && claimN != null) ? (claimN / sumN) : null;
+        outApproval[r] = [ ratio == null || !isFinite(ratio) ? '' : ratio ];
+      }
+    }
+
+    // Write columns (only if the column exists)
+    const setCol = (idx, values, numFmt) => {
+      if (idx === -1 || !values) return;
+      const rg = sh.getRange(2, idx + 1, rowCount, 1);
+      rg.setValues(values);
+      if (numFmt) rg.setNumberFormat(numFmt);
+    };
+
+    setCol(idxDbOps, outDb, null);
+    setCol(idxPartnerOps, outPartner, null);
+    setCol(idxInsuranceOps, outInsurance, null);
+    setCol(idxDeviceTypeOps, outDeviceType, null);
+    setCol(idxServiceCenterOps, outServiceCenter, null);
+    setCol(idxLsaOps, outLsa, null);
+    setCol(idxAlaOps, outAla, null);
+    setCol(idxTatOps, outTat, null);
+
+    setCol(idxProductOps, outProduct, null);
+    setCol(idxBrandOps, outBrand, null);
+    setCol(idxImeiOps, outImei, null);
+    setCol(idxSumOps, outSum, moneyFmt);
+    setCol(idxClaimOpsAmt, outClaim, moneyFmt);
+    setCol(idxOwnRiskOps, outOwnRisk, moneyFmt);
+    setCol(idxNettOps, outNett, moneyFmt);
+    setCol(idxApprovalOps, outApproval, pctFmt);
+
+    // New columns
+    setCol(idxActivityLogOps, outActivityLog, null);
+
+    // Last Status Date: number format depends on flow (date-only for main/form)
+    const dtFmt = (flowName === 'sub') ? 'dd MMM yy, HH:mm' : 'dd MMM yy';
+    setCol(idxLastStatusDateOps, outLastStatusDate, dtFmt);
+
+    setCol(idxStatusTypeOps, outStatusType, null);
+  });
+}
+
+
+/** =========================
+ * 06b Add-ons (2026 requirements)
+ * - Remarks persistence (Ops ↔ Raw)
+ * - Status Type derivation fallback
+ * - Datetime parsing helper
+ * - Operational sort preserving filter
+ * - Overview flow tagging (best-effort)
+ * ========================= */
+
+/** Ensure 'Remarks' header exists in Raw Data (append to the right; non-destructive). */
+function ensureRawRemarksColumn06b_(rawSheet) {
+  if (!rawSheet) return false;
+  const lastCol = rawSheet.getLastColumn();
+  if (lastCol < 1) return false;
+  const header = rawSheet.getRange(1, 1, 1, lastCol).getValues()[0].map(v => String(v == null ? '' : v).trim());
+  if (header.indexOf('Remarks') !== -1) return false;
+  if (DRY_RUN) return false;
+
+  rawSheet.insertColumnAfter(lastCol);
+  const rg = rawSheet.getRange(1, lastCol + 1, 1, 1);
+  rg.setValue('Remarks');
+  try { rg.setHorizontalAlignment('center').setVerticalAlignment('middle'); } catch (e) {}
+  return true;
+}
+
+function getOperationalSheetNames06b_(pic) {
+  const isAdmin = (pic === 'Admin');
+  let sheets = isAdmin
+    ? (CONFIG && CONFIG.sheetsByPic && CONFIG.sheetsByPic.adminOperational ? CONFIG.sheetsByPic.adminOperational : [])
+    : (CONFIG && CONFIG.sheetsByPic && CONFIG.sheetsByPic.picOperational ? CONFIG.sheetsByPic.picOperational : []);
+
+  if (!Array.isArray(sheets) || !sheets.length) {
+    sheets = ['Submission','Ask Detail','OR - OLD','Start','Finish','SC - Farhan','SC - Meilani','SC - Ivan','PO','Exclusion'];
+  }
+  // Only core operational sheets (exclude optional modules)
+  return sheets.filter(n => n && n !== 'B2B' && n !== 'EV-Bike' && n !== 'Special Case' && n !== 'Raw Data');
+}
+
+/**
+ * Backup non-empty Remarks from operational sheets into in-memory Raw values.
+ * - Idempotent: only sets when ops remark is non-empty.
+ * - Does not clear existing Raw remarks.
+ */
+function backupRemarksOpsToRawInMemory06b_(ss, rawValues, headerIndexRaw, pic) {
+  if (DRY_RUN) return { updated: 0, reason: 'DRY_RUN' };
+  if (!ss || !rawValues || !rawValues.length || !headerIndexRaw) return { updated: 0, reason: 'missing inputs' };
+
+  const idxClaimRaw = resolveRawIdx06_(headerIndexRaw, [
+    (CONFIG && CONFIG.headers && CONFIG.headers.claimNumber) ? CONFIG.headers.claimNumber : null,
+    'claim_number',
+    'Claim Number'
+  ]);
+  const idxRemarksRaw = resolveRawIdx06_(headerIndexRaw, [
+    (CONFIG && CONFIG.headers && (CONFIG.headers.remarks || CONFIG.headers.remark)) ? (CONFIG.headers.remarks || CONFIG.headers.remark) : null,
+    'Remarks',
+    'remarks',
+    'Remark'
+  ]);
+  if (idxClaimRaw == null || idxRemarksRaw == null) return { updated: 0, reason: 'raw columns missing' };
+
+  const rawClaimMap = buildRawClaimMap06_(rawValues, idxClaimRaw);
+  let updated = 0;
+
+  const sheets = getOperationalSheetNames06b_(pic);
+  for (let i = 0; i < sheets.length; i++) {
+    const sh = ss.getSheetByName(sheets[i]);
+    if (!sh) continue;
+    const lastRow = sh.getLastRow();
+    if (lastRow < 2) continue;
+
+    const headerRow = sh.getRange(1, 1, 1, sh.getLastColumn()).getValues()[0];
+    const hidx = buildOpsHeaderIndex06_(headerRow);
+
+    const idxClaimOps = resolveOpsColIdx06_(hidx, ['Claim Number', (CONFIG && CONFIG.headers && CONFIG.headers.claimNumber) ? CONFIG.headers.claimNumber : null]);
+    const idxRemarksOps = resolveOpsColIdx06_(hidx, ['Remarks']);
+    if (idxClaimOps === -1 || idxRemarksOps === -1) continue;
+
+    const rowCount = lastRow - 1;
+    const claims = sh.getRange(2, idxClaimOps + 1, rowCount, 1).getValues();
+    const remarks = sh.getRange(2, idxRemarksOps + 1, rowCount, 1).getValues();
+
+    for (let r = 0; r < rowCount; r++) {
+      const claim = String((claims[r] && claims[r][0]) || '').trim();
+      if (!claim) continue;
+      const rem = String((remarks[r] && remarks[r][0]) || '').trim();
+      if (!rem) continue;
+
+      const rawRow = rawClaimMap[claim.toUpperCase()];
+      if (!rawRow) continue;
+
+      // Set only when non-empty; do not clear.
+      if (String(rawRow[idxRemarksRaw] || '').trim() !== rem) {
+        rawRow[idxRemarksRaw] = rem;
+        updated++;
+      }
+    }
+  }
+  return { updated: updated };
+}
+
+/**
+ * Restore Remarks from Raw into operational sheets (do not overwrite non-empty ops remarks).
+ * This is safe to run after clear+route.
+ */
+function restoreRemarksToOperationalFromRaw06b_(ss, rawValues, headerIndexRaw, pic) {
+  if (DRY_RUN) return { updated: 0, reason: 'DRY_RUN' };
+  if (!ss || !rawValues || !rawValues.length || !headerIndexRaw) return { updated: 0, reason: 'missing inputs' };
+
+  const idxClaimRaw = resolveRawIdx06_(headerIndexRaw, [
+    (CONFIG && CONFIG.headers && CONFIG.headers.claimNumber) ? CONFIG.headers.claimNumber : null,
+    'claim_number',
+    'Claim Number'
+  ]);
+  const idxRemarksRaw = resolveRawIdx06_(headerIndexRaw, [
+    (CONFIG && CONFIG.headers && (CONFIG.headers.remarks || CONFIG.headers.remark)) ? (CONFIG.headers.remarks || CONFIG.headers.remark) : null,
+    'Remarks',
+    'remarks',
+    'Remark'
+  ]);
+  if (idxClaimRaw == null || idxRemarksRaw == null) return { updated: 0, reason: 'raw columns missing' };
+
+  // Build map claim -> remark
+  const remMap = Object.create(null);
+  for (let i = 0; i < rawValues.length; i++) {
+    const row = rawValues[i];
+    const claim = String((row && row[idxClaimRaw]) || '').trim();
+    if (!claim) continue;
+    const rem = String((row && row[idxRemarksRaw]) || '').trim();
+    if (!rem) continue;
+    remMap[claim.toUpperCase()] = rem;
+  }
+
+  let updated = 0;
+  const sheets = getOperationalSheetNames06b_(pic);
+  for (let i = 0; i < sheets.length; i++) {
+    const sh = ss.getSheetByName(sheets[i]);
+    if (!sh) continue;
+    const lastRow = sh.getLastRow();
+    if (lastRow < 2) continue;
+
+    const headerRow = sh.getRange(1, 1, 1, sh.getLastColumn()).getValues()[0];
+    const hidx = buildOpsHeaderIndex06_(headerRow);
+
+    const idxClaimOps = resolveOpsColIdx06_(hidx, ['Claim Number', (CONFIG && CONFIG.headers && CONFIG.headers.claimNumber) ? CONFIG.headers.claimNumber : null]);
+    const idxRemarksOps = resolveOpsColIdx06_(hidx, ['Remarks']);
+    if (idxClaimOps === -1 || idxRemarksOps === -1) continue;
+
+    const rowCount = lastRow - 1;
+    const claims = sh.getRange(2, idxClaimOps + 1, rowCount, 1).getValues();
+    const curRemarks = sh.getRange(2, idxRemarksOps + 1, rowCount, 1).getValues();
+    const out = new Array(rowCount);
+
+    let any = false;
+    for (let r = 0; r < rowCount; r++) {
+      const claim = String((claims[r] && claims[r][0]) || '').trim();
+      const cur = String((curRemarks[r] && curRemarks[r][0]) || '').trim();
+      if (cur) {
+        out[r] = [cur];
+        continue;
+      }
+      const rem = claim ? remMap[claim.toUpperCase()] : '';
+      if (rem) { any = true; updated++; }
+      out[r] = [rem || ''];
+    }
+
+    if (any) sh.getRange(2, idxRemarksOps + 1, rowCount, 1).setValues(out);
+  }
+
+  return { updated: updated };
+}
+
+/** Parse "January 24, 2025, 6:06 PM" (and similar) into Date. Returns null if invalid/empty. */
+function parseClaimLastUpdatedDatetime06b_(v) {
+  if (v == null || v === '') return null;
+  if (Object.prototype.toString.call(v) === '[object Date]') return isNaN(v.getTime()) ? null : v;
+
+  // Prefer shared strict WIB parser from 06c.
+  try { if (typeof parseClaimLastUpdatedDatetime06c_ === 'function') return parseClaimLastUpdatedDatetime06c_(v); } catch (e0) {}
+
+  const s = String(v || '').trim();
+  if (!s) return null;
+
+  const tz = (() => {
+    try { return Session.getScriptTimeZone() || 'Asia/Jakarta'; } catch (e) { return 'Asia/Jakarta'; }
+  })();
+
+  // STRICT parsing (WIB) to avoid timezone shifts.
+  const patterns = [
+    'MMMM d, yyyy, h:mm a',
+    'MMMM d, yyyy, hh:mm a',
+    'MMM d, yyyy, h:mm a',
+    'MMM d, yyyy, hh:mm a',
+    'yyyy-MM-dd HH:mm:ss',
+    'yyyy-MM-dd HH:mm',
+    'yyyy/MM/dd HH:mm:ss',
+    'yyyy/MM/dd HH:mm',
+    'dd/MM/yyyy HH:mm:ss',
+    'dd/MM/yyyy HH:mm'
+  ];
+
+  for (let i = 0; i < patterns.length; i++) {
+    try {
+      const d = Utilities.parseDate(s, tz, patterns[i]);
+      if (d && !isNaN(d.getTime())) return d;
+    } catch (e1) {}
+  }
+
+  // Manual month-name parse (English) -> parse as ISO in WIB.
+  const m = s.match(/^([A-Za-z]+)\s+(\d{1,2}),\s*(\d{4}),\s*(\d{1,2}):(\d{2})\s*([AP]M)$/i);
+  if (!m) return null;
+
+  const monName = String(m[1] || '').toLowerCase();
+  const day = Number(m[2]);
+  const year = Number(m[3]);
+  let hh = Number(m[4]);
+  const mm = Number(m[5]);
+  const ampm = String(m[6] || '').toUpperCase();
+
+  const months = {
+    january:1,february:2,march:3,april:4,may:5,june:6,july:7,august:8,september:9,october:10,november:11,december:12,
+    jan:1,feb:2,mar:3,apr:4,jun:6,jul:7,aug:8,sep:9,oct:10,nov:11,dec:12
+  };
+  const mon = months[monName];
+  if (!mon) return null;
+
+  if (ampm === 'PM' && hh < 12) hh += 12;
+  if (ampm === 'AM' && hh === 12) hh = 0;
+
+  const iso = Utilities.formatString('%04d-%02d-%02d %02d:%02d:00', year, mon, day, hh, mm);
+  try {
+    const d2 = Utilities.parseDate(iso, tz, 'yyyy-MM-dd HH:mm:ss');
+    return (d2 && !isNaN(d2.getTime())) ? d2 : null;
+  } catch (e2) {
+    return null;
+  }
+}
+
+/** Status Type resolution; prefers shared 06c implementation when available. */
+function getStatusTypeFromLastStatus06b_(lastStatus) {
+  try { if (typeof getStatusType06c_ === 'function') return getStatusType06c_(lastStatus); } catch (e) {}
+  const s = String(lastStatus || '').trim();
+  if (!s) return '';
+  const map = getStatusTypeMap06b_();
+  return (map && map[s] != null) ? String(map[s] || '') : '';
+}
+
+let __STATUS_TYPE_MAP_06B = null;
+function getStatusTypeMap06b_() {
+  if (__STATUS_TYPE_MAP_06B) return __STATUS_TYPE_MAP_06B;
+  // Fallback map (kept aligned with 2026 spec; if 06c is present, it is preferred).
+  __STATUS_TYPE_MAP_06B = {
+    'CLAIM_INITIATE':'OPEN',
+    'QOALA_ASK_DETAIL':'FOLLOW UP',
+    'CUSTOMER_RESUBMIT_DOCUMENT':'OPEN',
+    'QOALA_CLAIM_RESUBMIT_DOCUMENT_REQ_QOALA':'OPEN',
+    'CLAIM_EXPIRE':'CLOSE',
+    'QOALA_CLAIM_REOPEN':'OPEN',
+    'QOALA_CLAIM_APPROVE_WALKIN':'FOLLOW UP',
+    'WAITING_WALKIN_START':'FOLLOW UP',
+    'CLAIM_EXPIRE_WALKIN':'CLOSE',
+    'QOALA_CLAIM_REOPEN_WALKIN':'FOLLOW UP',
+    'QOALA_CLAIM_APPROVE_PICKUP':'FOLLOW UP',
+    'WAITING_PICKUP_START':'FOLLOW UP',
+    'COURIER_PICKUP_START':'FOLLOW UP',
+    'COURIER_PICKUP_START_DONE':'FOLLOW UP',
+    'SUBMITTED':'OPEN',
+    'QOALA_CLAIM_ASK_DETAIL':'FOLLOW UP',
+    'QOALA_CLAIM_RESUBMIT_DOC':'OPEN',
+    'WAITING_PAYMENT':'FOLLOW UP',
+    'DONE_EXPIRED':'CLOSE',
+    'WAITING_COURIER_START':'FOLLOW UP',
+    'CLAIM_ADDED_SC':'FOLLOW UP',
+    'RECEIVED_SC':'FOLLOW UP',
+    'ESTIMATE_COST':'OPEN',
+    'ON_PROGRESS':'FOLLOW UP',
+    'INSURANCE_ASK_DETAIL':'FOLLOW UP',
+    'CX_UPLOAD_DOC':'FOLLOW UP',
+    'APPROVED':'FOLLOW UP',
+    'INSURANCE_APPROVED':'FOLLOW UP',
+    'REPLACED':'OPEN',
+    'DONE_REPAIR':'DONE - FOLLOW UP',
+    'WAITING_WALKIN_FINISH':'DONE - FOLLOW UP',
+    'COURIER_PICKED_UP':'FOLLOW UP',
+    'WAITING_COURIER_FINISH':'DONE - FOLLOW UP',
+    'SERVICE_CENTER_CLAIM_RECEIVE':'FOLLOW UP',
+    'SERVICE_CENTER_CLAIM_ESTIMATE':'OPEN',
+    'QOALA_CLAIM_RESUBMIT_ESTIMATE':'FOLLOW UP',
+    'SERVICE_CENTER_CLAIM_RESUBMIT_ESTIMATE':'OPEN',
+    'SERVICE_CENTER_CLAIM_WAITING_REPAIR':'FOLLOW UP',
+    'SERVICE_CENTER_CLAIM_ON_PROGRESS':'FOLLOW UP',
+    'SERVICE_CENTER_CLAIM_CHANGE_IMEI':'FOLLOW UP',
+    'QOALA_CLAIM_APPROVE_REPAIR':'FOLLOW UP',
+    'QOALA_CLAIM_APPROVE_REPLACE':'FOLLOW UP',
+    'INSURANCE_CLAIM_REVIEW':'FOLLOW UP',
+    'INSURANCE_CLAIM_APPROVE_REPAIR':'FOLLOW UP',
+    'INSURANCE_CLAIM_ASK_DETAIL_ADDITIONAL':'FOLLOW UP',
+    'QOALA_CLAIM_RESUBMIT_DOCUMENT_ADDITIONAL':'FOLLOW UP',
+    'CLAIM_EXPIRE_INSURANCE':'FOLLOW UP',
+    'QOALA_CLAIM_REOPEN_INSURANCE_CASHLESS':'OPEN',
+    'CUSTOMER_WAITING_PAYMENT_DEDUCTIBLE_EXCESS_FEE_REPAIR':'FOLLOW UP',
+    'CUSTOMER_APPROVE_DEDUCTIBLE_EXCESS_FEE_REPAIR':'FOLLOW UP',
+    'CUSTOMER_APPROVE_DEDUCTIBLE_EXCESS_FEE_REPAIR_EXPIRED':'FOLLOW UP',
+    'CUSTOMER_PAID_DEDUCTIBLE_EXCESS_FEE_REPAIR':'FOLLOW UP',
+    'SERVICE_CENTER_CLAIM_DONE_REPAIR_WALKIN':'FOLLOW UP',
+    'SERVICE_CENTER_CLAIM_WAITING_WALKIN_FINISH':'DONE - FOLLOW UP',
+    'SERVICE_CENTER_CLAIM_DONE':'DONE',
+    'SERVICE_CENTER_CLAIM_DONE_REPAIR_PICKUP':'FOLLOW UP',
+    'SERVICE_CENTER_CLAIM_WAITING_PICKUP_FINISH':'DONE - FOLLOW UP',
+    'COURIER_CLAIM_PICKUP_FINISH':'FOLLOW UP',
+    'COURIER_CLAIM_PICKUP_FINISH_DONE':'DONE',
+    'INSURANCE_APPROVED_REPLACED':'FOLLOW UP',
+    'DONE_REJECTED':'CLOSE',
+    'DONE':'DONE',
+    'DONE_REPLACED':'DONE',
+    'DONE_REJECT':'CLOSE',
+    'QOALA_REQUEST_SALVAGE':'FOLLOW UP',
+    'PAYMENT_NOT_COMPLETE':'CLOSE',
+    'DONE_CANCEL':'CLOSE',
+    'INSURANCE_REJECTED':'FOLLOW UP',
+    'CUSTOMER_WAITING_PAYMENT_DEDUCTIBLE_EXCESS_FEE_REPLACE':'FOLLOW UP',
+    'CUSTOMER_APPROVE_DEDUCTIBLE_EXCESS_FEE_REPLACE':'FOLLOW UP',
+    'CUSTOMER_APPROVE_DEDUCTIBLE_EXCESS_FEE_REPLACE_EXPIRED':'FOLLOW UP',
+    'CUSTOMER_PAID_DEDUCTIBLE_EXCESS_FEE_RREPLACE':'FOLLOW UP',
+    'CUSTOMER_PAID_DEDUCTIBLE_EXCESS_FEE_REPLACE':'FOLLOW UP',
+    'INSURANCE_CLAIM_APPROVE_REPLACE':'FOLLOW UP',
+    'SERVICE_CENTER_REPAIR_CANCELLED_FOR_REPLACE':'OPEN',
+    'QOALA_PROCESS_REPLACE':'OPEN',
+    'QOALA_PROCESS_REPLACE_WALKIN':'OPEN',
+    'CUSTOMER_WAITING_EXCESS_REPLACE_WALKIN':'FOLLOW UP',
+    'CUSTOMER_PAID_EXCESS_REPLACE_WALKIN':'FOLLOW UP',
+    'QOALA_WAITING_CUSTOMER_REPLACE':'FOLLOW UP',
+    'CUSTOMER_RECEIVE_REPLACE':'DONE',
+    'QOALA_PROCESS_REPLACE_PICKUP':'OPEN',
+    'CUSTOMER_WAITING_EXCESS_REPLACE_PICKUP':'FOLLOW UP',
+    'CUSTOMER_PAID_EXCESS_REPLACE_PICKUP':'FOLLOW UP',
+    'COURIER_WAITING_REPLACE_PICKUP':'FOLLOW UP',
+    'COURIER_REPLACE_PICKUP':'FOLLOW UP',
+    'COURIER_REPLACE_PICKUP_DONE':'DONE',
+    'QOALA_CLAIM_REJECT':'CLOSE',
+    'QOALA_CLAIM_REJECT_PICKUP':'CLOSE - FOLLOW UP',
+    'QOALA_CLAIM_REJECT_WALKIN':'CLOSE - FOLLOW UP',
+    'CUSTOMER_REJECT_PAYMENT_DEDUCTIBLE_EXCESS_FEE_WALKIN':'FOLLOW UP',
+    'CUSTOMER_REJECT_PAYMENT_DEDUCTIBLE_EXCESS_FEE_PICKUP':'FOLLOW UP',
+    'INSURANCE_CLAIM_REJECT_WALKIN':'FOLLOW UP',
+    'INSURANCE_CLAIM_REJECT_PICKUP':'FOLLOW UP',
+    'SERVICE_CENTER_CLAIM_WAITING_WALKIN_REJECT':'CLOSE - FOLLOW UP',
+    'SERVICE_CENTER_CLAIM_DONE_REJECT':'CLOSE - REJECT',
+    'SERVICE_CENTER_CLAIM_WAITING_PICKUP_REJECT':'CLOSE - FOLLOW UP',
+    'COURIER_CLAIM_PICKUP_REJECT':'FOLLOW UP',
+    'COURIER_CLAIM_PICKUP_REJECT_DONE':'CLOSE - REJECT',
+    'INSURANCE_CLAIM_WAITING_PAID_REPAIR':'DONE - WAIT INSURANCE',
+    'INSURANCE_CLAIM_PAID_REPAIR':'DONE - INSURANCE',
+    'INSURANCE_CLAIM_WAITING_PAID_REPLACE':'DONE - WAIT INSURANCE',
+    'INSURANCE_CLAIM_PAID_REPLACE':'DONE - INSURANCE'
+  };
+  return __STATUS_TYPE_MAP_06B;
+}
+
+/** Sort operational sheets by Last Status Date then Last Status (A→Z) while preserving active filters. */
+function sortOperationalSheetsPreserveFilter06b_(ss, pic) {
+  if (!ss) return;
+  const sheets = getOperationalSheetNames06b_(pic);
+  for (let i = 0; i < sheets.length; i++) {
+    const sh = ss.getSheetByName(sheets[i]);
+    if (!sh) continue;
+    const lastRow = sh.getLastRow();
+    const lastCol = sh.getLastColumn();
+    if (lastRow < 3 || lastCol < 2) continue;
+
+    const header = sh.getRange(1, 1, 1, lastCol).getValues()[0];
+    const hidx = buildOpsHeaderIndex06_(header);
+    const idxDate = resolveOpsColIdx06_(hidx, ['Last Status Date']);
+    const idxStatus = resolveOpsColIdx06_(hidx, ['Last Status']);
+    if (idxDate === -1 || idxStatus === -1) continue;
+
+    const sortSpec = [
+      { column: idxDate + 1, ascending: true },
+      { column: idxStatus + 1, ascending: true }
+    ];
+
+    try {
+      const f = sh.getFilter();
+      if (f && f.getRange()) {
+        f.getRange().sort(sortSpec);
+      } else {
+        sh.getRange(2, 1, lastRow - 1, lastCol).sort(sortSpec);
+      }
+    } catch (e) {
+      // no-op
+    }
+  }
+}
+
+/**
+ * Overview: Tag "Flow" column best-effort without assumptions about layout.
+ * Strategy:
+ * - Find Overview sheet
+ * - Ensure 'Flow' column exists (append to right)
+ * - If there is a 'PIC' or 'Profile' column, update matching row; else update row 2.
+ */
+function tagOverviewFlow06b_(ss, profileName, flowName) {
+  if (!ss) return false;
+  const sh = ss.getSheetByName('Overview');
+  if (!sh) return false;
+
+  const lastCol = sh.getLastColumn();
+  if (lastCol < 1) return false;
+
+  const header = sh.getRange(1, 1, 1, lastCol).getValues()[0].map(v => String(v == null ? '' : v).trim());
+  let idxFlow = header.indexOf('Flow');
+  if (idxFlow === -1) {
+    if (DRY_RUN) return false;
+    sh.insertColumnAfter(lastCol);
+    sh.getRange(1, lastCol + 1).setValue('Flow');
+    idxFlow = lastCol;
+  }
+
+  // Attempt to find profile row
+  let rowTarget = 2;
+  const idxPic = header.indexOf('PIC') !== -1 ? header.indexOf('PIC') : (header.indexOf('Profile') !== -1 ? header.indexOf('Profile') : -1);
+  if (idxPic !== -1) {
+    const lastRow = sh.getLastRow();
+    if (lastRow >= 2) {
+      const vals = sh.getRange(2, idxPic + 1, lastRow - 1, 1).getValues();
+      for (let i = 0; i < vals.length; i++) {
+        const v = String((vals[i] && vals[i][0]) || '').trim();
+        if (v && profileName && v.toLowerCase() === profileName.toLowerCase()) {
+          rowTarget = i + 2;
+          break;
+        }
+      }
+    }
+  }
+  if (DRY_RUN) return false;
+  sh.getRange(rowTarget, idxFlow + 1).setValue(flowName);
+  return true;
+}
+
