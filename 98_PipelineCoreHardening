@@ -1,0 +1,131 @@
+/* 98_PipelineCoreHardening.gs */
+'use strict';
+(function bootstrapPipelineCoreHardening98_() {
+  try {
+    getStatusTypeMap06b_ = function () {
+      try {
+        if (typeof getStatusTypeMap06c_ === 'function') {
+          const shared = getStatusTypeMap06c_();
+          if (shared) return shared;
+        }
+      } catch (e0) {}
+      try {
+        if (CONFIG && (CONFIG.statusTypeByLastStatus || CONFIG.STATUS_TYPE_MAP || CONFIG.statusTypeMap)) {
+          return CONFIG.statusTypeByLastStatus || CONFIG.STATUS_TYPE_MAP || CONFIG.statusTypeMap;
+        }
+      } catch (e1) {}
+      try {
+        if (typeof STATUS_TYPE_BY_LAST_STATUS !== 'undefined' && STATUS_TYPE_BY_LAST_STATUS) {
+          return STATUS_TYPE_BY_LAST_STATUS;
+        }
+      } catch (e2) {}
+      return {};
+    };
+  } catch (e3) {}
+
+  try {
+    parseClaimLastUpdatedDatetime06b_ = function (v) {
+      if (v == null || v === '') return null;
+      if (Object.prototype.toString.call(v) === '[object Date]') return isNaN(v.getTime()) ? null : v;
+      try {
+        if (typeof parseClaimLastUpdatedDatetime06c_ === 'function') {
+          const d0 = parseClaimLastUpdatedDatetime06c_(v);
+          if (d0 && !isNaN(d0.getTime())) return d0;
+        }
+      } catch (e0) {}
+      const s = String(v || '').trim();
+      if (!s) return null;
+      const tz = (function () {
+        try { return Session.getScriptTimeZone() || 'Asia/Jakarta'; } catch (e) { return 'Asia/Jakarta'; }
+      })();
+      const patterns = [
+        'MMMM d, yyyy, h:mm a',
+        'MMMM d, yyyy, hh:mm a',
+        'MMMM d, yyyy, h:mm:ss a',
+        'MMMM d, yyyy, hh:mm:ss a',
+        'MMM d, yyyy, h:mm a',
+        'MMM d, yyyy, hh:mm a',
+        'yyyy-MM-dd HH:mm:ss',
+        'yyyy-MM-dd HH:mm',
+        'yyyy/MM/dd HH:mm:ss',
+        'yyyy/MM/dd HH:mm',
+        'dd/MM/yyyy HH:mm:ss',
+        'dd/MM/yyyy HH:mm'
+      ];
+      for (let i = 0; i < patterns.length; i++) {
+        try {
+          const d = Utilities.parseDate(s, tz, patterns[i]);
+          if (d && !isNaN(d.getTime())) return d;
+        } catch (e1) {}
+      }
+      const m = s.match(/^([A-Za-z]+)\s+(\d{1,2}),\s*(\d{4}),\s*(\d{1,2}):(\d{2})\s*([AP]M)$/i);
+      if (m) {
+        const monName = String(m[1] || '').toLowerCase();
+        const day = Number(m[2]);
+        const year = Number(m[3]);
+        let hh = Number(m[4]);
+        const mm = Number(m[5]);
+        const ampm = String(m[6] || '').toUpperCase();
+        const months = { january:1,february:2,march:3,april:4,may:5,june:6,july:7,august:8,september:9,october:10,november:11,december:12,jan:1,feb:2,mar:3,apr:4,jun:6,jul:7,aug:8,sep:9,oct:10,nov:11,dec:12 };
+        const mon = months[monName];
+        if (mon) {
+          if (ampm === 'PM' && hh < 12) hh += 12;
+          if (ampm === 'AM' && hh === 12) hh = 0;
+          const iso = Utilities.formatString('%04d-%02d-%02d %02d:%02d:00', year, mon, day, hh, mm);
+          try {
+            const d2 = Utilities.parseDate(iso, tz, 'yyyy-MM-dd HH:mm:ss');
+            if (d2 && !isNaN(d2.getTime())) return d2;
+          } catch (e2) {}
+        }
+      }
+      if (/^[0-9]{4}-[0-9]{2}-[0-9]{2}(?:[T\s][0-9:.]+)?(?:Z|[+-][0-9]{2}:?[0-9]{2})?$/.test(s) || /\bGMT\b/i.test(s)) {
+        const dNative = new Date(s);
+        return isNaN(dNative.getTime()) ? null : dNative;
+      }
+      return null;
+    };
+  } catch (e4) {}
+
+  try {
+    sortOperationalSheetsPreserveFilter06b_ = function (ss, pic) {
+      if (!ss) return;
+      const sheets = (typeof getOperationalSheetNames06b_ === 'function') ? getOperationalSheetNames06b_(pic) : [];
+      for (let i = 0; i < sheets.length; i++) {
+        const sh = ss.getSheetByName(sheets[i]);
+        if (!sh) continue;
+        const lastRow = sh.getLastRow();
+        const lastCol = sh.getLastColumn();
+        if (lastRow < 3 || lastCol < 2) continue;
+        const header = sh.getRange(1, 1, 1, lastCol).getValues()[0];
+        const hidx = (typeof buildOpsHeaderIndex06_ === 'function') ? buildOpsHeaderIndex06_(header) : null;
+        const idxDate = (typeof resolveOpsColIdx06_ === 'function') ? resolveOpsColIdx06_(hidx, ['Last Status Date']) : -1;
+        const idxStatus = (typeof resolveOpsColIdx06_ === 'function') ? resolveOpsColIdx06_(hidx, ['Last Status']) : -1;
+        if (idxDate === -1 || idxStatus === -1) continue;
+        try {
+          const f = sh.getFilter ? sh.getFilter() : null;
+          if (f && f.getRange) {
+            const fr = f.getRange();
+            const sr = fr.getRow();
+            const sc = fr.getColumn();
+            const nr = fr.getNumRows();
+            const nc = fr.getNumColumns();
+            if (nr <= 1) continue;
+            const absDate = idxDate + 1;
+            const absStatus = idxStatus + 1;
+            const frColEnd = sc + nc - 1;
+            if (absDate < sc || absDate > frColEnd || absStatus < sc || absStatus > frColEnd) continue;
+            sh.getRange(sr + 1, sc, nr - 1, nc).sort([
+              { column: absDate - sc + 1, ascending: true },
+              { column: absStatus - sc + 1, ascending: true }
+            ]);
+          } else {
+            sh.getRange(2, 1, lastRow - 1, lastCol).sort([
+              { column: idxDate + 1, ascending: true },
+              { column: idxStatus + 1, ascending: true }
+            ]);
+          }
+        } catch (e0) {}
+      }
+    };
+  } catch (e5) {}
+})();
