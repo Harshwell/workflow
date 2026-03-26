@@ -35,28 +35,6 @@ function __getHeaderRow05c_(sh) {
   return sh.getRange(1, 1, 1, lastCol).getValues()[0].map(__normalizeHeaderText05c_);
 }
 
-/** Ensure "Status Type" exists only when schema has "Last Status". */
-function __ensureStatusTypeColumn05c_(sh, header) {
-  let outHeader = Array.isArray(header) ? header : [];
-  let outIdx = buildHeaderIndex_(outHeader);
-  if (outIdx['Last Status'] != null) {
-    outHeader = __ensureAppendColumnIfMissing05c_(sh, outHeader, 'Status Type');
-    outIdx = buildHeaderIndex_(outHeader);
-  }
-  return { header: outHeader, idxH: outIdx };
-}
-
-/** Log required-schema gaps in a consistent format. */
-function __logSchemaMissing05c_(idxH, eventCode) {
-  try {
-    const need = ['Claim Number', 'Start Date', 'End Date', 'Details'].map(__normalizeHeaderText05c_);
-    const missing = need.filter(n => idxH[n] == null);
-    if (missing.length && typeof logLine_ === 'function') {
-      logLine_('ERROR', String(eventCode || 'SCHEMA_MISSING'), 'Missing columns: ' + missing.join(', '), '', '');
-    }
-  } catch (e) {}
-}
-
 /** DB classifier from Claim Number (SFP/SFX/SMR -> OLD, VVMAR/GADLD -> NEW) */
 function computeDbValueFromClaimNumber05c_(claimNumber) {
   const s = String(claimNumber == null ? '' : claimNumber).trim().toUpperCase();
@@ -317,11 +295,20 @@ function processB2B_(ss, rawValues, headerIndexRaw, pic) { // `pic` kept for bac
 
   let header = headerRow;
   let idxH = buildHeaderIndex_(header);
-  const ensured = __ensureStatusTypeColumn05c_(sh, header);
-  header = ensured.header;
-  idxH = ensured.idxH;
+
+  // Ensure mandatory Status Type only when this sheet schema includes Last Status.
+  if (idxH['Last Status'] != null) {
+    header = __ensureAppendColumnIfMissing05c_(sh, header, 'Status Type');
+    idxH = buildHeaderIndex_(header);
+  }
   // Schema guard (no auto-add columns). Missing columns are logged and simply skipped.
-  __logSchemaMissing05c_(idxH, 'B2B_SCHEMA_MISSING');
+  try {
+    const need = ['Claim Number','Start Date','End Date','Details'].map(__normalizeHeaderText05c_);
+    const missing = need.filter(n => idxH[n] == null);
+    if (missing.length && typeof logLine_ === 'function') {
+      logLine_('ERROR', 'B2B_SCHEMA_MISSING', 'Missing columns: ' + missing.join(', '), '', '');
+    }
+  } catch (e) {}
 
 
   // Rebuild list every run to avoid stale rows
@@ -540,11 +527,20 @@ function processSpecialCase_(ss, rawValues, headerIndexRaw, pic) { // `pic` kept
 
   let header = __getHeaderRow05c_(sh);
   let idxH = buildHeaderIndex_(header);
-  const ensured = __ensureStatusTypeColumn05c_(sh, header);
-  header = ensured.header;
-  idxH = ensured.idxH;
+
+  // Ensure mandatory Status Type only when this sheet schema includes Last Status.
+  if (idxH['Last Status'] != null) {
+    header = __ensureAppendColumnIfMissing05c_(sh, header, 'Status Type');
+    idxH = buildHeaderIndex_(header);
+  }
   // Schema guard (no auto-add columns). Missing columns are logged and simply skipped.
-  __logSchemaMissing05c_(idxH, 'SPECIAL_CASE_SCHEMA_MISSING');
+  try {
+    const need = ['Claim Number','Start Date','End Date','Details'].map(__normalizeHeaderText05c_);
+    const missing = need.filter(n => idxH[n] == null);
+    if (missing.length && typeof logLine_ === 'function') {
+      logLine_('ERROR', 'SPECIAL_CASE_SCHEMA_MISSING', 'Missing columns: ' + missing.join(', '), '', '');
+    }
+  } catch (e) {}
 
 
   const claimCol0 = (idxH['Claim Number'] != null) ? idxH['Claim Number'] : -1;
@@ -1036,11 +1032,20 @@ function processEVBike_(ss, rawValues, headerIndexRaw, pic) { // `pic` kept for 
 
   let header = __getHeaderRow05c_(sh);
   let idxH = buildHeaderIndex_(header);
-  const ensured = __ensureStatusTypeColumn05c_(sh, header);
-  header = ensured.header;
-  idxH = ensured.idxH;
+
+  // Ensure mandatory Status Type only when this sheet schema includes Last Status.
+  if (idxH['Last Status'] != null) {
+    header = __ensureAppendColumnIfMissing05c_(sh, header, 'Status Type');
+    idxH = buildHeaderIndex_(header);
+  }
   // Schema guard (no auto-add columns). Missing columns are logged and simply skipped.
-  __logSchemaMissing05c_(idxH, 'EVBIKE_SCHEMA_MISSING');
+  try {
+    const need = ['Claim Number','Start Date','End Date','Details'].map(__normalizeHeaderText05c_);
+    const missing = need.filter(n => idxH[n] == null);
+    if (missing.length && typeof logLine_ === 'function') {
+      logLine_('ERROR', 'EVBIKE_SCHEMA_MISSING', 'Missing columns: ' + missing.join(', '), '', '');
+    }
+  } catch (e) {}
 
   const patterns = (CONFIG.patterns.evBikePartners || []).map(s => String(s || '').toLowerCase());
   // Additional source: Submission sheet (EV-Bike claims should be included even if not present in Raw Data yet).
