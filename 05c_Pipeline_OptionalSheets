@@ -33,9 +33,10 @@ const __REQUIRED_SCHEMA_COLUMNS05C = Object.freeze(
 );
 
 /** Read normalized header row safely (supports empty/new sheets). */
-function __getHeaderRow05c_(sh) {
+function __getHeaderRow05c_(sh, lastColOpt) {
   if (!sh) return [];
-  const lastCol = Math.max((sh.getLastColumn && sh.getLastColumn()) || 0, 1);
+  const lcRaw = (lastColOpt != null) ? Number(lastColOpt) : ((sh.getLastColumn && sh.getLastColumn()) || 0);
+  const lastCol = Math.max(isFinite(lcRaw) ? lcRaw : 0, 1);
   return sh.getRange(1, 1, 1, lastCol).getValues()[0].map(__normalizeHeaderText05c_);
 }
 
@@ -1053,8 +1054,9 @@ function processEVBike_(ss, rawValues, headerIndexRaw, pic) { // `pic` kept for 
   const submissionCandidates = {};
   try {
     const subSh = ss.getSheetByName('Submission');
-    if (subSh && subSh.getLastRow() > 1 && subSh.getLastColumn() > 1) {
-      const subHeader = __getHeaderRow05c_(subSh);
+    const subLastCol = subSh ? subSh.getLastColumn() : 0;
+    if (subSh && subSh.getLastRow() > 1 && subLastCol > 1) {
+      const subHeader = __getHeaderRow05c_(subSh, subLastCol);
       const subIdx = buildHeaderIndex_(subHeader);
       const subVals = subSh.getRange(2, 1, subSh.getLastRow() - 1, subHeader.length).getValues();
 
