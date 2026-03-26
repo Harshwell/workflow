@@ -607,27 +607,35 @@ function buildOperationalClaimHighlightSetsFromRaw_(rawValues, headerIndexRaw) {
 
 
 function getOperationalClaimHighlightPolicy_() {
-  const p = (CONFIG && (CONFIG.CLAIM_HIGHLIGHT_POLICY || CONFIG.claimHighlightPolicy)) || {};
-  const pick = (k, defBg, defNote) => {
-    const o = p[k] || {};
-    return { bg: o.bg || defBg, note: o.note || defNote };
+  const p = (CONFIG && (CONFIG.CLAIM_HIGHLIGHT_POLICY || CONFIG.claimHighlightPolicy))
+    || ((typeof CLAIM_HIGHLIGHT_POLICY !== 'undefined' && CLAIM_HIGHLIGHT_POLICY) ? CLAIM_HIGHLIGHT_POLICY : {})
+    || {};
+  const colors = p.COLORS || p.colors || {};
+  const notes = p.NOTES_CANONICAL || p.notesCanonical || {};
+
+  const pick = (flatKey, colorKey, noteKey, defBg, defNote) => {
+    const flat = p[flatKey] || {};
+    return {
+      bg: flat.bg || colors[colorKey] || defBg,
+      note: flat.note || notes[noteKey] || defNote
+    };
   };
 
   const dup = p.duplicate || {};
 
   return {
-    expired: pick('expired', '#fff2cc', 'Policy already expired.'),
-    flex: pick('flex', '#f4c7c3', 'Flex claim.'),
-    b2b: pick('b2b', '#c9daf8', 'B2B claim.'),
+    expired: pick('expired', 'EXPIRED', 'EXPIRED', '#fff2cc', 'Policy already expired.'),
+    flex: pick('flex', 'FLEX', 'FLEX', '#f4c7c3', 'Flex claim.'),
+    b2b: pick('b2b', 'B2B', 'B2B', '#c9daf8', 'B2B claim.'),
 
     // New rules (colors per requirement)
-    secondYear: pick('secondYear', '#d9ead3', 'Second-Year (Market Value).'),
-    firstMonthPolicy: pick('firstMonthPolicy', '#d9d2e9', 'First-Month Policy.'),
-    remaining1Month: pick('remaining1Month', '#fce5cd', 'Policy Remaining <= 1 Month.'),
+    secondYear: pick('secondYear', 'SECOND_YEAR', 'SECOND_YEAR', '#d9ead3', 'Second-Year (Market Value).'),
+    firstMonthPolicy: pick('firstMonthPolicy', 'FIRST_MONTH_POLICY', 'FIRST_MONTH_POLICY', '#d9d2e9', 'First-Month Policy.'),
+    remaining1Month: pick('remaining1Month', 'REMAINING_1_MONTH', 'REMAINING_1_MONTH', '#fce5cd', 'Policy Remaining <= 1 Month.'),
 
     duplicate: {
-      bg: dup.bg || '#dd7e6b',
-      notePrefix: dup.notePrefix || 'Duplicate Claim - Refer to Claim Number'
+      bg: dup.bg || colors.DUPLICATE || '#dd7e6b',
+      notePrefix: dup.notePrefix || notes.DUPLICATE_PREFIX || 'Duplicate Claim - Refer to Claim Number'
     }
   };
 }
@@ -635,7 +643,11 @@ function getOperationalClaimHighlightPolicy_() {
 
 
 function getClaimNumberHeaderAliases_() {
-  const aliases = (CONFIG && (CONFIG.CLAIM_NUMBER_HEADER_ALIASES || CONFIG.claimNumberHeaderAliases)) || [];
+  const aliases = (CONFIG && (CONFIG.CLAIM_NUMBER_HEADER_ALIASES || CONFIG.claimNumberHeaderAliases))
+    || ((typeof CLAIM_HIGHLIGHT_POLICY !== 'undefined' && CLAIM_HIGHLIGHT_POLICY && CLAIM_HIGHLIGHT_POLICY.CLAIM_NUMBER_HEADER_ALIASES)
+      ? CLAIM_HIGHLIGHT_POLICY.CLAIM_NUMBER_HEADER_ALIASES
+      : [])
+    || [];
   const out = (aliases && aliases.length) ? aliases : ['Claim Number'];
   return out.map(s => String(s || '').trim()).filter(Boolean);
 }
@@ -665,8 +677,16 @@ function parseOptionalIntStrict_(v) {
 function resolveHeaderIndexByAliases_(headerArr, aliases) {
   if (!headerArr || !headerArr.length) return null;
   const a = (aliases && aliases.length) ? aliases : ['Claim Number'];
+  if (typeof findHeaderIndexAny_ === 'function') {
+    const idx0 = findHeaderIndexAny_(headerArr, a, { enableSnakeCase: true });
+    return (idx0 == null) ? null : idx0;
+  }
+  if (typeof idxAny_ === 'function') {
+    const idx1 = idxAny_(headerArr, a, { enableSnakeCase: true });
+    return (idx1 == null) ? null : idx1;
+  }
 
-  // First pass: exact (via header index map)
+  // Conservative fallback when shared utils are unavailable.
   const idx = buildHeaderIndex_(headerArr);
   for (let i = 0; i < a.length; i++) {
     const key = String(a[i] || '').trim();
@@ -674,7 +694,6 @@ function resolveHeaderIndexByAliases_(headerArr, aliases) {
     if (idx[key] != null) return idx[key];
   }
 
-  // Second pass: case-insensitive scan
   const lower = headerArr.map(h => String(h || '').trim().toLowerCase());
   for (let i = 0; i < a.length; i++) {
     const key = String(a[i] || '').trim().toLowerCase();

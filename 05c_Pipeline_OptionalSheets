@@ -111,15 +111,30 @@ function __pickActivityLogDatetimeValue05c_(row, headerIndexRaw) {
 
 function __parseClaimLastUpdatedDatetime05c_(v) {
   try {
-    if (typeof parseClaimLastUpdatedDatetime06c_ === 'function') return parseClaimLastUpdatedDatetime06c_(v);
+    if (typeof parseClaimLastUpdatedDatetime06c_ === 'function') {
+      const d0 = parseClaimLastUpdatedDatetime06c_(v);
+      if (d0 && !isNaN(d0.getTime())) return d0;
+    }
   } catch (e) {}
-  // Fallback parse for strings like: "January 24, 2025, 6:06 PM"
   try {
-    if (v instanceof Date) return v;
+    if (typeof parseClaimLastUpdatedDatetime06b_ === 'function') {
+      const d1 = parseClaimLastUpdatedDatetime06b_(v);
+      if (d1 && !isNaN(d1.getTime())) return d1;
+    }
+  } catch (e1) {}
+  try {
+    if (v instanceof Date) return isNaN(v.getTime()) ? null : v;
     const s = String(v == null ? '' : v).trim();
     if (!s) return null;
-    const d = new Date(s);
-    return isNaN(d.getTime()) ? null : d;
+    if (typeof normalizeDate_ === 'function') {
+      const d2 = normalizeDate_(s);
+      if (d2 && !isNaN(d2.getTime())) return d2;
+    }
+    if (typeof tryNativeParseUnambiguousDate_ === 'function') {
+      const d3 = tryNativeParseUnambiguousDate_(s);
+      if (d3 && !isNaN(d3.getTime())) return d3;
+    }
+    return null;
   } catch (e2) { return null; }
 }
 

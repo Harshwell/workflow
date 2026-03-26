@@ -970,8 +970,18 @@ function coerceDateValue04_(v) {
   const d2 = parseYmdDatetime04_(s);
   if (d2) return d2;
 
-  const d3 = new Date(s);
-  if (!isNaN(d3.getTime())) return d3;
+  if (typeof normalizeDate_ === 'function') {
+    try {
+      const d3 = normalizeDate_(s);
+      if (d3 && !isNaN(d3.getTime())) return d3;
+    } catch (e3) {}
+  }
+  if (typeof tryNativeParseUnambiguousDate_ === 'function') {
+    try {
+      const d4 = tryNativeParseUnambiguousDate_(s);
+      if (d4 && !isNaN(d4.getTime())) return d4;
+    } catch (e4) {}
+  }
 
   return v;
 }

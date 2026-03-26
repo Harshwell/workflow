@@ -213,6 +213,18 @@ Kalau suatu hari butuh file tambahan, prioritaskan urutan ini:
 
 Berikut temuan paling penting dari review awal repo ini.
 
+### Update hardening terbaru (2026-03-26)
+
+Putaran hardening terbaru sudah menutup beberapa sumber masalah yang paling berbahaya:
+
+- konstruksi `CONFIG` tidak lagi memicu load-time crash karena referensi konstanta yang belum siap
+- bootstrap patch di `06d_IntegratedMaintenance` tidak lagi men-shadow helper utama
+- self-check sekarang membaca simbol global `const` / `let` dengan benar
+- parsing datetime dan sort-under-filter diperketat di area operasional yang paling rawan drift
+- repo sekarang punya `appsscript.json` eksplisit dan `tools/static_smoke_check.js` untuk smoke-check lokal
+
+Catatan: daftar temuan di bawah tetap berguna sebagai konteks desain, tetapi beberapa poin prioritas tingginya sudah ditangani oleh hardening terbaru.
+
 ### Yang sudah bagus
 
 - Struktur modul numerik sudah memberi urutan mental yang cukup jelas

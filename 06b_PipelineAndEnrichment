@@ -983,9 +983,21 @@ function enrichOperationalSheetsFromRaw06_(ss, rawValues, headerIndexRaw, pic, o
           if (Object.prototype.toString.call(v) === '[object Date]') return isNaN(v.getTime()) ? null : v;
           const s = String(v).trim();
           if (!s) return null;
-          const d0 = new Date(s);
-          if (!isNaN(d0.getTime())) return d0;
-          return parseClaimLastUpdatedDatetime06b_(s);
+          const parsed = parseClaimLastUpdatedDatetime06b_(s);
+          if (parsed && !isNaN(parsed.getTime())) return parsed;
+          if (typeof normalizeDate_ === 'function') {
+            try {
+              const d0 = normalizeDate_(s);
+              if (d0 && !isNaN(d0.getTime())) return d0;
+            } catch (e0) {}
+          }
+          if (typeof tryNativeParseUnambiguousDate_ === 'function') {
+            try {
+              const d1 = tryNativeParseUnambiguousDate_(s);
+              if (d1 && !isNaN(d1.getTime())) return d1;
+            } catch (e1) {}
+          }
+          return null;
         };
 
         const prefer = (flowName === 'sub')
@@ -1222,8 +1234,13 @@ function parseClaimLastUpdatedDatetime06b_(v) {
   if (v == null || v === '') return null;
   if (Object.prototype.toString.call(v) === '[object Date]') return isNaN(v.getTime()) ? null : v;
 
-  // Prefer shared strict WIB parser from 06c.
-  try { if (typeof parseClaimLastUpdatedDatetime06c_ === 'function') return parseClaimLastUpdatedDatetime06c_(v); } catch (e0) {}
+  // Prefer shared strict parser when available.
+  try {
+    if (typeof parseClaimLastUpdatedDatetime06c_ === 'function') {
+      const d0 = parseClaimLastUpdatedDatetime06c_(v);
+      if (d0 && !isNaN(d0.getTime())) return d0;
+    }
+  } catch (e0) {}
 
   const s = String(v || '').trim();
   if (!s) return null;
@@ -1236,6 +1253,8 @@ function parseClaimLastUpdatedDatetime06b_(v) {
   const patterns = [
     'MMMM d, yyyy, h:mm a',
     'MMMM d, yyyy, hh:mm a',
+    'MMMM d, yyyy, h:mm:ss a',
+    'MMMM d, yyyy, hh:mm:ss a',
     'MMM d, yyyy, h:mm a',
     'MMM d, yyyy, hh:mm a',
     'yyyy-MM-dd HH:mm:ss',
@@ -1255,32 +1274,45 @@ function parseClaimLastUpdatedDatetime06b_(v) {
 
   // Manual month-name parse (English) -> parse as ISO in WIB.
   const m = s.match(/^([A-Za-z]+)\s+(\d{1,2}),\s*(\d{4}),\s*(\d{1,2}):(\d{2})\s*([AP]M)$/i);
-  if (!m) return null;
+  if (m) {
+    const monName = String(m[1] || '').toLowerCase();
+    const day = Number(m[2]);
+    const year = Number(m[3]);
+    let hh = Number(m[4]);
+    const mm = Number(m[5]);
+    const ampm = String(m[6] || '').toUpperCase();
 
-  const monName = String(m[1] || '').toLowerCase();
-  const day = Number(m[2]);
-  const year = Number(m[3]);
-  let hh = Number(m[4]);
-  const mm = Number(m[5]);
-  const ampm = String(m[6] || '').toUpperCase();
-
-  const months = {
-    january:1,february:2,march:3,april:4,may:5,june:6,july:7,august:8,september:9,october:10,november:11,december:12,
-    jan:1,feb:2,mar:3,apr:4,jun:6,jul:7,aug:8,sep:9,oct:10,nov:11,dec:12
-  };
-  const mon = months[monName];
-  if (!mon) return null;
-
-  if (ampm === 'PM' && hh < 12) hh += 12;
-  if (ampm === 'AM' && hh === 12) hh = 0;
-
-  const iso = Utilities.formatString('%04d-%02d-%02d %02d:%02d:00', year, mon, day, hh, mm);
-  try {
-    const d2 = Utilities.parseDate(iso, tz, 'yyyy-MM-dd HH:mm:ss');
-    return (d2 && !isNaN(d2.getTime())) ? d2 : null;
-  } catch (e2) {
-    return null;
+    const months = {
+      january:1,february:2,march:3,april:4,may:5,june:6,july:7,august:8,september:9,october:10,november:11,december:12,
+      jan:1,feb:2,mar:3,apr:4,jun:6,jul:7,aug:8,sep:9,oct:10,nov:11,dec:12
+    };
+    const mon = months[monName];
+    if (mon) {
+      if (ampm === 'PM' && hh < 12) hh += 12;
+      if (ampm === 'AM' && hh === 12) hh = 0;
+      const iso = Utilities.formatString('%04d-%02d-%02d %02d:%02d:00', year, mon, day, hh, mm);
+      try {
+        const d2 = Utilities.parseDate(iso, tz, 'yyyy-MM-dd HH:mm:ss');
+        if (d2 && !isNaN(d2.getTime())) return d2;
+      } catch (e2) {}
+    }
   }
+
+  if (typeof normalizeDate_ === 'function') {
+    try {
+      const d3 = normalizeDate_(s);
+      if (d3 && !isNaN(d3.getTime())) return d3;
+    } catch (e3) {}
+  }
+
+  if (typeof tryNativeParseUnambiguousDate_ === 'function') {
+    try {
+      const d4 = tryNativeParseUnambiguousDate_(s);
+      if (d4 && !isNaN(d4.getTime())) return d4;
+    } catch (e4) {}
+  }
+
+  return null;
 }
 
 /** Status Type resolution; prefers shared 06c implementation when available. */
@@ -1295,7 +1327,29 @@ function getStatusTypeFromLastStatus06b_(lastStatus) {
 let __STATUS_TYPE_MAP_06B = null;
 function getStatusTypeMap06b_() {
   if (__STATUS_TYPE_MAP_06B) return __STATUS_TYPE_MAP_06B;
-  // Fallback map (kept aligned with 2026 spec; if 06c is present, it is preferred).
+  try {
+    if (typeof getStatusTypeMap06c_ === 'function') {
+      const shared = getStatusTypeMap06c_();
+      if (shared) {
+        __STATUS_TYPE_MAP_06B = shared;
+        return __STATUS_TYPE_MAP_06B;
+      }
+    }
+  } catch (e0) {}
+  try {
+    const central = CONFIG && (CONFIG.statusTypeByLastStatus || CONFIG.STATUS_TYPE_MAP || CONFIG.statusTypeMap);
+    if (central) {
+      __STATUS_TYPE_MAP_06B = central;
+      return __STATUS_TYPE_MAP_06B;
+    }
+  } catch (e1) {}
+  try {
+    if (typeof STATUS_TYPE_BY_LAST_STATUS !== 'undefined' && STATUS_TYPE_BY_LAST_STATUS) {
+      __STATUS_TYPE_MAP_06B = STATUS_TYPE_BY_LAST_STATUS;
+      return __STATUS_TYPE_MAP_06B;
+    }
+  } catch (e2) {}
+  // Fallback map (kept aligned with 2026 spec; if 06c/config is present, it is preferred).
   __STATUS_TYPE_MAP_06B = {
     'CLAIM_INITIATE':'OPEN',
     'QOALA_ASK_DETAIL':'FOLLOW UP',
@@ -1421,17 +1475,28 @@ function sortOperationalSheetsPreserveFilter06b_(ss, pic) {
     const idxStatus = resolveOpsColIdx06_(hidx, ['Last Status']);
     if (idxDate === -1 || idxStatus === -1) continue;
 
-    const sortSpec = [
-      { column: idxDate + 1, ascending: true },
-      { column: idxStatus + 1, ascending: true }
-    ];
-
     try {
-      const f = sh.getFilter();
-      if (f && f.getRange()) {
-        f.getRange().sort(sortSpec);
+      const f = sh.getFilter ? sh.getFilter() : null;
+      if (f && f.getRange) {
+        const fr = f.getRange();
+        const sr = fr.getRow();
+        const sc = fr.getColumn();
+        const nr = fr.getNumRows();
+        const nc = fr.getNumColumns();
+        if (nr <= 1) continue;
+        const absDate = idxDate + 1;
+        const absStatus = idxStatus + 1;
+        const frColEnd = sc + nc - 1;
+        if (absDate < sc || absDate > frColEnd || absStatus < sc || absStatus > frColEnd) continue;
+        sh.getRange(sr + 1, sc, nr - 1, nc).sort([
+          { column: absDate - sc + 1, ascending: true },
+          { column: absStatus - sc + 1, ascending: true }
+        ]);
       } else {
-        sh.getRange(2, 1, lastRow - 1, lastCol).sort(sortSpec);
+        sh.getRange(2, 1, lastRow - 1, lastCol).sort([
+          { column: idxDate + 1, ascending: true },
+          { column: idxStatus + 1, ascending: true }
+        ]);
       }
     } catch (e) {
       // no-op

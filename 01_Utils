@@ -617,6 +617,22 @@ function serialToDate_(n) {
 }
 
 /**
+ * Allow native Date parsing only for strings that carry an explicit timezone.
+ * This avoids silent locale/timezone drift for ambiguous date strings.
+ */
+function canUseNativeDateParse_(value) {
+  const s = String(value == null ? '' : value).trim();
+  if (!s) return false;
+  return /(?:[zZ]|[+-]\d{2}:?\d{2})$/.test(s) || /GMT/i.test(s) || /UTC/i.test(s);
+}
+
+function tryNativeParseUnambiguousDate_(value) {
+  if (!canUseNativeDateParse_(value)) return null;
+  const d = new Date(String(value).trim());
+  return isValidDateObject_(d) ? d : null;
+}
+
+/**
  * Parse date from mixed inputs.
  * For ambiguous slash format, defaults to DD/MM/YYYY (Indonesia-friendly).
  */
@@ -733,8 +749,8 @@ function normalizeDate_(value) {
     if (!isNaN(n)) return serialToDate_(n);
   }
 
-  // Last resort: native parse (kept, but can be unpredictable)
-  const dNative = new Date(s0);
+  // Last resort: allow native parsing only for strings with explicit timezone information.
+  const dNative = tryNativeParseUnambiguousDate_(s0);
   return isValidDateObject_(dNative) ? dNative : null;
 }
 

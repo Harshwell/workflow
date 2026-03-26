@@ -1259,16 +1259,31 @@ function __diffDays06_(d1, d2) {
 function __toDate06_(v) {
   if (!v) return null;
   if (Object.prototype.toString.call(v) === '[object Date]' && !isNaN(v.getTime())) return v;
+  if (typeof normalizeDate_ === 'function') {
+    try {
+      const d0 = normalizeDate_(v);
+      if (d0 && !isNaN(d0.getTime())) return d0;
+    } catch (e0) {}
+  }
+  if (typeof parseClaimLastUpdatedDatetime06c_ === 'function') {
+    try {
+      const d1 = parseClaimLastUpdatedDatetime06c_(v);
+      if (d1 && !isNaN(d1.getTime())) return d1;
+    } catch (e1) {}
+  }
   if (typeof v === 'number') {
-    // Google Sheets serial dates are usually returned as Date objects; this is a best-effort fallback.
-    const d = new Date(Math.round((v - 25569) * 86400000));
-    return isNaN(d.getTime()) ? null : d;
+    const dNum = new Date(Math.round((v - 25569) * 86400000));
+    return isNaN(dNum.getTime()) ? null : dNum;
   }
   if (typeof v === 'string') {
     const s = v.trim();
     if (!s) return null;
-    const d = new Date(s);
-    return isNaN(d.getTime()) ? null : d;
+    if (typeof tryNativeParseUnambiguousDate_ === 'function') {
+      try {
+        const dStr = tryNativeParseUnambiguousDate_(s);
+        if (dStr && !isNaN(dStr.getTime())) return dStr;
+      } catch (e2) {}
+    }
   }
   return null;
 }
@@ -1492,12 +1507,19 @@ function findOptionalHeaderColumn06c_(sheet, headerName) {
  * Lookup key is normalized (trim + upper).
  */
 function getStatusTypeMap06c_() {
-  // Allow override via CONFIG (centralized) if present.
+  // Allow override via CONFIG / source-of-truth constants when present.
   try {
-    if (CONFIG && CONFIG.STATUS_TYPE_MAP) return CONFIG.STATUS_TYPE_MAP;
+    if (CONFIG && (CONFIG.STATUS_TYPE_MAP || CONFIG.statusTypeMap || CONFIG.statusTypeByLastStatus)) {
+      return CONFIG.STATUS_TYPE_MAP || CONFIG.statusTypeMap || CONFIG.statusTypeByLastStatus;
+    }
   } catch (e) {}
+  try {
+    if (typeof STATUS_TYPE_BY_LAST_STATUS !== 'undefined' && STATUS_TYPE_BY_LAST_STATUS) {
+      return STATUS_TYPE_BY_LAST_STATUS;
+    }
+  } catch (e2) {}
 
-  // Fallback: mapping provided by user.
+  // Fallback: local mapping kept for resilience.
   return {
     'CLAIM_INITIATE': 'OPEN',
     'QOALA_ASK_DETAIL': 'FOLLOW UP',
@@ -1757,11 +1779,6 @@ function sortOperationalSheetPreserveFilter06c_(sheet) {
   const idxStatus = __findHeaderIndexFlexible06_(header, 'Last Status');
   if (idxDate === -1 || idxStatus === -1) return;
 
-  const sortSpec = [
-    { column: idxDate + 1, ascending: true },
-    { column: idxStatus + 1, ascending: true }
-  ];
-
   try {
     const filter = sheet.getFilter ? sheet.getFilter() : null;
     if (filter && filter.getRange) {
@@ -1770,16 +1787,24 @@ function sortOperationalSheetPreserveFilter06c_(sheet) {
       const sc = fr.getColumn();
       const nr = fr.getNumRows();
       const nc = fr.getNumColumns();
-      if (nr > 1) {
-        // Sort body only (exclude header), keep filter intact.
-        sheet.getRange(sr + 1, sc, nr - 1, nc).sort(sortSpec);
-      }
+      if (nr <= 1) return;
+      const absDate = idxDate + 1;
+      const absStatus = idxStatus + 1;
+      const frColEnd = sc + nc - 1;
+      if (absDate < sc || absDate > frColEnd || absStatus < sc || absStatus > frColEnd) return;
+      sheet.getRange(sr + 1, sc, nr - 1, nc).sort([
+        { column: absDate - sc + 1, ascending: true },
+        { column: absStatus - sc + 1, ascending: true }
+      ]);
       return;
     }
   } catch (e0) {}
 
   try {
-    sheet.getRange(1, 1, lr, lc).sort(sortSpec);
+    sheet.getRange(2, 1, lr - 1, lc).sort([
+      { column: idxDate + 1, ascending: true },
+      { column: idxStatus + 1, ascending: true }
+    ]);
   } catch (e1) {}
 }
 

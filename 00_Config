@@ -40,7 +40,7 @@ App.Registry = App.Registry || (function () {
 })();
 
 /** VERSION */
-const APP_VERSION = '2026.03.26-enterprise-refactor-r2';
+const APP_VERSION = '2026.03.26-enterprise-refactor-r3-hardening';
 
 /** Schema version for managed sheets */
 const SCHEMA_VERSION = 5;
@@ -1621,296 +1621,6 @@ const OPS_ROUTING_POLICY = Object.freeze({
   })
 });
 
-const CONFIG = Object.freeze({
-  sectionIndex: CONFIG_SECTION_INDEX,
-  spreadsheets: {
-    // Single master workbook (all flows write here)
-    Master: MASTER_SPREADSHEET_ID,
-
-    // Backward-compat keys (older modules still call these)
-    Farhan: MASTER_SPREADSHEET_ID,
-    Admin:  MASTER_SPREADSHEET_ID,
-    Meilani:MASTER_SPREADSHEET_ID,
-    Suci:   MASTER_SPREADSHEET_ID,
-    Adi:    MASTER_SPREADSHEET_ID
-  },
-
-  // Master workbook identifiers
-  masterSpreadsheetId: MASTER_SPREADSHEET_ID,
-  masterRawSheetName: MASTER_RAW_SHEET_NAME,
-
-  // Ingestion policies
-  emailIngest: EMAIL_INGEST_POLICY,
-  subEmailIngest: SUB_EMAIL_INGEST_POLICY,
-  subFlow: SUB_FLOW_SPEC,
-  formIngestPolicy: FORM_INGEST_POLICY,
-  rawDataCustomTailHeaders: RAW_DATA_CUSTOM_TAIL_HEADERS,
-
-  // Mapping Team Claim is deprecated (process all data into master; no PIC routing)
-  mappingEnabled: false,
-
-  mappingSpreadsheetId: getPropString_('MAPPING_SPREADSHEET_ID', '1-Und57aVtmLYEovFuNyHQjvIrV8BfpyQVTHiDiWcpvk'),
-  mappingSheetName: getPropString_('MAPPING_SHEET_NAME', '[UPDATED] Mapping Team Claim'),
-
-  logSpreadsheetId: getPropString_('LOG_SPREADSHEET_ID', '1TC9YjDo6qxWq17zPYEBqIryhaYbUMqGtaSH0F-G8IwE'),
-  logSheetName: getPropString_('LOG_SHEET_NAME', 'Log'),
-  detailsSheetName: 'Details',
-  detailsLogPolicy: DETAILS_LOG_POLICY,
-  mappingErrorLogPolicy: MAPPING_ERROR_LOG_POLICY,
-  logPolicy: LOG_POLICY,
-
-  // WebApp movement tracking
-  webappProjectSpreadsheetId: WEBAPP_PROJECT_SPREADSHEET_ID,
-  webappMovement: WEBAPP_MOVEMENT_POLICY,
-
-  // Status type mapping (mandatory operational column)
-  statusTypeByLastStatus: STATUS_TYPE_BY_LAST_STATUS,
-  positionByLastStatus: POSITION_BY_LAST_STATUS,
-
-  // Second-year policy (STRICT)
-  secondYearMarketValue: SECOND_YEAR_MARKET_VALUE_POLICY,
-
-  // Feature flags (operational knobs)
-  features: Object.freeze({
-    // Schema validation (fail fast on unexpected header drift)
-    strictSchemaValidation: getPropBool_('STRICT_SCHEMA_VALIDATION', false),
-
-    // Run metrics sink (append summary per run)
-    enableRunMetrics: getPropBool_('ENABLE_RUN_METRICS', true),
-
-    // Durable task queue mode (experimental)
-    useTaskQueue: getPropBool_('USE_TASK_QUEUE', false),
-
-    // Activity Log column is OPTIONAL by user spec; default false means we will NOT auto-add it.
-    ensureActivityLogColumn: getPropBool_('ENSURE_ACTIVITY_LOG_COLUMN', false),
-
-    // Idempotency cache (transaction tokens)
-    enableTxnIdempotency: getPropBool_('ENABLE_TXN_IDEMPOTENCY', true)
-  }),
-
-  validationPolicy: VALIDATION_POLICY,
-  linkPolicy: LINK_POLICY,
-  checkboxPolicy: CHECKBOX_POLICY,
-  fixedSchemaPolicy: FIXED_SCHEMA_POLICY,
-  dateCoercionPolicy: DATE_COERCION_POLICY,
-  columnTypes: COLUMN_TYPES,
-  columnAlignment: COLUMN_ALIGNMENT,
-  associateColumnPolicy: ASSOCIATE_COLUMN_POLICY,
-  columnPlacementRules: COLUMN_PLACEMENT_RULES,
-
-  opsRouting: OPS_ROUTING_POLICY,
-  opsRoutingPolicy: OPS_ROUTING_POLICY,
-  opsRoutingPolicyV2: OPS_ROUTING_POLICY,
-
-  /**
-   * Workbook profiles determine which sheets are ensured/managed.
-   * IMPORTANT: ADMIN must never create optional sheets.
-   */
-  workbookProfiles: Object.freeze({
-    // Profiles kept for backward-compat, but both point to the same master workbook + sheet set.
-    [WORKBOOK_PROFILES.PIC]: Object.freeze({
-      core: Object.freeze([MASTER_RAW_SHEET_NAME]),
-      operational: Object.freeze([
-        OPS_ROUTING_POLICY.SHEETS.SUBMISSION,
-        OPS_ROUTING_POLICY.SHEETS.ASK_DETAIL,
-        OPS_ROUTING_POLICY.SHEETS.OR_OLD,
-        OPS_ROUTING_POLICY.SHEETS.START,
-        OPS_ROUTING_POLICY.SHEETS.FINISH,
-        OPS_ROUTING_POLICY.SHEETS.SC_FARHAN,
-        OPS_ROUTING_POLICY.SHEETS.SC_MEILANI,
-        OPS_ROUTING_POLICY.SHEETS.SC_IVAN,
-        OPS_ROUTING_POLICY.SHEETS.PO,
-        OPS_ROUTING_POLICY.SHEETS.EXCLUSION
-      ]),
-      optional: Object.freeze([]) // deprecated in new master flow
-    }),
-    [WORKBOOK_PROFILES.ADMIN]: Object.freeze({
-      core: Object.freeze([MASTER_RAW_SHEET_NAME]),
-      operational: Object.freeze([
-        OPS_ROUTING_POLICY.SHEETS.SUBMISSION,
-        OPS_ROUTING_POLICY.SHEETS.ASK_DETAIL,
-        OPS_ROUTING_POLICY.SHEETS.OR_OLD,
-        OPS_ROUTING_POLICY.SHEETS.START,
-        OPS_ROUTING_POLICY.SHEETS.FINISH,
-        OPS_ROUTING_POLICY.SHEETS.SC_FARHAN,
-        OPS_ROUTING_POLICY.SHEETS.SC_MEILANI,
-        OPS_ROUTING_POLICY.SHEETS.SC_IVAN,
-        OPS_ROUTING_POLICY.SHEETS.PO,
-        OPS_ROUTING_POLICY.SHEETS.EXCLUSION
-      ]),
-      optional: Object.freeze([])
-    })
-  }),
-
-  /**
-   * Backward-compatible sheet buckets used by older code paths.
-   * New code should use workbookProfiles above.
-   */
-  sheetsByPic: {
-    // Backward-compatible buckets (new code should use workbookProfiles + OPS_ROUTING_POLICY)
-    defaultMain: [MASTER_RAW_SHEET_NAME],
-    picOperational: [
-      OPS_ROUTING_POLICY.SHEETS.SUBMISSION,
-      OPS_ROUTING_POLICY.SHEETS.ASK_DETAIL,
-      OPS_ROUTING_POLICY.SHEETS.OR_OLD,
-      OPS_ROUTING_POLICY.SHEETS.START,
-      OPS_ROUTING_POLICY.SHEETS.FINISH,
-      OPS_ROUTING_POLICY.SHEETS.SC_FARHAN,
-      OPS_ROUTING_POLICY.SHEETS.SC_MEILANI,
-      OPS_ROUTING_POLICY.SHEETS.SC_IVAN,
-      OPS_ROUTING_POLICY.SHEETS.PO,
-      OPS_ROUTING_POLICY.SHEETS.EXCLUSION
-    ],
-    adminOperational: [
-      OPS_ROUTING_POLICY.SHEETS.SUBMISSION,
-      OPS_ROUTING_POLICY.SHEETS.ASK_DETAIL,
-      OPS_ROUTING_POLICY.SHEETS.OR_OLD,
-      OPS_ROUTING_POLICY.SHEETS.START,
-      OPS_ROUTING_POLICY.SHEETS.FINISH,
-      OPS_ROUTING_POLICY.SHEETS.SC_FARHAN,
-      OPS_ROUTING_POLICY.SHEETS.SC_MEILANI,
-      OPS_ROUTING_POLICY.SHEETS.SC_IVAN,
-      OPS_ROUTING_POLICY.SHEETS.PO,
-      OPS_ROUTING_POLICY.SHEETS.EXCLUSION
-    ],
-    optional: []
-  },
-
-  filePrefixes: {
-    main: '_qgp__id__claim_daily_monitoring',
-    aging: 'list_of_claims_with_aging',
-    agingStd: 'list_of_claims_with_aging__standardization'
-  },
-
-  patterns: {
-    b2bPartners: [
-      'EMG','GDN','Helios','MonsterAR','Buminet','AIMS','AIRMAS','Staffinc',
-      'TIGA JEJAK LANGKAH','WPS','PPS','Archor'
-    ],
-    specialPartners: ['Renewal Qoala', 'Qoala Monsta'],
-    evBikePartners: [
-      'Best EV','EV SanMoto','Favoriet Ofero Aceh','Franada Ev Bike Batam','GODA',
-      'King EV','KingEV','MDM Ofero EV-Bike','Niceral EV Bike','Ofero','Ofero Nusantara',
-      'Otobot','Pacific','Pratama Motor','Sahabat EV- Ofero Store','U-Winfly HM Yamin Medan',
-      'U-WINFLY MEDAN','Ukka Bike','Ukka Ebike PKY','United Bike'
-    ]
-  },
-
-  statusRoutingPIC: {
-    // Deprecated naming; kept so older modules compile.
-    [OPS_ROUTING_POLICY.SHEETS.SUBMISSION]: OPS_ROUTING_POLICY.LAST_STATUS_BY_SHEET['Submission'],
-    [OPS_ROUTING_POLICY.SHEETS.ASK_DETAIL]: OPS_ROUTING_POLICY.LAST_STATUS_BY_SHEET['Ask Detail'],
-    [OPS_ROUTING_POLICY.SHEETS.OR_OLD]: OPS_ROUTING_POLICY.LAST_STATUS_BY_SHEET['OR - OLD'],
-    [OPS_ROUTING_POLICY.SHEETS.START]: OPS_ROUTING_POLICY.LAST_STATUS_BY_SHEET['Start'],
-    [OPS_ROUTING_POLICY.SHEETS.FINISH]: OPS_ROUTING_POLICY.LAST_STATUS_BY_SHEET['Finish'],
-    [OPS_ROUTING_POLICY.SHEETS.SC_FARHAN]: OPS_ROUTING_POLICY.LAST_STATUS_BY_SHEET['__SC_SHARED__'],
-    [OPS_ROUTING_POLICY.SHEETS.SC_MEILANI]: OPS_ROUTING_POLICY.LAST_STATUS_BY_SHEET['__SC_SHARED__'],
-    [OPS_ROUTING_POLICY.SHEETS.SC_IVAN]: OPS_ROUTING_POLICY.LAST_STATUS_BY_SHEET['__SC_SHARED__'],
-    [OPS_ROUTING_POLICY.SHEETS.PO]: OPS_ROUTING_POLICY.LAST_STATUS_BY_SHEET['PO'],
-    [OPS_ROUTING_POLICY.SHEETS.EXCLUSION]: OPS_ROUTING_POLICY.LAST_STATUS_BY_SHEET['Exclusion']
-  },
-
-  statusRoutingAdmin: {
-    // Deprecated naming; Admin is no longer a separate routing universe in the master workbook.
-    [OPS_ROUTING_POLICY.SHEETS.SUBMISSION]: OPS_ROUTING_POLICY.LAST_STATUS_BY_SHEET['Submission'],
-    [OPS_ROUTING_POLICY.SHEETS.ASK_DETAIL]: OPS_ROUTING_POLICY.LAST_STATUS_BY_SHEET['Ask Detail'],
-    [OPS_ROUTING_POLICY.SHEETS.OR_OLD]: OPS_ROUTING_POLICY.LAST_STATUS_BY_SHEET['OR - OLD'],
-    [OPS_ROUTING_POLICY.SHEETS.START]: OPS_ROUTING_POLICY.LAST_STATUS_BY_SHEET['Start'],
-    [OPS_ROUTING_POLICY.SHEETS.FINISH]: OPS_ROUTING_POLICY.LAST_STATUS_BY_SHEET['Finish'],
-    [OPS_ROUTING_POLICY.SHEETS.SC_FARHAN]: OPS_ROUTING_POLICY.LAST_STATUS_BY_SHEET['__SC_SHARED__'],
-    [OPS_ROUTING_POLICY.SHEETS.SC_MEILANI]: OPS_ROUTING_POLICY.LAST_STATUS_BY_SHEET['__SC_SHARED__'],
-    [OPS_ROUTING_POLICY.SHEETS.SC_IVAN]: OPS_ROUTING_POLICY.LAST_STATUS_BY_SHEET['__SC_SHARED__'],
-    [OPS_ROUTING_POLICY.SHEETS.PO]: OPS_ROUTING_POLICY.LAST_STATUS_BY_SHEET['PO'],
-    [OPS_ROUTING_POLICY.SHEETS.EXCLUSION]: OPS_ROUTING_POLICY.LAST_STATUS_BY_SHEET['Exclusion']
-  },
-
-  formFields: {
-    // Deprecated: no longer used (single master sheet target).
-    extractToSpreadsheet: '',
-
-    // Kept for backward-compat (but new code should use FORM_INGEST_POLICY).
-    fileUploadFieldName: FORM_INGEST_POLICY.FILE_UPLOAD_FIELD_NAME,
-
-    // New: choose which pipeline to run from the same Form.
-    flowFieldName: FORM_INGEST_POLICY.FLOW_FIELD_NAME,
-
-    // Optional: 2 separate upload questions for SUB (OLD + NEW).
-    subOldFileUploadFieldName: FORM_INGEST_POLICY.SUB_OLD_FILE_UPLOAD_FIELD_NAME,
-    subNewFileUploadFieldName: FORM_INGEST_POLICY.SUB_NEW_FILE_UPLOAD_FIELD_NAME
-  },
-
-  headers: {
-    claimNumber: 'claim_number',
-    businessPartner: 'business_partner_name',
-    productName: 'product_name',
-    policyStartDate: 'policy_start_date',
-    policyEndDate: 'policy_end_date',
-    claimSubmissionDate: 'claim_submission_date',
-    claimSubmittedDatetime: 'claim_submitted_datetime',
-    lastActivityLogDate: 'last_activity_log_date',
-    lastUpdate: 'last_update',
-    // NEW: Sub flow datetime sources
-    claimLastUpdatedDatetime: 'claim_last_updated_datetime',
-    activityLogDatetime: 'activity_log_datetime',
-    lastActivityLogDatetime: 'last_activity_log_datetime',
-    activityLog: 'activity_log',
-    lastActivityLog: 'last_activity_log',
-    // NEW: Strict Second-Year source
-    monthPolicyAging: 'month_policy_aging',
-    daysToEndPolicy: 'days_to_end_policies',
-    daysAgingFromSubmission: 'days_aging_from_submission',
-    insuranceCode: 'insurance_code',
-    lastStatus: 'last_status',
-    lastStatusAging: 'last_status_aging',
-    activityLogAging: 'activity_log_aging',
-    dashboardLink: 'dashboard_link',
-    sourceSystem: 'source_system_name',
-        // Aliases for backward/optional sheet compatibility
-    sourceDb: 'source_system_name',
-    serviceCenter: 'sc_name',
-    agingFromLastStatus: 'activity_log_aging',
-    tat: 'days_aging_from_submission',
-    sumInsured: 'sum_insured_amount',
-partnerCodeAging: 'insurance_partner_code',
-    sumInsuredAmount: 'sum_insured_amount',
-    ownRiskAmount: 'claim_own_risk_amount',
-    nettClaimAmount: 'nett_claim_amount',
-    qLMonths: 'Q-L (Months)',
-    associate: 'Associate',
-    orColumn: 'OR',
-    updateStatus: 'Update Status',
-    timestamp: 'Timestamp',
-    status: 'Status',
-    deviceType: 'device_type',
-    scName: 'sc_name',
-    partnerName: 'business_partner_name',
-    partner: 'business_partner_name',
-    product: 'product_name',
-    // Alias for operational column Insurance
-    insurancePartnerName: 'insurance_partner_name',
-    insuranceName: 'insurance_partner_name',
-    insurance: 'insurance_partner_name',
-    deviceBrand: 'device_brand',
-    brand: 'device_brand',
-    imeiNumber: 'imei_number',
-    // Alias used by some attachments
-    serialNumber: 'imei_number',
-    claimAmount: 'claim_amount',
-    claimOwnRiskAmount: 'claim_own_risk_amount',
-    // Classify OLD/NEW
-    db: 'DB',
-    dbClass: 'DB',
-    dbStatus: 'DB',
-    ala: 'activity_log_aging',
-    ALA: 'activity_log_aging',
-    TAT: 'days_aging_from_submission',
-    LSA: 'last_status_aging',
-    // Alias for raw header candidates
-    device_type: 'device_type',
-  }
-});
-
-
 /** -------------------------
  * Mapping Team Claim policy (PIC mapping source)
  * -------------------------
@@ -2172,6 +1882,312 @@ const RAW_DATA_REORDER_POLICY = Object.freeze({
   ])
 });
 
+
+const CONFIG = Object.freeze({
+  sectionIndex: CONFIG_SECTION_INDEX,
+  spreadsheets: {
+    // Single master workbook (all flows write here)
+    Master: MASTER_SPREADSHEET_ID,
+
+    // Backward-compat keys (older modules still call these)
+    Farhan: MASTER_SPREADSHEET_ID,
+    Admin:  MASTER_SPREADSHEET_ID,
+    Meilani:MASTER_SPREADSHEET_ID,
+    Suci:   MASTER_SPREADSHEET_ID,
+    Adi:    MASTER_SPREADSHEET_ID
+  },
+
+  // Master workbook identifiers
+  masterSpreadsheetId: MASTER_SPREADSHEET_ID,
+  masterRawSheetName: MASTER_RAW_SHEET_NAME,
+
+  // Ingestion policies
+  emailIngest: EMAIL_INGEST_POLICY,
+  subEmailIngest: SUB_EMAIL_INGEST_POLICY,
+  subFlow: SUB_FLOW_SPEC,
+  formIngestPolicy: FORM_INGEST_POLICY,
+  rawDataCustomTailHeaders: RAW_DATA_CUSTOM_TAIL_HEADERS,
+
+  // Mapping Team Claim is deprecated (process all data into master; no PIC routing)
+  mappingEnabled: false,
+
+  mappingSpreadsheetId: getPropString_('MAPPING_SPREADSHEET_ID', '1-Und57aVtmLYEovFuNyHQjvIrV8BfpyQVTHiDiWcpvk'),
+  mappingSheetName: getPropString_('MAPPING_SHEET_NAME', '[UPDATED] Mapping Team Claim'),
+
+  logSpreadsheetId: getPropString_('LOG_SPREADSHEET_ID', '1TC9YjDo6qxWq17zPYEBqIryhaYbUMqGtaSH0F-G8IwE'),
+  logSheetName: getPropString_('LOG_SHEET_NAME', 'Log'),
+  detailsSheetName: 'Details',
+  detailsLogPolicy: DETAILS_LOG_POLICY,
+  mappingErrorLogPolicy: MAPPING_ERROR_LOG_POLICY,
+  logPolicy: LOG_POLICY,
+
+  // WebApp movement tracking
+  webappProjectSpreadsheetId: WEBAPP_PROJECT_SPREADSHEET_ID,
+  webappMovement: WEBAPP_MOVEMENT_POLICY,
+
+  // Status type mapping (mandatory operational column)
+  statusTypeByLastStatus: STATUS_TYPE_BY_LAST_STATUS,
+  positionByLastStatus: POSITION_BY_LAST_STATUS,
+
+  // Second-year policy (STRICT)
+  secondYearMarketValue: SECOND_YEAR_MARKET_VALUE_POLICY,
+
+  // Highlighting + routing aliases used by older modules / maintenance patches
+  claimHighlightPolicy: CLAIM_HIGHLIGHT_POLICY,
+  CLAIM_HIGHLIGHT_POLICY: CLAIM_HIGHLIGHT_POLICY,
+  claimNumberHeaderAliases: CLAIM_HIGHLIGHT_POLICY.CLAIM_NUMBER_HEADER_ALIASES,
+  CLAIM_NUMBER_HEADER_ALIASES: CLAIM_HIGHLIGHT_POLICY.CLAIM_NUMBER_HEADER_ALIASES,
+  rawDataReorderPolicy: RAW_DATA_REORDER_POLICY,
+  RAW_DATA_REORDER_POLICY: RAW_DATA_REORDER_POLICY,
+
+  // Status/routing aliases kept for backward compatibility
+  STATUS_TYPE_MAP: STATUS_TYPE_BY_LAST_STATUS,
+  statusTypeMap: STATUS_TYPE_BY_LAST_STATUS,
+  statusRouting: OPS_ROUTING_POLICY.LAST_STATUS_BY_SHEET,
+  statusRoutingSub: OPS_ROUTING_POLICY.LAST_STATUS_BY_SHEET,
+  SC_FALLBACK_SHEET: OPS_ROUTING_POLICY.SC_FALLBACK_SHEET,
+  scFallbackSheet: OPS_ROUTING_POLICY.SC_FALLBACK_SHEET,
+  SC_SHEET_ALLOWLISTS: OPS_ROUTING_POLICY.SC_NAME_KEYWORDS,
+
+  // Feature flags (operational knobs)
+  features: Object.freeze({
+    // Schema validation (fail fast on unexpected header drift)
+    strictSchemaValidation: getPropBool_('STRICT_SCHEMA_VALIDATION', false),
+
+    // Run metrics sink (append summary per run)
+    enableRunMetrics: getPropBool_('ENABLE_RUN_METRICS', true),
+
+    // Durable task queue mode (experimental)
+    useTaskQueue: getPropBool_('USE_TASK_QUEUE', false),
+
+    // Activity Log column is OPTIONAL by user spec; default false means we will NOT auto-add it.
+    ensureActivityLogColumn: getPropBool_('ENSURE_ACTIVITY_LOG_COLUMN', false),
+
+    // Idempotency cache (transaction tokens)
+    enableTxnIdempotency: getPropBool_('ENABLE_TXN_IDEMPOTENCY', true)
+  }),
+
+  validationPolicy: VALIDATION_POLICY,
+  linkPolicy: LINK_POLICY,
+  checkboxPolicy: CHECKBOX_POLICY,
+  fixedSchemaPolicy: FIXED_SCHEMA_POLICY,
+  dateCoercionPolicy: DATE_COERCION_POLICY,
+  columnTypes: COLUMN_TYPES,
+  columnAlignment: COLUMN_ALIGNMENT,
+  associateColumnPolicy: ASSOCIATE_COLUMN_POLICY,
+  columnPlacementRules: COLUMN_PLACEMENT_RULES,
+
+  opsRouting: OPS_ROUTING_POLICY,
+  opsRoutingPolicy: OPS_ROUTING_POLICY,
+  opsRoutingPolicyV2: OPS_ROUTING_POLICY,
+
+  /**
+   * Workbook profiles determine which sheets are ensured/managed.
+   * IMPORTANT: ADMIN must never create optional sheets.
+   */
+  workbookProfiles: Object.freeze({
+    // Profiles kept for backward-compat, but both point to the same master workbook + sheet set.
+    [WORKBOOK_PROFILES.PIC]: Object.freeze({
+      core: Object.freeze([MASTER_RAW_SHEET_NAME]),
+      operational: Object.freeze([
+        OPS_ROUTING_POLICY.SHEETS.SUBMISSION,
+        OPS_ROUTING_POLICY.SHEETS.ASK_DETAIL,
+        OPS_ROUTING_POLICY.SHEETS.OR_OLD,
+        OPS_ROUTING_POLICY.SHEETS.START,
+        OPS_ROUTING_POLICY.SHEETS.FINISH,
+        OPS_ROUTING_POLICY.SHEETS.SC_FARHAN,
+        OPS_ROUTING_POLICY.SHEETS.SC_MEILANI,
+        OPS_ROUTING_POLICY.SHEETS.SC_IVAN,
+        OPS_ROUTING_POLICY.SHEETS.PO,
+        OPS_ROUTING_POLICY.SHEETS.EXCLUSION
+      ]),
+      optional: Object.freeze([]) // deprecated in new master flow
+    }),
+    [WORKBOOK_PROFILES.ADMIN]: Object.freeze({
+      core: Object.freeze([MASTER_RAW_SHEET_NAME]),
+      operational: Object.freeze([
+        OPS_ROUTING_POLICY.SHEETS.SUBMISSION,
+        OPS_ROUTING_POLICY.SHEETS.ASK_DETAIL,
+        OPS_ROUTING_POLICY.SHEETS.OR_OLD,
+        OPS_ROUTING_POLICY.SHEETS.START,
+        OPS_ROUTING_POLICY.SHEETS.FINISH,
+        OPS_ROUTING_POLICY.SHEETS.SC_FARHAN,
+        OPS_ROUTING_POLICY.SHEETS.SC_MEILANI,
+        OPS_ROUTING_POLICY.SHEETS.SC_IVAN,
+        OPS_ROUTING_POLICY.SHEETS.PO,
+        OPS_ROUTING_POLICY.SHEETS.EXCLUSION
+      ]),
+      optional: Object.freeze([])
+    })
+  }),
+
+  /**
+   * Backward-compatible sheet buckets used by older code paths.
+   * New code should use workbookProfiles above.
+   */
+  sheetsByPic: {
+    // Backward-compatible buckets (new code should use workbookProfiles + OPS_ROUTING_POLICY)
+    defaultMain: [MASTER_RAW_SHEET_NAME],
+    picOperational: [
+      OPS_ROUTING_POLICY.SHEETS.SUBMISSION,
+      OPS_ROUTING_POLICY.SHEETS.ASK_DETAIL,
+      OPS_ROUTING_POLICY.SHEETS.OR_OLD,
+      OPS_ROUTING_POLICY.SHEETS.START,
+      OPS_ROUTING_POLICY.SHEETS.FINISH,
+      OPS_ROUTING_POLICY.SHEETS.SC_FARHAN,
+      OPS_ROUTING_POLICY.SHEETS.SC_MEILANI,
+      OPS_ROUTING_POLICY.SHEETS.SC_IVAN,
+      OPS_ROUTING_POLICY.SHEETS.PO,
+      OPS_ROUTING_POLICY.SHEETS.EXCLUSION
+    ],
+    adminOperational: [
+      OPS_ROUTING_POLICY.SHEETS.SUBMISSION,
+      OPS_ROUTING_POLICY.SHEETS.ASK_DETAIL,
+      OPS_ROUTING_POLICY.SHEETS.OR_OLD,
+      OPS_ROUTING_POLICY.SHEETS.START,
+      OPS_ROUTING_POLICY.SHEETS.FINISH,
+      OPS_ROUTING_POLICY.SHEETS.SC_FARHAN,
+      OPS_ROUTING_POLICY.SHEETS.SC_MEILANI,
+      OPS_ROUTING_POLICY.SHEETS.SC_IVAN,
+      OPS_ROUTING_POLICY.SHEETS.PO,
+      OPS_ROUTING_POLICY.SHEETS.EXCLUSION
+    ],
+    optional: []
+  },
+
+  filePrefixes: {
+    main: '_qgp__id__claim_daily_monitoring',
+    aging: 'list_of_claims_with_aging',
+    agingStd: 'list_of_claims_with_aging__standardization'
+  },
+
+  patterns: {
+    b2bPartners: [
+      'EMG','GDN','Helios','MonsterAR','Buminet','AIMS','AIRMAS','Staffinc',
+      'TIGA JEJAK LANGKAH','WPS','PPS','Archor'
+    ],
+    specialPartners: ['Renewal Qoala', 'Qoala Monsta'],
+    evBikePartners: [
+      'Best EV','EV SanMoto','Favoriet Ofero Aceh','Franada Ev Bike Batam','GODA',
+      'King EV','KingEV','MDM Ofero EV-Bike','Niceral EV Bike','Ofero','Ofero Nusantara',
+      'Otobot','Pacific','Pratama Motor','Sahabat EV- Ofero Store','U-Winfly HM Yamin Medan',
+      'U-WINFLY MEDAN','Ukka Bike','Ukka Ebike PKY','United Bike'
+    ]
+  },
+
+  statusRoutingPIC: {
+    // Deprecated naming; kept so older modules compile.
+    [OPS_ROUTING_POLICY.SHEETS.SUBMISSION]: OPS_ROUTING_POLICY.LAST_STATUS_BY_SHEET['Submission'],
+    [OPS_ROUTING_POLICY.SHEETS.ASK_DETAIL]: OPS_ROUTING_POLICY.LAST_STATUS_BY_SHEET['Ask Detail'],
+    [OPS_ROUTING_POLICY.SHEETS.OR_OLD]: OPS_ROUTING_POLICY.LAST_STATUS_BY_SHEET['OR - OLD'],
+    [OPS_ROUTING_POLICY.SHEETS.START]: OPS_ROUTING_POLICY.LAST_STATUS_BY_SHEET['Start'],
+    [OPS_ROUTING_POLICY.SHEETS.FINISH]: OPS_ROUTING_POLICY.LAST_STATUS_BY_SHEET['Finish'],
+    [OPS_ROUTING_POLICY.SHEETS.SC_FARHAN]: OPS_ROUTING_POLICY.LAST_STATUS_BY_SHEET['__SC_SHARED__'],
+    [OPS_ROUTING_POLICY.SHEETS.SC_MEILANI]: OPS_ROUTING_POLICY.LAST_STATUS_BY_SHEET['__SC_SHARED__'],
+    [OPS_ROUTING_POLICY.SHEETS.SC_IVAN]: OPS_ROUTING_POLICY.LAST_STATUS_BY_SHEET['__SC_SHARED__'],
+    [OPS_ROUTING_POLICY.SHEETS.PO]: OPS_ROUTING_POLICY.LAST_STATUS_BY_SHEET['PO'],
+    [OPS_ROUTING_POLICY.SHEETS.EXCLUSION]: OPS_ROUTING_POLICY.LAST_STATUS_BY_SHEET['Exclusion']
+  },
+
+  statusRoutingAdmin: {
+    // Deprecated naming; Admin is no longer a separate routing universe in the master workbook.
+    [OPS_ROUTING_POLICY.SHEETS.SUBMISSION]: OPS_ROUTING_POLICY.LAST_STATUS_BY_SHEET['Submission'],
+    [OPS_ROUTING_POLICY.SHEETS.ASK_DETAIL]: OPS_ROUTING_POLICY.LAST_STATUS_BY_SHEET['Ask Detail'],
+    [OPS_ROUTING_POLICY.SHEETS.OR_OLD]: OPS_ROUTING_POLICY.LAST_STATUS_BY_SHEET['OR - OLD'],
+    [OPS_ROUTING_POLICY.SHEETS.START]: OPS_ROUTING_POLICY.LAST_STATUS_BY_SHEET['Start'],
+    [OPS_ROUTING_POLICY.SHEETS.FINISH]: OPS_ROUTING_POLICY.LAST_STATUS_BY_SHEET['Finish'],
+    [OPS_ROUTING_POLICY.SHEETS.SC_FARHAN]: OPS_ROUTING_POLICY.LAST_STATUS_BY_SHEET['__SC_SHARED__'],
+    [OPS_ROUTING_POLICY.SHEETS.SC_MEILANI]: OPS_ROUTING_POLICY.LAST_STATUS_BY_SHEET['__SC_SHARED__'],
+    [OPS_ROUTING_POLICY.SHEETS.SC_IVAN]: OPS_ROUTING_POLICY.LAST_STATUS_BY_SHEET['__SC_SHARED__'],
+    [OPS_ROUTING_POLICY.SHEETS.PO]: OPS_ROUTING_POLICY.LAST_STATUS_BY_SHEET['PO'],
+    [OPS_ROUTING_POLICY.SHEETS.EXCLUSION]: OPS_ROUTING_POLICY.LAST_STATUS_BY_SHEET['Exclusion']
+  },
+
+  formFields: {
+    // Deprecated: no longer used (single master sheet target).
+    extractToSpreadsheet: '',
+
+    // Kept for backward-compat (but new code should use FORM_INGEST_POLICY).
+    fileUploadFieldName: FORM_INGEST_POLICY.FILE_UPLOAD_FIELD_NAME,
+
+    // New: choose which pipeline to run from the same Form.
+    flowFieldName: FORM_INGEST_POLICY.FLOW_FIELD_NAME,
+
+    // Optional: 2 separate upload questions for SUB (OLD + NEW).
+    subOldFileUploadFieldName: FORM_INGEST_POLICY.SUB_OLD_FILE_UPLOAD_FIELD_NAME,
+    subNewFileUploadFieldName: FORM_INGEST_POLICY.SUB_NEW_FILE_UPLOAD_FIELD_NAME
+  },
+
+  headers: {
+    claimNumber: 'claim_number',
+    businessPartner: 'business_partner_name',
+    productName: 'product_name',
+    policyStartDate: 'policy_start_date',
+    policyEndDate: 'policy_end_date',
+    claimSubmissionDate: 'claim_submission_date',
+    claimSubmittedDatetime: 'claim_submitted_datetime',
+    lastActivityLogDate: 'last_activity_log_date',
+    lastUpdate: 'last_update',
+    // NEW: Sub flow datetime sources
+    claimLastUpdatedDatetime: 'claim_last_updated_datetime',
+    activityLogDatetime: 'activity_log_datetime',
+    lastActivityLogDatetime: 'last_activity_log_datetime',
+    activityLog: 'activity_log',
+    lastActivityLog: 'last_activity_log',
+    // NEW: Strict Second-Year source
+    monthPolicyAging: 'month_policy_aging',
+    daysToEndPolicy: 'days_to_end_policies',
+    daysAgingFromSubmission: 'days_aging_from_submission',
+    insuranceCode: 'insurance_code',
+    lastStatus: 'last_status',
+    lastStatusAging: 'last_status_aging',
+    activityLogAging: 'activity_log_aging',
+    dashboardLink: 'dashboard_link',
+    sourceSystem: 'source_system_name',
+        // Aliases for backward/optional sheet compatibility
+    sourceDb: 'source_system_name',
+    serviceCenter: 'sc_name',
+    agingFromLastStatus: 'activity_log_aging',
+    tat: 'days_aging_from_submission',
+    sumInsured: 'sum_insured_amount',
+partnerCodeAging: 'insurance_partner_code',
+    sumInsuredAmount: 'sum_insured_amount',
+    ownRiskAmount: 'claim_own_risk_amount',
+    nettClaimAmount: 'nett_claim_amount',
+    qLMonths: 'Q-L (Months)',
+    associate: 'Associate',
+    orColumn: 'OR',
+    updateStatus: 'Update Status',
+    timestamp: 'Timestamp',
+    status: 'Status',
+    deviceType: 'device_type',
+    scName: 'sc_name',
+    partnerName: 'business_partner_name',
+    partner: 'business_partner_name',
+    product: 'product_name',
+    // Alias for operational column Insurance
+    insurancePartnerName: 'insurance_partner_name',
+    insuranceName: 'insurance_partner_name',
+    insurance: 'insurance_partner_name',
+    deviceBrand: 'device_brand',
+    brand: 'device_brand',
+    imeiNumber: 'imei_number',
+    // Alias used by some attachments
+    serialNumber: 'imei_number',
+    claimAmount: 'claim_amount',
+    claimOwnRiskAmount: 'claim_own_risk_amount',
+    // Classify OLD/NEW
+    db: 'DB',
+    dbClass: 'DB',
+    dbStatus: 'DB',
+    ala: 'activity_log_aging',
+    ALA: 'activity_log_aging',
+    TAT: 'days_aging_from_submission',
+    LSA: 'last_status_aging',
+    // Alias for raw header candidates
+    device_type: 'device_type',
+  }
+});
 
 /** Runtime state (mutated during a run) */
 const RUNTIME = {

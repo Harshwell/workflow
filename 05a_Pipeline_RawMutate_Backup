@@ -376,33 +376,37 @@ function loadAssociateMapping_() {
 function mutateRawInMemory_(rawValues, headerIndexRaw, agingStdMap, agingMap, assocMap) {
   const h = CONFIG.headers;
   const today = new Date();
-  const idxAny_ = (hdrIdx, keys) => {
+  const resolveHdrIdx05a_ = (keys) => {
+    if (typeof idxAny_ === 'function') {
+      const idx = idxAny_(headerIndexRaw, keys, { enableSnakeCase: true });
+      return (idx == null) ? null : idx;
+    }
     for (let i = 0; i < (keys || []).length; i++) {
       const k = keys[i];
       if (!k) continue;
-      const v = hdrIdx[k];
+      const v = headerIndexRaw[k];
       if (v != null) return v;
     }
     return null;
   };
 
 
-  const idxClaim = idxAny_(headerIndexRaw, [h.claimNumber, 'Claim Number', 'claim_number']);
-  const idxBP = idxAny_(headerIndexRaw, [h.businessPartner, 'Business Partner', 'Partner', 'business_partner']);
-  const idxAssoc = idxAny_(headerIndexRaw, [h.associate, 'Associate', 'associate']);
-  const idxLastStatus = idxAny_(headerIndexRaw, [h.lastStatus, 'Last Status', 'last_status']);
-  const idxSubDate = idxAny_(headerIndexRaw, [h.claimSubmissionDate, 'Claim Submission Date', 'Submission Date', 'claim_submission_date', 'submission_date']);
+  const idxClaim = resolveHdrIdx05a_([h.claimNumber, 'Claim Number', 'claim_number']);
+  const idxBP = resolveHdrIdx05a_([h.businessPartner, 'Business Partner', 'Partner', 'business_partner']);
+  const idxAssoc = resolveHdrIdx05a_([h.associate, 'Associate', 'associate']);
+  const idxLastStatus = resolveHdrIdx05a_([h.lastStatus, 'Last Status', 'last_status']);
+  const idxSubDate = resolveHdrIdx05a_([h.claimSubmissionDate, 'Claim Submission Date', 'Submission Date', 'claim_submission_date', 'submission_date']);
 
   const idxInsuranceCodeRaw = idxAny_(headerIndexRaw, [h.insuranceCode, 'Insurance Code', 'insurance_code']);
   const idxLastStatusAgingRaw = idxAny_(headerIndexRaw, ['Last Status Aging', h.lastStatusAging, 'LSA', 'TAT']);
   const idxActLogAgingRaw = idxAny_(headerIndexRaw, ['Activity Log Aging', h.activityLogAging, 'ALA']);
-  const idxClaimSubmittedRaw = idxAny_(headerIndexRaw, [h.claimSubmittedDatetime, 'Claim Submitted Datetime', 'Submitted Datetime', 'claim_submitted_datetime', 'submitted_datetime']);
+  const idxClaimSubmittedRaw = resolveHdrIdx05a_([h.claimSubmittedDatetime, 'Claim Submitted Datetime', 'Submitted Datetime', 'claim_submitted_datetime', 'submitted_datetime']);
 
-  const idxLastUpdate = idxAny_(headerIndexRaw, [h.lastUpdate, 'Last Update', 'last_update']);
+  const idxLastUpdate = resolveHdrIdx05a_([h.lastUpdate, 'Last Update', 'last_update']);
   const idxLastActDate = idxAny_(headerIndexRaw, [h.lastActivityLogDate, 'Last Activity Log Date', 'Last Activity Date', 'last_activity_log_date']);
 
-  const idxPolicyStart = idxAny_(headerIndexRaw, [h.policyStartDate, 'Policy Start Date', 'policy_start_date']);
-  const idxPolicyEnd = idxAny_(headerIndexRaw, [h.policyEndDate, 'Policy End Date', 'policy_end_date']);
+  const idxPolicyStart = resolveHdrIdx05a_([h.policyStartDate, 'Policy Start Date', 'policy_start_date']);
+  const idxPolicyEnd = resolveHdrIdx05a_([h.policyEndDate, 'Policy End Date', 'policy_end_date']);
   const idxClaimSubDateOnly = idxSubDate;
   const idxClaimSubDt = idxClaimSubmittedRaw;
 
