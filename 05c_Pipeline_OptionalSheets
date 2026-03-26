@@ -28,6 +28,13 @@ function __normalizeHeaderText05c_(v) {
     .trim();
 }
 
+/** Read normalized header row safely (supports empty/new sheets). */
+function __getHeaderRow05c_(sh) {
+  if (!sh) return [];
+  const lastCol = Math.max((sh.getLastColumn && sh.getLastColumn()) || 0, 1);
+  return sh.getRange(1, 1, 1, lastCol).getValues()[0].map(__normalizeHeaderText05c_);
+}
+
 /** DB classifier from Claim Number (SFP/SFX/SMR -> OLD, VVMAR/GADLD -> NEW) */
 function computeDbValueFromClaimNumber05c_(claimNumber) {
   const s = String(claimNumber == null ? '' : claimNumber).trim().toUpperCase();
@@ -269,7 +276,7 @@ function processB2B_(ss, rawValues, headerIndexRaw, pic) { // `pic` kept for bac
   const idxOwnRisk = headerIndexRaw[h.ownRiskAmount];
   const idxNett = headerIndexRaw[h.nettClaimAmount];
 
-  let headerRow = sh.getRange(1, 1, 1, sh.getLastColumn()).getValues()[0].map(__normalizeHeaderText05c_);
+  let headerRow = __getHeaderRow05c_(sh);
 
   // Fix: kalau template B2B punya leading blank column (A kosong, header mulai di B),
   // shift schema ke kolom A supaya data nulis dari A (bukan B).
@@ -299,7 +306,7 @@ function processB2B_(ss, rawValues, headerIndexRaw, pic) { // `pic` kept for bac
     const need = ['Claim Number','Start Date','End Date','Details'].map(__normalizeHeaderText05c_);
     const missing = need.filter(n => idxH[n] == null);
     if (missing.length && typeof logLine_ === 'function') {
-      logLine_('ERROR', 'SPECIAL_CASE_SCHEMA_MISSING', 'Missing columns: ' + missing.join(', '), '', '');
+      logLine_('ERROR', 'B2B_SCHEMA_MISSING', 'Missing columns: ' + missing.join(', '), '', '');
     }
   } catch (e) {}
 
@@ -518,7 +525,7 @@ function processSpecialCase_(ss, rawValues, headerIndexRaw, pic) { // `pic` kept
     : (headerIndexRaw['submitted_datetime'] != null) ? headerIndexRaw['submitted_datetime']
     : null;
 
-  let header = sh.getRange(1, 1, 1, sh.getLastColumn()).getValues()[0].map(__normalizeHeaderText05c_);
+  let header = __getHeaderRow05c_(sh);
   let idxH = buildHeaderIndex_(header);
 
   // Ensure mandatory Status Type only when this sheet schema includes Last Status.
@@ -1023,7 +1030,7 @@ function processEVBike_(ss, rawValues, headerIndexRaw, pic) { // `pic` kept for 
     ? headerIndexRaw[h.insurancePartnerName]
     : headerIndexRaw['insurance_partner_name'];
 
-  let header = sh.getRange(1, 1, 1, sh.getLastColumn()).getValues()[0].map(__normalizeHeaderText05c_);
+  let header = __getHeaderRow05c_(sh);
   let idxH = buildHeaderIndex_(header);
 
   // Ensure mandatory Status Type only when this sheet schema includes Last Status.
@@ -1036,7 +1043,7 @@ function processEVBike_(ss, rawValues, headerIndexRaw, pic) { // `pic` kept for 
     const need = ['Claim Number','Start Date','End Date','Details'].map(__normalizeHeaderText05c_);
     const missing = need.filter(n => idxH[n] == null);
     if (missing.length && typeof logLine_ === 'function') {
-      logLine_('ERROR', 'SPECIAL_CASE_SCHEMA_MISSING', 'Missing columns: ' + missing.join(', '), '', '');
+      logLine_('ERROR', 'EVBIKE_SCHEMA_MISSING', 'Missing columns: ' + missing.join(', '), '', '');
     }
   } catch (e) {}
 
@@ -1046,7 +1053,7 @@ function processEVBike_(ss, rawValues, headerIndexRaw, pic) { // `pic` kept for 
   try {
     const subSh = ss.getSheetByName('Submission');
     if (subSh && subSh.getLastRow() > 1 && subSh.getLastColumn() > 1) {
-      const subHeader = subSh.getRange(1, 1, 1, subSh.getLastColumn()).getValues()[0].map(__normalizeHeaderText05c_);
+      const subHeader = __getHeaderRow05c_(subSh);
       const subIdx = buildHeaderIndex_(subHeader);
       const subVals = subSh.getRange(2, 1, subSh.getLastRow() - 1, subHeader.length).getValues();
 
