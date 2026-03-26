@@ -105,7 +105,11 @@ function filterUnknownPartnerRowsForAdmin_(rows) {
     ? compileRoutingIndex_(routingMap)
     : buildRoutingIndex06_(routingMap);
 
+  const coreOrSheet = (typeof OPS_ROUTING_POLICY !== 'undefined' && OPS_ROUTING_POLICY && OPS_ROUTING_POLICY.SHEETS && OPS_ROUTING_POLICY.SHEETS.OR_OLD)
+    ? String(OPS_ROUTING_POLICY.SHEETS.OR_OLD || '').trim()
+    : 'OR - OLD';
   const CORE = { 'Submission': true, 'OR': true, 'Start': true, 'Finish': true };
+  if (coreOrSheet) CORE[coreOrSheet] = true;
 
   return list.filter(r => {
     const st = String((r && r.lastStatus) ? r.lastStatus : '').trim();
@@ -133,12 +137,15 @@ function buildRoutingIndex06_(routingMap) {
 }
 
 function getUnmappedPartnerMinSubmissionDate06_() {
-  // Prefer config, fallback to 2025-06-01.
   let s = null;
   try {
-    s = CONFIG && CONFIG.DETAILS_LOG_POLICY && CONFIG.DETAILS_LOG_POLICY.UNMAPPED_PARTNER_MIN_SUBMISSION_DATE
-      ? CONFIG.DETAILS_LOG_POLICY.UNMAPPED_PARTNER_MIN_SUBMISSION_DATE
-      : null;
+    if (typeof DETAILS_LOG_POLICY !== 'undefined' && DETAILS_LOG_POLICY && DETAILS_LOG_POLICY.UNMAPPED_PARTNER_MIN_SUBMISSION_DATE) {
+      s = DETAILS_LOG_POLICY.UNMAPPED_PARTNER_MIN_SUBMISSION_DATE;
+    } else if (CONFIG && CONFIG.DETAILS_LOG_POLICY && CONFIG.DETAILS_LOG_POLICY.UNMAPPED_PARTNER_MIN_SUBMISSION_DATE) {
+      s = CONFIG.DETAILS_LOG_POLICY.UNMAPPED_PARTNER_MIN_SUBMISSION_DATE;
+    } else if (CONFIG && CONFIG.detailsLogPolicy && CONFIG.detailsLogPolicy.UNMAPPED_PARTNER_MIN_SUBMISSION_DATE) {
+      s = CONFIG.detailsLogPolicy.UNMAPPED_PARTNER_MIN_SUBMISSION_DATE;
+    }
   } catch (e) {}
 
   const fallback = new Date(2025, 5, 1); // June 1, 2025 (local)

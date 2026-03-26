@@ -411,6 +411,15 @@ function findHeaderIndexAny_(headerRowValues, candidates, opts) {
 }
 
 /**
+ * Backward-compatible alias retained for older callers.
+ * Delegates to tolerant header matching so legacy helper names do not break
+ * sorting/schema code paths.
+ */
+function findHeaderIndexByCandidates_(headerRowValues, candidates, opts) {
+  return findHeaderIndexAny_(headerRowValues, candidates, opts);
+}
+
+/**
  * Backward-compatible header index resolver used across modules.
  *
  * Supports:
@@ -1848,13 +1857,18 @@ function assertSheetHasHeaders_(sheet, requiredHeaders, context) {
   const req = Array.isArray(requiredHeaders) ? requiredHeaders : [requiredHeaders];
   const lc = Math.max(sheet.getLastColumn(), 1);
   const hdr = sheet.getRange(1, 1, 1, lc).getValues()[0] || [];
-  const idx = buildHeaderIndex_(hdr);
+  const hdrCi = buildHeaderIndexCi_(hdr);
 
   const missing = [];
   for (let i = 0; i < req.length; i++) {
     const h = String(req[i] || '').trim();
     if (!h) continue;
-    if (!Object.prototype.hasOwnProperty.call(idx, normalizeHeaderKey_(h))) missing.push(h);
+
+    const idx0 = (typeof findHeaderIndexAny_ === 'function')
+      ? findHeaderIndexAny_(hdr, [h], { enableSnakeCase: true })
+      : ((hdrCi[normalizeHeaderKey_(h)] != null) ? hdrCi[normalizeHeaderKey_(h)] : null);
+
+    if (idx0 == null || idx0 < 0) missing.push(h);
   }
   if (!missing.length) return true;
 
