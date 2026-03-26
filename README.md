@@ -1,1 +1,333 @@
 # workflow
+
+Google Apps Script workflow untuk claim pipeline, ingestion, routing, validation, enrichment, dan operational sheet maintenance.
+
+Repo ini sudah punya fondasi yang cukup serius: single master workbook, policy-driven config, safe writer utilities, template-driven sheet assurance, serta flow orchestration untuk **MAIN**, **SUB**, dan **FORM**. Masalah utamanya bukan kurang fitur, tapi **kurang lapisan dokumentasi yang membuat perubahan jadi mudah dipahami dan dirawat**.
+
+Dokumen ini sengaja dibuat tetap ramping. Untuk self-project, dokumentasi yang efektif lebih penting daripada dokumentasi yang banyak tapi jadi dekorasi.
+
+---
+
+## Tujuan dokumentasi
+
+Layer dokumentasi repo ini dibuat dengan prinsip:
+
+1. **Sedikit file, tinggi sinyal**
+2. **Satu pintu masuk utama**
+3. **Perubahan mudah ditelusuri**
+4. **Setiap area punya source of truth yang jelas**
+5. **Cocok untuk self-project, tapi tetap terasa enterprise**
+
+Struktur dokumentasi yang dipakai:
+
+- `README.md` → entrypoint utama, repo map, aturan maintenance, review temuan penting
+- `docs/WORKFLOW_MAP.md` → flow map, diagram, dan change impact map
+
+---
+
+## Repository map
+
+| File | Peran utama | Ubah di sini ketika... |
+|---|---|---|
+| `00_Config` | source of truth untuk policy, mapping, konstanta, flags, routing, workbook/sheet config | menambah status, ubah routing, ubah policy bisnis, ubah IDs/sheet names, ubah feature flags |
+| `01_Utils` | utility layer: safe I/O, coercion, date parsing, header matching, retry, idempotency, gmail/drive helpers | butuh helper generik reusable, bukan business rule |
+| `02_LogAndDetails` | logging dan details reporting | ubah perilaku log/detail, struktur audit output |
+| `03_SheetsAndValidation` | sheet assurance, template header, dropdown propagation, layout enforcement | ubah template sheet, schema heal, dropdown/checkbox/layout |
+| `04_ParseAndAging` | parsing input dan aging derivation | ubah cara membaca file sumber / parsing dataset |
+| `05a_Pipeline_RawMutate_Backup` | raw mutation / backup stage | ubah tahap transform raw sebelum routing lanjutan |
+| `05c_Pipeline_OptionalSheets` | optional sheet processors | ubah logika B2B / EV-Bike / Special Case |
+| `06a_EntryPoints` | trigger entrypoints dan flow orchestration MAIN / SUB / FORM | ubah trigger, orchestration flow, queue consumer, attachment process orchestration |
+| `06b_PipelineAndEnrichment` | enrichment / main pipeline logic | ubah enrichment atau tahap pipeline utama |
+| `06c_PostProcessAndUtils` | post-process, status type, movement/webapp helpers, final utilities | ubah finalization, movement tracking, atau util pasca pipeline |
+
+---
+
+## Arsitektur singkat
+
+Secara konseptual repo ini terdiri dari 4 layer:
+
+### 1. Policy layer
+Berada terutama di `00_Config`.
+
+Isi layer ini:
+- status routing
+- status type / position mapping
+- workbook profile
+- sheet template expectations
+- feature flags
+- optional sheet policy
+- ingestion policy
+- runtime knobs
+
+### 2. Utility layer
+Berada terutama di `01_Utils`.
+
+Isi layer ini:
+- safe write helpers
+- normalization helpers
+- header matching
+- typed coercion
+- retry / idempotency
+- generic Gmail / Drive helpers
+
+### 3. Schema & presentation layer
+Berada terutama di `03_SheetsAndValidation`.
+
+Isi layer ini:
+- ensure sheet
+- template header
+- dropdown propagation
+- checkbox enforcement
+- number format / alignment
+- profile-based sheet provisioning
+
+### 4. Flow orchestration + processing layer
+Berada terutama di `04_*`, `05*`, `06*`.
+
+Isi layer ini:
+- file ingestion
+- parsing
+- raw update
+- routing
+- enrichment
+- optional sheets
+- post-process
+- trigger execution
+
+---
+
+## Flow yang ada
+
+### MAIN
+Flow utama untuk daily claim monitoring.
+
+Ringkasnya:
+1. cari email queued MAIN
+2. ambil attachment dashboard
+3. convert XLSX ke temp spreadsheet
+4. jalankan pipeline ke master workbook
+5. cleanup email jika sukses
+
+### SUB
+Flow operational dashboard incremental.
+
+Ringkasnya:
+1. cari email queued SUB
+2. ambil 2 attachment: OLD + NEW
+3. copy ke `Raw OLD` dan `Raw NEW`
+4. update operational sheets by Claim Number
+5. relocate row berdasarkan status routing
+6. sort sheet operasional
+7. movement snapshot / tracking
+8. cleanup email jika sukses penuh
+
+### FORM / MANUAL
+Flow alternatif untuk submit file manual dari Form/Drive.
+
+Ringkasnya:
+1. baca flow selector dan file upload
+2. autodetect MAIN atau SUB jika perlu
+3. jalankan flow yang sama dengan orchestration utama
+4. simpan timing dan log seperti flow lain
+
+Detail diagram dan impact map ada di `docs/WORKFLOW_MAP.md`.
+
+---
+
+## Aturan maintenance
+
+### Ubah status atau routing?
+Mulai dari `00_Config`.
+
+Cek minimal bagian berikut:
+- `OPS_ROUTING_POLICY`
+- `STATUS_TYPE_BY_LAST_STATUS`
+- `POSITION_BY_LAST_STATUS`
+- `FINISH_STATUSES`
+- policy sheet khusus seperti SC / PO / Exclusion / Special Case
+
+### Ubah template kolom sheet?
+Mulai dari `03_SheetsAndValidation`.
+
+Cek minimal bagian berikut:
+- `SV03_TEMPLATES`
+- `ensurePicSheets_`
+- `sv03_ensureSheetWithHeader_`
+- `sv03_enforceStandardLayoutForSheet_`
+
+### Ubah parsing / datetime / header matching?
+Mulai dari `01_Utils` dan `04_ParseAndAging`.
+
+### Ubah trigger atau orchestration flow?
+Mulai dari `06a_EntryPoints`.
+
+### Ubah optional sheet behavior?
+Mulai dari `05c_Pipeline_OptionalSheets` dan policy pendukung di `00_Config`.
+
+---
+
+## Dokumentasi maintenance model
+
+Supaya dokumentasi tetap rapi dan tidak jadi museum file markdown, gunakan aturan ini:
+
+### Selalu update `README.md` jika:
+- ada module baru
+- ada flow baru
+- ada perubahan source of truth
+- ada sheet/route penting yang berpindah ownership
+- ada perubahan cara maintainer harus melakukan modifikasi
+
+### Selalu update `docs/WORKFLOW_MAP.md` jika:
+- sequence flow berubah
+- ada node proses baru
+- ada branch logic baru
+- ada perubahan dependency antar layer
+
+### Jangan tambah file dokumentasi baru kecuali benar-benar perlu
+Default-nya cukup 2 file ini.
+
+Kalau suatu hari butuh file tambahan, prioritaskan urutan ini:
+1. update file existing dulu
+2. tambah section baru di file existing
+3. baru buat file baru kalau memang tidak masuk akal digabung
+
+---
+
+## Checklist sebelum merge perubahan besar
+
+- source of truth perubahan sudah jelas
+- perubahan policy tidak duplikatif
+- template sheet tidak bertentangan dengan routing
+- flow MAIN / SUB / FORM tetap konsisten
+- backward compatibility memang sengaja dipertahankan, bukan kebetulan
+- perubahan status baru sudah ikut:
+  - routing
+  - status type
+  - position
+  - optional sheet logic jika relevan
+  - dokumentasi jika dampaknya lintas modul
+
+---
+
+## Code review summary
+
+Berikut temuan paling penting dari review awal repo ini.
+
+### Yang sudah bagus
+
+- Struktur modul numerik sudah memberi urutan mental yang cukup jelas
+- Utility layer cukup kaya dan niatnya benar: safe write, normalization, retry, idempotency
+- Config cukup kuat untuk jadi policy registry
+- Sheet validation/template layer sudah lumayan matang
+- Ada usaha observability, introspection, dan movement tracking
+- Ada banyak guard untuk menjaga backward compatibility
+
+### Yang perlu direvisi paling cepat
+
+#### 1. Header validation masih berpotensi false negative
+Ada indikasi util validasi schema masih mencampur **exact header map** dengan **normalized key lookup**. Secara praktis, ini bisa bikin header dianggap hilang padahal variasinya cuma beda casing/spacing.
+
+**Prioritas:** tinggi
+
+#### 2. Lookup policy details log tampak tidak konsisten
+Ada indikasi sebagian kode membaca policy lewat `CONFIG.*`, sementara source of truth aktualnya berdiri sebagai constant global terpisah. Efeknya: fallback bisa terus kepakai tanpa sadar.
+
+**Prioritas:** tinggi
+
+#### 3. `00_Config` terlalu besar untuk discovery cepat
+Sebagai source of truth, file ini kuat. Sebagai file yang harus dipahami manusia, file ini terlalu padat. Mencari satu aturan terasa seperti audit forensik kecil-kecilan.
+
+**Prioritas:** menengah
+
+**Saran minimal:** jangan langsung pecah jadi banyak file. Mulai dengan section index yang stabil, naming convention yang lebih tegas, dan blok “change here when...” di setiap domain config.
+
+#### 4. `06a_EntryPoints` masih terlalu gemuk
+File entrypoint ini tidak lagi murni entrypoint. Ia juga menampung cukup banyak orchestration detail, helper flow, sorting, relocation, dan beberapa concern operasional lain.
+
+**Prioritas:** menengah
+
+**Saran minimal:** pisahkan secara bertahap menjadi:
+- entrypoints / installers
+- flow runners
+- sub-flow orchestration helpers
+
+Tanpa perlu membuat terlalu banyak file sekaligus.
+
+#### 5. Kontrak antar layer belum cukup eksplisit
+Banyak fungsi sebenarnya sudah reusable, tapi kontraknya masih tersirat.
+
+**Saran:** tambahkan docblock yang lebih tegas untuk fungsi yang jadi titik integrasi, misalnya:
+- input assumptions
+- output shape
+- side effects
+- source of truth dependency
+- allowed caller layer
+
+#### 6. Backward compatibility branch terlalu banyak di beberapa area
+Ini wajar untuk repo Apps Script yang berkembang organik, tapi lama-lama jadi mahal dibaca dan diuji.
+
+**Saran:** tandai dengan jelas mana yang:
+- legacy but required
+- temporary fallback
+- safe to remove later
+
+---
+
+## Refactor strategy yang saya rekomendasikan
+
+Untuk repo ini, pendekatan terbaik **bukan** “pecah semua sekarang”. Itu overkill untuk self-project dan malah bikin maintenance makin nyebelin.
+
+Pakai strategi 3 tahap berikut:
+
+### Tahap 1 — stabilisasi discovery
+- rapikan dokumentasi
+- tandai source of truth
+- perjelas module ownership
+- perjelas change impact
+
+### Tahap 2 — kecilkan cognitive load
+- kurangi helper ganda
+- rapikan lookup policy yang campur antara constant vs config object
+- rapikan contract function yang jadi boundary
+
+### Tahap 3 — split hanya yang paling padat
+Prioritas split nanti:
+1. `06a_EntryPoints`
+2. `00_Config`
+3. baru area lain jika memang masih sakit dibaca
+
+---
+
+## Prinsip commit ke depan
+
+Agar repo ini tetap enak dipelihara, usahakan commit mengikuti pola ini:
+
+- `docs: ...` untuk perubahan dokumentasi
+- `fix: ...` untuk bug yang mengubah behavior
+- `refactor: ...` untuk rapih-rapih tanpa ubah behavior
+- `feat: ...` untuk capability baru
+
+Dan idealnya satu commit punya satu niat utama. Ya, konsep kuno tapi masih bekerja karena ternyata codebase tidak otomatis jadi rapi hanya karena niatnya baik.
+
+---
+
+## Next recommended actions
+
+Prioritas paling masuk akal setelah dokumentasi ini:
+
+1. perbaiki bug header validation di utility layer
+2. rapikan lookup policy details log supaya source of truth konsisten
+3. tambahkan section index di `00_Config`
+4. kurangi kepadatan `06a_EntryPoints` tanpa meledakkan jumlah file
+
+---
+
+## Related docs
+
+- [Workflow Map](docs/WORKFLOW_MAP.md)
+
+---
+
+## Maintenance note
+
+Kalau repo ini terus tumbuh, jangan buru-buru menambah file dokumentasi. Biasanya masalahnya bukan kurang file, tapi kurang disiplin menjaga dua file utama tetap hidup.
