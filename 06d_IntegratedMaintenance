@@ -1,0 +1,506 @@
+/***************************************************************
+ * 06d_IntegratedMaintenance.gs
+ * Integrated maintenance module.
+ *
+ * Absorbs previous patch-layer files:
+ * - 97_SelfCheck
+ * - 98_PipelineCoreHardening
+ * - 99_RuntimeFixes
+ *
+ * Goal:
+ * - keep transition logic centralized,
+ * - reduce patch-layer sprawl,
+ * - preserve low-risk runtime overrides.
+ ***************************************************************/
+'use strict';
+
+(function bootstrapIntegratedMaintenance06d_() {
+  /** ---------------------------------------------------------
+   * 05b compatibility/runtime helpers
+   * --------------------------------------------------------- */
+  try {
+    getOperationalClaimHighlightPolicy_ = function () {
+      const p =
+        (typeof CLAIM_HIGHLIGHT_POLICY !== 'undefined' && CLAIM_HIGHLIGHT_POLICY)
+        || (CONFIG && (CONFIG.CLAIM_HIGHLIGHT_POLICY || CONFIG.claimHighlightPolicy))
+        || {};
+
+      const pick = function (k, defBg, defNote) {
+        const o = p[k] || {};
+        return { bg: o.bg || defBg, note: o.note || defNote };
+      };
+
+      const dup = p.duplicate || {};
+      return {
+        expired: pick('expired', '#fff2cc', 'Policy already expired.'),
+        flex: pick('flex', '#f4c7c3', 'Flex claim.'),
+        b2b: pick('b2b', '#c9daf8', 'B2B claim.'),
+        secondYear: pick('secondYear', '#d9ead3', 'Second-Year (Market Value).'),
+        firstMonthPolicy: pick('firstMonthPolicy', '#d9d2e9', 'First-Month Policy.'),
+        remaining1Month: pick('remaining1Month', '#fce5cd', 'Policy Remaining <= 1 Month.'),
+        duplicate: {
+          bg: dup.bg || '#dd7e6b',
+          notePrefix: dup.notePrefix || 'Duplicate Claim - Refer to Claim Number'
+        }
+      };
+    };
+  } catch (e0) {}
+
+  try {
+    getClaimNumberHeaderAliases_ = function () {
+      const aliases =
+        (CONFIG && (CONFIG.CLAIM_NUMBER_HEADER_ALIASES || CONFIG.claimNumberHeaderAliases))
+        || (typeof CLAIM_HIGHLIGHT_POLICY !== 'undefined' && CLAIM_HIGHLIGHT_POLICY && CLAIM_HIGHLIGHT_POLICY.CLAIM_NUMBER_HEADER_ALIASES)
+        || ['Claim Number'];
+      return (aliases || []).map(function (s) { return String(s || '').trim(); }).filter(Boolean);
+    };
+  } catch (e1) {}
+
+  try {
+    normalizeInsuranceShort05b_ = function (insuranceName) {
+      if (typeof mapInsuranceShort_ === 'function') {
+        const out = mapInsuranceShort_(insuranceName);
+        if (out || String(insuranceName == null ? '' : insuranceName).trim() === '') return out;
+      }
+
+      const s = String(insuranceName == null ? '' : insuranceName).trim();
+      if (!s) return '';
+      const l = s.toLowerCase();
+      if (l.indexOf('great eastern general insurance') > -1) return 'GEGI';
+      if (l.indexOf('tokio marine') > -1) return 'TMI';
+      if (l.indexOf('msig indonesia') > -1) return 'MSIG';
+      if (l.indexOf('seainsure') > -1) return 'MIGI';
+      if (l.indexOf('sompo insurance') > -1) return 'Sompo';
+      if (l.indexOf('axa mandiri insurance') > -1) return 'AXA';
+      if (l.indexOf('simas insurtech') > -1) return 'Simas';
+      return s;
+    };
+  } catch (e2) {}
+
+  /** ---------------------------------------------------------
+   * 06b source-of-truth + parser + sort hardening
+   * --------------------------------------------------------- */
+  try {
+    getStatusTypeMap06b_ = function () {
+      try {
+        if (typeof getStatusTypeMap06c_ === 'function') {
+          const shared = getStatusTypeMap06c_();
+          if (shared) return shared;
+        }
+      } catch (e0) {}
+      try {
+        if (CONFIG && (CONFIG.statusTypeByLastStatus || CONFIG.STATUS_TYPE_MAP || CONFIG.statusTypeMap)) {
+          return CONFIG.statusTypeByLastStatus || CONFIG.STATUS_TYPE_MAP || CONFIG.statusTypeMap;
+        }
+      } catch (e1) {}
+      try {
+        if (typeof STATUS_TYPE_BY_LAST_STATUS !== 'undefined' && STATUS_TYPE_BY_LAST_STATUS) {
+          return STATUS_TYPE_BY_LAST_STATUS;
+        }
+      } catch (e2) {}
+      return {};
+    };
+  } catch (e3) {}
+
+  try {
+    parseClaimLastUpdatedDatetime06b_ = function (v) {
+      if (v == null || v === '') return null;
+      if (Object.prototype.toString.call(v) === '[object Date]') return isNaN(v.getTime()) ? null : v;
+      try {
+        if (typeof parseClaimLastUpdatedDatetime06c_ === 'function') {
+          const d0 = parseClaimLastUpdatedDatetime06c_(v);
+          if (d0 && !isNaN(d0.getTime())) return d0;
+        }
+      } catch (e0) {}
+      const s = String(v || '').trim();
+      if (!s) return null;
+      const tz = (function () {
+        try { return Session.getScriptTimeZone() || 'Asia/Jakarta'; } catch (e) { return 'Asia/Jakarta'; }
+      })();
+      const patterns = [
+        'MMMM d, yyyy, h:mm a',
+        'MMMM d, yyyy, hh:mm a',
+        'MMMM d, yyyy, h:mm:ss a',
+        'MMMM d, yyyy, hh:mm:ss a',
+        'MMM d, yyyy, h:mm a',
+        'MMM d, yyyy, hh:mm a',
+        'yyyy-MM-dd HH:mm:ss',
+        'yyyy-MM-dd HH:mm',
+        'yyyy/MM/dd HH:mm:ss',
+        'yyyy/MM/dd HH:mm',
+        'dd/MM/yyyy HH:mm:ss',
+        'dd/MM/yyyy HH:mm'
+      ];
+      for (let i = 0; i < patterns.length; i++) {
+        try {
+          const d = Utilities.parseDate(s, tz, patterns[i]);
+          if (d && !isNaN(d.getTime())) return d;
+        } catch (e1) {}
+      }
+      const m = s.match(/^([A-Za-z]+)\s+(\d{1,2}),\s*(\d{4}),\s*(\d{1,2}):(\d{2})\s*([AP]M)$/i);
+      if (m) {
+        const monName = String(m[1] || '').toLowerCase();
+        const day = Number(m[2]);
+        const year = Number(m[3]);
+        let hh = Number(m[4]);
+        const mm = Number(m[5]);
+        const ampm = String(m[6] || '').toUpperCase();
+        const months = { january:1,february:2,march:3,april:4,may:5,june:6,july:7,august:8,september:9,october:10,november:11,december:12,jan:1,feb:2,mar:3,apr:4,jun:6,jul:7,aug:8,sep:9,oct:10,nov:11,dec:12 };
+        const mon = months[monName];
+        if (mon) {
+          if (ampm === 'PM' && hh < 12) hh += 12;
+          if (ampm === 'AM' && hh === 12) hh = 0;
+          const iso = Utilities.formatString('%04d-%02d-%02d %02d:%02d:00', year, mon, day, hh, mm);
+          try {
+            const d2 = Utilities.parseDate(iso, tz, 'yyyy-MM-dd HH:mm:ss');
+            if (d2 && !isNaN(d2.getTime())) return d2;
+          } catch (e2) {}
+        }
+      }
+      if (/^[0-9]{4}-[0-9]{2}-[0-9]{2}(?:[T\s][0-9:.]+)?(?:Z|[+-][0-9]{2}:?[0-9]{2})?$/.test(s) || /\bGMT\b/i.test(s)) {
+        const dNative = new Date(s);
+        return isNaN(dNative.getTime()) ? null : dNative;
+      }
+      return null;
+    };
+  } catch (e4) {}
+
+  try {
+    sortOperationalSheetsPreserveFilter06b_ = function (ss, pic) {
+      if (!ss) return;
+      const sheets = (typeof getOperationalSheetNames06b_ === 'function') ? getOperationalSheetNames06b_(pic) : [];
+      for (let i = 0; i < sheets.length; i++) {
+        const sh = ss.getSheetByName(sheets[i]);
+        if (!sh) continue;
+        const lastRow = sh.getLastRow();
+        const lastCol = sh.getLastColumn();
+        if (lastRow < 3 || lastCol < 2) continue;
+        const header = sh.getRange(1, 1, 1, lastCol).getValues()[0];
+        const hidx = (typeof buildOpsHeaderIndex06_ === 'function') ? buildOpsHeaderIndex06_(header) : null;
+        const idxDate = (typeof resolveOpsColIdx06_ === 'function') ? resolveOpsColIdx06_(hidx, ['Last Status Date']) : -1;
+        const idxStatus = (typeof resolveOpsColIdx06_ === 'function') ? resolveOpsColIdx06_(hidx, ['Last Status']) : -1;
+        if (idxDate === -1 || idxStatus === -1) continue;
+        try {
+          const f = sh.getFilter ? sh.getFilter() : null;
+          if (f && f.getRange) {
+            const fr = f.getRange();
+            const sr = fr.getRow();
+            const sc = fr.getColumn();
+            const nr = fr.getNumRows();
+            const nc = fr.getNumColumns();
+            if (nr <= 1) continue;
+            const absDate = idxDate + 1;
+            const absStatus = idxStatus + 1;
+            const frColEnd = sc + nc - 1;
+            if (absDate < sc || absDate > frColEnd || absStatus < sc || absStatus > frColEnd) continue;
+            sh.getRange(sr + 1, sc, nr - 1, nc).sort([
+              { column: absDate - sc + 1, ascending: true },
+              { column: absStatus - sc + 1, ascending: true }
+            ]);
+          } else {
+            sh.getRange(2, 1, lastRow - 1, lastCol).sort([
+              { column: idxDate + 1, ascending: true },
+              { column: idxStatus + 1, ascending: true }
+            ]);
+          }
+        } catch (e0) {}
+      }
+    };
+  } catch (e5) {}
+
+  /** ---------------------------------------------------------
+   * 06c source-of-truth + coercion + sort hardening
+   * --------------------------------------------------------- */
+  try {
+    getStatusTypeMap06c_ = function () {
+      try {
+        if (CONFIG && (CONFIG.STATUS_TYPE_MAP || CONFIG.statusTypeMap || CONFIG.statusTypeByLastStatus)) {
+          return CONFIG.STATUS_TYPE_MAP || CONFIG.statusTypeMap || CONFIG.statusTypeByLastStatus;
+        }
+      } catch (e) {}
+      try {
+        if (typeof STATUS_TYPE_BY_LAST_STATUS !== 'undefined' && STATUS_TYPE_BY_LAST_STATUS) {
+          return STATUS_TYPE_BY_LAST_STATUS;
+        }
+      } catch (e2) {}
+      return {};
+    };
+  } catch (e6) {}
+
+  try {
+    __toDate06_ = function (v) {
+      if (!v) return null;
+      if (Object.prototype.toString.call(v) === '[object Date]' && !isNaN(v.getTime())) return v;
+      if (typeof normalizeDate_ === 'function') {
+        try {
+          const d0 = normalizeDate_(v);
+          if (d0 && !isNaN(d0.getTime())) return d0;
+        } catch (e0) {}
+      }
+      if (typeof parseClaimLastUpdatedDatetime06c_ === 'function') {
+        try {
+          const d1 = parseClaimLastUpdatedDatetime06c_(v);
+          if (d1 && !isNaN(d1.getTime())) return d1;
+        } catch (e1) {}
+      }
+      if (typeof v === 'number') {
+        const dNum = new Date(Math.round((v - 25569) * 86400000));
+        return isNaN(dNum.getTime()) ? null : dNum;
+      }
+      if (typeof v === 'string') {
+        const s = String(v).trim();
+        if (!s) return null;
+        if (/^[0-9]{4}-[0-9]{2}-[0-9]{2}(?:[T\s][0-9:.]+)?(?:Z|[+-][0-9]{2}:?[0-9]{2})?$/.test(s) || /\bGMT\b/i.test(s)) {
+          const dStr = new Date(s);
+          return isNaN(dStr.getTime()) ? null : dStr;
+        }
+      }
+      return null;
+    };
+  } catch (e7) {}
+
+  try {
+    __parseClaimLastUpdatedDatetime05c_ = function (v) {
+      if (v == null || v === '') return null;
+      if (Object.prototype.toString.call(v) === '[object Date]') return isNaN(v.getTime()) ? null : v;
+      try {
+        if (typeof parseClaimLastUpdatedDatetime06c_ === 'function') {
+          const d0 = parseClaimLastUpdatedDatetime06c_(v);
+          if (d0 && !isNaN(d0.getTime())) return d0;
+        }
+      } catch (e0) {}
+      try {
+        if (typeof parseClaimLastUpdatedDatetime06b_ === 'function') {
+          const d1 = parseClaimLastUpdatedDatetime06b_(v);
+          if (d1 && !isNaN(d1.getTime())) return d1;
+        }
+      } catch (e1) {}
+      const s = String(v == null ? '' : v).trim();
+      if (!s) return null;
+      if (/^[0-9]{4}-[0-9]{2}-[0-9]{2}(?:[T\s][0-9:.]+)?(?:Z|[+-][0-9]{2}:?[0-9]{2})?$/.test(s) || /\bGMT\b/i.test(s)) {
+        const d = new Date(s);
+        return isNaN(d.getTime()) ? null : d;
+      }
+      return null;
+    };
+  } catch (e8) {}
+
+  try {
+    sortOperationalSheetPreserveFilter06c_ = function (sheet) {
+      if (typeof DRY_RUN !== 'undefined' && DRY_RUN) return;
+      if (!sheet) return;
+      const lr = sheet.getLastRow();
+      const lc = sheet.getLastColumn();
+      if (lr < 2 || lc < 1) return;
+      const header = sheet.getRange(1, 1, 1, lc).getValues()[0].map(__normalizeHeaderText06_);
+      const idxDate = __findHeaderIndexFlexible06_(header, 'Last Status Date');
+      const idxStatus = __findHeaderIndexFlexible06_(header, 'Last Status');
+      if (idxDate === -1 || idxStatus === -1) return;
+      try {
+        const filter = sheet.getFilter ? sheet.getFilter() : null;
+        if (filter && filter.getRange) {
+          const fr = filter.getRange();
+          const sr = fr.getRow();
+          const sc = fr.getColumn();
+          const nr = fr.getNumRows();
+          const nc = fr.getNumColumns();
+          if (nr <= 1) return;
+          const absDate = idxDate + 1;
+          const absStatus = idxStatus + 1;
+          const frColEnd = sc + nc - 1;
+          if (absDate < sc || absDate > frColEnd || absStatus < sc || absStatus > frColEnd) return;
+          const relSort = [
+            { column: absDate - sc + 1, ascending: true },
+            { column: absStatus - sc + 1, ascending: true }
+          ];
+          sheet.getRange(sr + 1, sc, nr - 1, nc).sort(relSort);
+          return;
+        }
+      } catch (e0) {}
+      try {
+        sheet.getRange(2, 1, lr - 1, lc).sort([
+          { column: idxDate + 1, ascending: true },
+          { column: idxStatus + 1, ascending: true }
+        ]);
+      } catch (e1) {}
+    };
+  } catch (e9) {}
+})();
+
+function runSelfCheck_() {
+  const g = (typeof globalThis !== 'undefined') ? globalThis : Function('return this')();
+  const startedAt = new Date();
+  const report = {
+    checkedAt: startedAt.toISOString(),
+    ok: true,
+    errors: [],
+    warnings: [],
+    summary: {}
+  };
+
+  function pushErr(msg) {
+    report.ok = false;
+    report.errors.push(String(msg || 'Unknown error'));
+  }
+  function pushWarn(msg) {
+    report.warnings.push(String(msg || 'Unknown warning'));
+  }
+  function hasFn(name) {
+    try { return typeof g[name] === 'function'; } catch (e) { return false; }
+  }
+  function hasObj(name) {
+    try { return typeof g[name] !== 'undefined' && g[name] != null; } catch (e) { return false; }
+  }
+  function uniqSorted(arr) {
+    const seen = Object.create(null);
+    const out = [];
+    (arr || []).forEach(function (x) {
+      const s = String(x || '').trim();
+      if (!s || seen[s]) return;
+      seen[s] = 1;
+      out.push(s);
+    });
+    out.sort();
+    return out;
+  }
+
+  try {
+    if (hasFn('healthCheck_')) {
+      const hc = healthCheck_();
+      report.summary.health = hc;
+      if (!hc || hc.ok !== true) pushErr('healthCheck_ reported failure.');
+    } else {
+      pushWarn('healthCheck_ is not available.');
+    }
+  } catch (e0) {
+    pushErr('healthCheck_ threw: ' + (e0 && e0.message ? e0.message : e0));
+  }
+
+  const criticalFns = [
+    'runPipeline_',
+    'runEmailIngest',
+    'runSubEmailIngest',
+    'onFormSubmit',
+    'runManual',
+    'parseUploadedFile_',
+    'mutateRawInMemory_',
+    'routeRawToOperationalSheetsInMemory_',
+    'enrichOperationalSheetsFromRaw06_',
+    'processB2B_',
+    'processSpecialCase_',
+    'processEVBike_',
+    'sortOperationalSheetsPreserveFilter06b_',
+    'sortOperationalSheetPreserveFilter06c_'
+  ];
+  const missingFns = criticalFns.filter(function (name) { return !hasFn(name); });
+  report.summary.missingCriticalFunctions = missingFns;
+  if (missingFns.length) pushErr('Missing critical functions: ' + missingFns.join(', '));
+
+  const criticalObjects = [
+    'CONFIG',
+    'OPS_ROUTING_POLICY',
+    'STATUS_TYPE_BY_LAST_STATUS',
+    'POSITION_BY_LAST_STATUS',
+    'FINISH_STATUSES'
+  ];
+  const missingObjects = criticalObjects.filter(function (name) { return !hasObj(name); });
+  report.summary.missingCriticalObjects = missingObjects;
+  if (missingObjects.length) pushErr('Missing critical config objects: ' + missingObjects.join(', '));
+
+  try {
+    const routed = [];
+    const bySheet = (typeof OPS_ROUTING_POLICY !== 'undefined' && OPS_ROUTING_POLICY && OPS_ROUTING_POLICY.LAST_STATUS_BY_SHEET)
+      ? OPS_ROUTING_POLICY.LAST_STATUS_BY_SHEET
+      : {};
+    Object.keys(bySheet || {}).forEach(function (sheetName) {
+      (bySheet[sheetName] || []).forEach(function (status) {
+        const s = String(status || '').trim();
+        if (s) routed.push(s);
+      });
+    });
+    const routedStatuses = uniqSorted(routed);
+    report.summary.routedStatusCount = routedStatuses.length;
+
+    const statusTypeMap = (typeof STATUS_TYPE_BY_LAST_STATUS !== 'undefined' && STATUS_TYPE_BY_LAST_STATUS)
+      ? STATUS_TYPE_BY_LAST_STATUS
+      : ((typeof CONFIG !== 'undefined' && CONFIG && CONFIG.statusTypeByLastStatus) ? CONFIG.statusTypeByLastStatus : {});
+    const positionMap = (typeof POSITION_BY_LAST_STATUS !== 'undefined' && POSITION_BY_LAST_STATUS)
+      ? POSITION_BY_LAST_STATUS
+      : ((typeof CONFIG !== 'undefined' && CONFIG && CONFIG.positionByLastStatus) ? CONFIG.positionByLastStatus : {});
+
+    const missingStatusType = routedStatuses.filter(function (s) { return statusTypeMap[s] == null || String(statusTypeMap[s]).trim() === ''; });
+    const missingPosition = routedStatuses.filter(function (s) { return positionMap[s] == null || String(positionMap[s]).trim() === ''; });
+
+    report.summary.missingStatusTypeMapping = missingStatusType;
+    report.summary.missingPositionMapping = missingPosition;
+
+    if (missingStatusType.length) pushErr('Missing Status Type mapping for: ' + missingStatusType.join(', '));
+    if (missingPosition.length) pushErr('Missing Position mapping for: ' + missingPosition.join(', '));
+  } catch (e1) {
+    pushErr('Routing coverage check failed: ' + (e1 && e1.message ? e1.message : e1));
+  }
+
+  try {
+    const kwBySheet = (typeof OPS_ROUTING_POLICY !== 'undefined' && OPS_ROUTING_POLICY && OPS_ROUTING_POLICY.SC_NAME_KEYWORDS)
+      ? OPS_ROUTING_POLICY.SC_NAME_KEYWORDS
+      : {};
+    const kwIndex = Object.create(null);
+    Object.keys(kwBySheet || {}).forEach(function (sheet) {
+      (kwBySheet[sheet] || []).forEach(function (kw) {
+        const k = String(kw || '').trim().toLowerCase();
+        if (!k) return;
+        if (!kwIndex[k]) kwIndex[k] = [];
+        kwIndex[k].push(sheet);
+      });
+    });
+    const overlaps = [];
+    Object.keys(kwIndex).forEach(function (k) {
+      const owners = uniqSorted(kwIndex[k]);
+      if (owners.length > 1) overlaps.push(k + ' => ' + owners.join(' / '));
+    });
+    report.summary.scKeywordOverlap = overlaps;
+    if (overlaps.length) pushWarn('SC keyword overlap detected: ' + overlaps.join(' | '));
+  } catch (e2) {
+    pushWarn('SC keyword overlap check failed: ' + (e2 && e2.message ? e2.message : e2));
+  }
+
+  try {
+    const tails = (typeof RAW_DATA_CUSTOM_TAIL_HEADERS !== 'undefined' && RAW_DATA_CUSTOM_TAIL_HEADERS) ? RAW_DATA_CUSTOM_TAIL_HEADERS : [];
+    const counts = Object.create(null);
+    (tails || []).forEach(function (h) {
+      const s = String(h || '').trim();
+      if (!s) return;
+      counts[s] = (counts[s] || 0) + 1;
+    });
+    const duplicates = Object.keys(counts).filter(function (k) { return counts[k] > 1; });
+    report.summary.duplicateRawTailHeaders = duplicates;
+    if (duplicates.length) pushWarn('Duplicate raw tail headers: ' + duplicates.join(', '));
+  } catch (e3) {
+    pushWarn('Raw tail duplicate check failed: ' + (e3 && e3.message ? e3.message : e3));
+  }
+
+  report.summary.durationMs = new Date().getTime() - startedAt.getTime();
+  try { Logger.log(JSON.stringify(report)); } catch (e5) {}
+  return report;
+}
+
+function summarizeSelfCheck_(report) {
+  const r = report || runSelfCheck_();
+  const parts = [];
+  parts.push(r.ok ? 'SELF CHECK: OK' : 'SELF CHECK: FAIL');
+  parts.push('errors=' + ((r.errors || []).length));
+  parts.push('warnings=' + ((r.warnings || []).length));
+  parts.push('durationMs=' + (((r.summary || {}).durationMs) || 0));
+  if (r.errors && r.errors.length) parts.push('firstError=' + r.errors[0]);
+  if (r.warnings && r.warnings.length) parts.push('firstWarning=' + r.warnings[0]);
+  return parts.join(' | ');
+}
+
+function runSelfCheckAndDescribe_() {
+  const out = {
+    selfCheck: runSelfCheck_(),
+    system: (typeof describeSystem_ === 'function') ? describeSystem_() : null
+  };
+  try { Logger.log(JSON.stringify(out)); } catch (e) {}
+  return out;
+}
