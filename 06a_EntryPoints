@@ -53,6 +53,14 @@ function _optRules06_() {
   return g.__OPTIONAL_RULES_FALLBACK;
 }
 
+/** Safe + normalized header reader (handles empty/new sheets). */
+function __getHeaderRow06a_(sh, lastColOpt) {
+  if (!sh) return [];
+  const lcRaw = (lastColOpt != null) ? Number(lastColOpt) : ((sh.getLastColumn && sh.getLastColumn()) || 0);
+  const lc = Math.max(isFinite(lcRaw) ? lcRaw : 0, 1);
+  return sh.getRange(1, 1, 1, lc).getValues()[0].map(v => String(v == null ? '' : v).trim());
+}
+
 /** =========================
  * Config validation
  * ========================= */
@@ -756,7 +764,7 @@ function ensureRawTailColumns06_(rawSheet) {
 
   const lc = rawSheet.getLastColumn ? rawSheet.getLastColumn() : 0;
   if (lc < 1) return;
-  const header = rawSheet.getRange(1, 1, 1, lc).getValues()[0].map(v => String(v == null ? '' : v).trim());
+  const header = __getHeaderRow06a_(rawSheet, lc);
   const missing = tailSafe.filter(h => header.indexOf(h) === -1);
   if (!missing.length) return;
   if (DRY_RUN) return;
@@ -1659,7 +1667,7 @@ function __updateOperationalSheetsFromRaw06a_(ss, sheetNames, rawMap, ctx) {
 
     // Mandatory: ensure Status Type header exists (append right).
     try {
-      const hdr0 = sh.getRange(1, 1, 1, lastCol).getValues()[0].map(h => String(h || '').trim());
+      const hdr0 = __getHeaderRow06a_(sh, lastCol);
       const norm0 = hdr0.map(h => h.toLowerCase());
       if (norm0.indexOf('status type') < 0 && !isDryRun_()) {
         sh.getRange(1, lastCol + 1).setValue('Status Type');
@@ -2068,7 +2076,7 @@ function __relocateOperationalRowsByLastStatusSub06a_(ss, sheetNames) {
     const lc = sh.getLastColumn();
     if (lr < 1 || lc < 1) return null;
 
-    const hdr = sh.getRange(1, 1, 1, lc).getValues()[0].map(h => String(h || '').trim());
+    const hdr = __getHeaderRow06a_(sh, lc);
     const norm = hdr.map(h => h.toLowerCase());
     const idxClaim = idxOfAny(norm, ['claim number', 'claim_number', 'claim no', 'claim_no']);
     if (idxClaim < 0) return null;
@@ -2385,7 +2393,7 @@ function __appendSubmissionFromRawIfMissing06a_(ss, rawMap, rawHdrIdx, dbTag) {
   const lastRow = sh.getLastRow();
   if (lastCol < 1) return { appended: 0, skipped: true };
 
-  const header = sh.getRange(1, 1, 1, lastCol).getValues()[0].map(h => String(h || '').trim());
+  const header = __getHeaderRow06a_(sh, lastCol);
   const norm = header.map(h => h.toLowerCase());
 
   function idxOf(name) {
@@ -2539,7 +2547,7 @@ function __sortOperationalSheetsSub06a_(ss, sheetNames, sortSpecs) {
     if (lastRow < 3 || lastCol < 2) { out.sheets[name] = { skipped: 'too few rows' }; out.skippedSheets++; continue; }
 
     try {
-      const hdr = sh.getRange(1, 1, 1, lastCol).getValues()[0].map(h => String(h || '').trim());
+      const hdr = __getHeaderRow06a_(sh, lastCol);
       const norm = hdr.map(h => h.toLowerCase());
 
       function idxByCandidates(cands) {
