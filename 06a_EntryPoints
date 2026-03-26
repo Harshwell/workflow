@@ -166,12 +166,13 @@ function filterUnknownPartnerRowsByMinSubmissionDate06_(rows, minDate) {
   if (!list.length) return [];
   const min = minDate ? new Date(minDate.getFullYear(), minDate.getMonth(), minDate.getDate()) : null;
   if (!min) return list;
+  const minTs = min.getTime();
 
   return list.filter(r => {
     const d = __toDate06_(r && r.submissionDateVal ? r.submissionDateVal : null);
     if (!d) return true; // if missing/invalid date, keep (can't safely exclude)
     const day = new Date(d.getFullYear(), d.getMonth(), d.getDate());
-    return day.getTime() >= min.getTime();
+    return day.getTime() >= minTs;
   });
 }
 
