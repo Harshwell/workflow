@@ -1,0 +1,1866 @@
+/***************************************************************
+ * 01_Utils.gs
+ * Enterprise Edition — Safe I/O, strict normalization, typed coercion
+ *
+ * Purpose:
+ * - Central utility layer (NO business logic).
+ * - DRY_RUN-safe writers.
+ * - Strict parsers/coercers to avoid silent data corruption.
+ * - Data validation helpers to support dropdown "auto-heal" + preserve rules.
+ ***************************************************************/
+'use strict';
+
+/** =========================
+ * Global guards
+ * ========================= */
+/**
+ * DRY_RUN is defined in 00_Config.gs in production.
+ * This guard prevents ReferenceError if utils are executed in isolation.
+ */
+function isDryRun_() {
+  try { return (typeof DRY_RUN !== 'undefined') && !!DRY_RUN; } catch (e) { return false; }
+
+}
+
+/**
+ * Timezone guard.
+ * - Prefer project-level getTz_() if defined (00_Config.gs)
+ * - Fallback to script timezone, then Asia/Jakarta
+ */
+
+/**
+ * Mapping enable flag (associate/team claim mapping).
+ * Centralized here to avoid duplicate global definitions across modules.
+ */
+function isAssociateMappingEnabled_() {
+  try {
+    if (typeof CONFIG !== 'undefined' && CONFIG && typeof CONFIG.mappingEnabled !== 'undefined') return !!CONFIG.mappingEnabled;
+  } catch (e) {}
+  return false;
+}
+
+function getTzSafe_() {
+  try { if (typeof getTz_ === 'function') return getTz_(); } catch (e) {}
+  try {
+    const tz = (Session && Session.getScriptTimeZone) ? Session.getScriptTimeZone() : '';
+    if (tz) return tz;
+  } catch (e2) {}
+  return 'Asia/Jakarta';
+}
+
+
+/** =========================
+ * Safe write helpers (DRY_RUN aware)
+ * ========================= */
+function safeSetValues_(range, values)         { if (range && !isDryRun_()) range.setValues(values); }
+function safeSetValue_(range, value)           { if (range && !isDryRun_()) range.setValue(value); }
+function safeSetFormulas_(range, formulas)     { if (range && !isDryRun_()) range.setFormulas(formulas); }
+function safeSetFormula_(range, f)             { if (range && !isDryRun_()) range.setFormula(f); }
+function safeSetRichTextValues_(range, richText2d) { if (range && !isDryRun_()) range.setRichTextValues(richText2d); }
+function safeSetRichTextValue_(range, richText)      { if (range && !isDryRun_()) range.setRichTextValue(richText); }
+function safeGetRichTextValues_(range) {
+  try { return range ? range.getRichTextValues() : null; } catch (e) { return null; }
+}
+
+/**
+ * Copy full cell state (values/formulas + formats + data validation + rich text) from source to target.
+ * Use this for backing up "Status" dropdown, "OR" checkbox, and "Update Status" rich text.
+ */
+function safeCopyRangeFull_(sourceRange, targetRange) {
+  if (isDryRun_()) return;
+  try {
+    if (!sourceRange || !targetRange) return;
+
+    // PASTE_NORMAL is often sufficient, but recent Sheets "Dropdown chips" and some rich UI
+    // elements may be dropped unless we explicitly re-apply validations & formats.
+    try { sourceRange.copyTo(targetRange, SpreadsheetApp.CopyPasteType.PASTE_NORMAL, false); } catch (e) {}
+
+    // Preserve dropdown rules (including chip colors) + checkbox validation.
+    try { sourceRange.copyTo(targetRange, SpreadsheetApp.CopyPasteType.PASTE_DATA_VALIDATION, false); } catch (e) {}
+
+    // Preserve visuals (number formats, fonts, borders, etc).
+    try { sourceRange.copyTo(targetRange, SpreadsheetApp.CopyPasteType.PASTE_FORMAT, false); } catch (e) {}
+
+    // Preserve conditional formatting when present.
+    try { sourceRange.copyTo(targetRange, SpreadsheetApp.CopyPasteType.PASTE_CONDITIONAL_FORMATTING, false); } catch (e) {}
+
+    // Best-effort: preserve rich text spans (links, partial formatting).
+    try {
+      const rtv = safeGetRichTextValues_(sourceRange);
+      if (rtv) safeSetRichTextValues_(targetRange, rtv);
+    } catch (e) {}
+  } catch (e) {
+    try { sourceRange.copyTo(targetRange); } catch (e2) {}
+  }
+}
+
+/**
+ * Copy only formats (useful when you want to keep values but preserve visuals).
+ */
+function safeCopyRangeFormat_(sourceRange, targetRange) {
+  if (isDryRun_()) return;
+  try {
+    if (!sourceRange || !targetRange) return;
+    sourceRange.copyTo(targetRange, SpreadsheetApp.CopyPasteType.PASTE_FORMAT, false);
+  } catch (e) {}
+}
+function safeClearContents_(range)             { if (range && !isDryRun_()) range.clearContent(); }
+function safeClearFormat_(range)               { if (range && !isDryRun_()) range.clearFormat(); }
+function safeClearNotes_(range)                { if (range && !isDryRun_()) { try { range.clearNote(); } catch (e) { try { range.clearNotes(); } catch (e2) {} } } }
+
+/**
+ * Clean a range by clearing contents and formats (and optionally notes) while preserving data validations.
+ * Use this for operational sheet cleaning to avoid wiping dropdown/checkbox validations.
+ *
+ * opts:
+ * - clearContents: boolean (default true)
+ * - clearFormat: boolean (default true)
+ * - clearNotes: boolean (default false)
+ * - preserveDataValidations: boolean (default true)
+ */
+function safeCleanRangePreserveValidations_(range, opts) {
+  if (!range || isDryRun_()) return;
+  const o = opts || {};
+  const clearContents = (o.clearContents !== false);
+  const clearFormat = (o.clearFormat !== false);
+  const clearNotes = !!o.clearNotes;
+  const preserveDv = (o.preserveDataValidations !== false);
+
+  let dvs = null;
+  if (preserveDv) {
+    try { dvs = range.getDataValidations(); } catch (e) { dvs = null; }
+  }
+
+  if (clearContents) safeClearContents_(range);
+  if (clearFormat) safeClearFormat_(range);
+  if (clearNotes) safeClearNotes_(range);
+
+  // Defensive: re-apply validations if a caller used operations that might have cleared them elsewhere.
+  if (preserveDv && dvs) {
+    try { range.setDataValidations(dvs); } catch (e) {}
+  }
+}
+
+/**
+ * Delete multiple rows safely.
+ * - Sorts row indexes in descending order so subsequent deletes don't shift targets.
+ * - Merges contiguous blocks and uses deleteRows(lo, count) for efficiency.
+ */
+function safeDeleteRowsDescending_(sheet, rowIndexes) {
+  if (!sheet || isDryRun_()) return;
+  const rows = (rowIndexes || [])
+    .map(n => Number(n))
+    .filter(n => Number.isFinite(n) && n >= 1);
+
+  if (!rows.length) return;
+
+  rows.sort((a, b) => b - a);
+
+  // De-duplicate
+  const uniq = [];
+  for (let i = 0; i < rows.length; i++) {
+    if (i === 0 || rows[i] !== rows[i - 1]) uniq.push(rows[i]);
+  }
+
+  let hi = uniq[0];
+  let lo = uniq[0];
+
+  function flushBlock_(lo_, hi_) {
+    const count = hi_ - lo_ + 1;
+    if (count <= 0) return;
+    try {
+      sheet.deleteRows(lo_, count);
+    } catch (e) {
+      // Fallback: delete row-by-row (still descending-safe)
+      for (let r = hi_; r >= lo_; r--) {
+        try { sheet.deleteRow(r); } catch (e2) {}
+      }
+    }
+  }
+
+  for (let i = 1; i < uniq.length; i++) {
+    const r = uniq[i];
+    if (r === lo - 1) {
+      lo = r;
+    } else {
+      flushBlock_(lo, hi);
+      hi = lo = r;
+    }
+  }
+  flushBlock_(lo, hi);
+}
+function safeSetBackground_(range, c)          { if (range && !isDryRun_()) range.setBackground(c); }
+function safeSetBackgrounds_(range, colors) {
+  if (!range || isDryRun_() || colors == null) return;
+  try {
+    // Convenience: allow passing a scalar color (most callers want a full fill).
+    if (typeof colors === 'string') { range.setBackground(colors); return; }
+
+    // Strict mode: require shape match for matrix backgrounds.
+    const rows = range.getNumRows();
+    const cols = range.getNumColumns();
+    assert2d_(colors, 'colors');
+    if (colors.length !== rows) throw new Error('colors rows=' + colors.length + ' expected=' + rows);
+    assertSameCols_(colors, cols, 'colors');
+    range.setBackgrounds(colors);
+  } catch (e) {
+    const a1 = (function () { try { return range.getA1Notation(); } catch (_) { return '<unknown>'; } })();
+    throw new Error('[safeSetBackgrounds_] Failed on range ' + a1 + ': ' + (e && e.message ? e.message : e));
+  }
+}
+
+function safeSetNote_(range, note) {
+  if (!range || isDryRun_() || note == null) return;
+  try {
+    // Range.setNote applies to the entire range; keep it simple.
+    range.setNote(String(note));
+  } catch (e) {
+    const a1 = (function () { try { return range.getA1Notation(); } catch (_) { return '<unknown>'; } })();
+    throw new Error('[safeSetNote_] Failed on range ' + a1 + ': ' + (e && e.message ? e.message : e));
+  }
+}
+
+function safeSetNotes_(range, notes) {
+  if (!range || isDryRun_() || notes == null) return;
+  try {
+    // Convenience: allow passing a scalar note for the whole range.
+    if (typeof notes === 'string') { range.setNote(notes); return; }
+
+    const rows = range.getNumRows();
+    const cols = range.getNumColumns();
+    assert2d_(notes, 'notes');
+    if (notes.length !== rows) throw new Error('notes rows=' + notes.length + ' expected=' + rows);
+    assertSameCols_(notes, cols, 'notes');
+    range.setNotes(notes);
+  } catch (e) {
+    const a1 = (function () { try { return range.getA1Notation(); } catch (_) { return '<unknown>'; } })();
+    throw new Error('[safeSetNotes_] Failed on range ' + a1 + ': ' + (e && e.message ? e.message : e));
+  }
+}
+function safeSetNumberFormat_(range, f)        { if (range && !isDryRun_()) range.setNumberFormat(f); }
+function safeSetFontColor_(range, c)           { if (range && !isDryRun_()) range.setFontColor(c); }
+function safeSetHorizontalAlignment_(range, a) { if (range && !isDryRun_()) range.setHorizontalAlignment(a); }
+
+function safeSetUnderline_(range) {
+  if (range && !isDryRun_()) {
+    try { range.setFontLine('underline'); } catch (e) {
+      try { range.setFontLine(SpreadsheetApp.FontLine.UNDERLINE); } catch (e2) {}
+    }
+  }
+}
+
+function flushNow_() { if (!isDryRun_()) SpreadsheetApp.flush(); }
+
+function nowStr_(fmt) {
+  var tz = 'Asia/Jakarta';
+  try {
+    if (typeof getTzSafe_ === 'function') tz = getTzSafe_();
+    else if (typeof getTz_ === 'function') tz = getTz_();
+    else if (Session && Session.getScriptTimeZone) tz = Session.getScriptTimeZone() || tz;
+  } catch (e) {}
+  return Utilities.formatDate(new Date(), tz, fmt);
+}
+
+/** =========================
+ * Array / shape guards
+ * ========================= */
+function is2dArray_(v) {
+  return Array.isArray(v) && (v.length === 0 || Array.isArray(v[0]));
+}
+function assert2d_(values, label) {
+  if (!is2dArray_(values)) throw new Error((label || 'values') + ' must be a 2D array.');
+  return values;
+}
+function assertSameCols_(values, expectedCols, label) {
+  assert2d_(values, label);
+  if (values.length === 0) return values;
+  const cols = values[0].length;
+  if (cols !== expectedCols) throw new Error((label || 'values') + ' cols=' + cols + ' expected=' + expectedCols);
+  for (let r = 1; r < values.length; r++) {
+    if (values[r].length !== cols) throw new Error((label || 'values') + ' row ' + r + ' cols mismatch.');
+  }
+  return values;
+}
+
+/** =========================
+ * Small primitives
+ * ========================= */
+function isBlank_(v) { return v == null || v === ''; }
+function toTrimmedString_(v) { return String(v == null ? '' : v).trim(); }
+function normalizeWhitespace_(v) { return toTrimmedString_(v).replace(/\s+/g, ' '); }
+
+function buildHeaderIndex_(headerRowValues) {
+  const map = {};
+  (headerRowValues || []).forEach((h, idx) => {
+    const key = String(h || '').trim();
+    if (key) map[key] = idx;
+  });
+  return map;
+}
+
+/**
+ * Build a case-insensitive header index.
+ * - Trims, normalizes whitespace/NBSP, lowercases
+ * - Keeps the first occurrence when duplicates exist
+ */
+/**
+ * Normalize header into a stable key for matching.
+ * - Trims
+ * - Normalizes NBSP + collapses whitespace
+ * - Lowercases
+ */
+function normalizeHeaderKey_(h) {
+  // Normalize quirks seen in Sheets exports:
+  // - BOM (\uFEFF)
+  // - NBSP (\u00A0)
+  // - zero-width space (\u200B)
+  // - multiple whitespace
+  return String(h == null ? '' : h)
+    .replace(/\uFEFF/g, '')
+    .replace(/\u200B/g, '')
+    .replace(/\u00a0/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase();
+}
+
+/**
+ * Optional: canonicalize to snake_case (useful when upstream exports vary).
+ * Example: "Claim Number" -> "claim_number"
+ */
+function canonicalizeHeaderSnake_(h) {
+  const s = normalizeHeaderKey_(h);
+  if (!s) return '';
+
+  // Normalize to snake_case
+  let k = s
+    .replace(/[^\w\s]+/g, ' ')
+    .trim()
+    .replace(/\s+/g, '_');
+
+  // Canonical aliasing (backward-compatible header matching)
+  // - LSA/ALA rename
+  if (k === 'lsa') return 'last_status_aging';
+  if (k === 'ala') return 'activity_log_aging';
+
+  // - Special Case header renames
+  if (k === 'sum_insured') return 'sum_insured_amount';
+  if (k === 'repair_replace_amount') return 'claim_amount';
+  if (k === 'or_amount') return 'claim_own_risk_amount';
+
+  return k;
+}
+
+/**
+ * Build a case-insensitive header index.
+ * - Uses normalizeHeaderKey_
+ * - Keeps the first occurrence when duplicates exist
+ */
+function buildHeaderIndexCi_(headerRowValues) {
+  const map = Object.create(null);
+  (headerRowValues || []).forEach((h, idx) => {
+    const key = normalizeHeaderKey_(h);
+    if (!key) return;
+    if (map[key] == null) map[key] = idx;
+  });
+  return map;
+}
+
+/**
+ * Find header index by trying multiple candidate names.
+ * Matching:
+ * 1) exact match (case-sensitive) for backward compatibility
+ * 2) case-insensitive match via normalizeHeaderKey_
+ * 3) optional snake_case match when opts.enableSnakeCase is true
+ *
+ * Returns: number | null
+ */
+function findHeaderIndexAny_(headerRowValues, candidates, opts) {
+  const o = opts || {};
+  const hdr = headerRowValues || [];
+  const exact = buildHeaderIndex_(hdr);
+  const ci = buildHeaderIndexCi_(hdr);
+
+  // Optional snake-case map
+  let snake = null;
+  if (o.enableSnakeCase) {
+    snake = Object.create(null);
+    (hdr || []).forEach((h, idx) => {
+      const k = canonicalizeHeaderSnake_(h);
+      if (!k) return;
+      if (snake[k] == null) snake[k] = idx;
+    });
+  }
+
+  for (let i = 0; i < (candidates || []).length; i++) {
+    const raw = candidates[i];
+    const c = String(raw == null ? '' : raw).trim();
+    if (!c) continue;
+
+    if (exact[c] != null) return exact[c];
+
+    const k = normalizeHeaderKey_(c);
+    if (k && ci[k] != null) return ci[k];
+
+    if (snake) {
+      const sk = canonicalizeHeaderSnake_(c);
+      if (sk && snake[sk] != null) return snake[sk];
+    }
+  }
+  return null;
+}
+
+/**
+ * Backward-compatible header index resolver used across modules.
+ *
+ * Supports:
+ * - hdrIdx as an object: { "Header Name": 12, ... }
+ * - hdrIdx as an array: ["Header Name", ...] (header row values)
+ *
+ * Matching order:
+ * 1) exact
+ * 2) normalizeHeaderKey_ (case/whitespace)
+ * 3) canonicalizeHeaderSnake_ (optional / tolerant)
+ *
+ * Returns: number | null
+ */
+function idxAny_(hdrIdx, candidates, opts) {
+  if (hdrIdx == null) return null;
+  const list = Array.isArray(candidates) ? candidates : [candidates];
+
+  // If passed header row values, delegate to findHeaderIndexAny_
+  if (Array.isArray(hdrIdx)) {
+    if (typeof findHeaderIndexAny_ === 'function') {
+      const o = opts || { enableSnakeCase: true };
+      return findHeaderIndexAny_(hdrIdx, list, o);
+    }
+    const exact = buildHeaderIndex_(hdrIdx);
+    for (let i = 0; i < list.length; i++) {
+      const c = String(list[i] == null ? '' : list[i]).trim();
+      if (!c) continue;
+      if (exact[c] != null) return exact[c];
+    }
+    return null;
+  }
+
+  // hdrIdx is a map (header -> idx)
+  const keys = Object.keys(hdrIdx);
+  const normKeys = Object.create(null);
+  for (let i = 0; i < keys.length; i++) {
+    const k = keys[i];
+    const nk = normalizeHeaderKey_(k);
+    if (nk && normKeys[nk] == null) normKeys[nk] = k;
+    const sk = canonicalizeHeaderSnake_(k);
+    if (sk && normKeys[sk] == null) normKeys[sk] = k;
+  }
+
+  for (let i = 0; i < list.length; i++) {
+    const raw = list[i];
+    if (raw == null) continue;
+    if (typeof raw === 'number' && isFinite(raw)) return raw;
+
+    const c = String(raw).trim();
+    if (!c) continue;
+
+    if (hdrIdx[c] != null) return hdrIdx[c];
+
+    const nk = normalizeHeaderKey_(c);
+    if (nk && normKeys[nk] != null) return hdrIdx[normKeys[nk]];
+
+    const sk = canonicalizeHeaderSnake_(c);
+    if (sk && normKeys[sk] != null) return hdrIdx[normKeys[sk]];
+  }
+  return null;
+}
+
+function getSheet_(ss, name) {
+  const sh = ss.getSheetByName(name);
+  if (!sh) throw new Error('Sheet not found: ' + name);
+  return sh;
+}
+
+function getRowValues_(sh, row, col, numCols) {
+  return sh.getRange(row, col, 1, numCols).getValues()[0];
+}
+
+
+/**
+ * Safe ratio helper.
+ * Returns null when inputs are not valid or denominator is zero.
+ */
+function safeRatio_(numerator, denominator) {
+  const a = normalizeNumber_(numerator);
+  const b = normalizeNumber_(denominator);
+  if (a == null || b == null || b === 0) return null;
+  const r = a / b;
+  return isFinite(r) ? r : null;
+}
+
+/** =========================
+ * Numeric normalization (money-safe)
+ * ========================= */
+function normalizeNumber_(value) {
+  if (value === '' || value == null) return null;
+  if (typeof value === 'number') return (isFinite(value) ? value : null);
+
+  let s = String(value).trim();
+  if (!s) return null;
+
+  // Handle parentheses negative: (123,000) => -123000
+  let sign = 1;
+  const paren = s.match(/^\((.*)\)$/);
+  if (paren) { sign = -1; s = paren[1].trim(); }
+
+  // Strip currency symbols & non-numeric separators except . and ,
+  // Keep digits, dot, comma, minus
+  s = s.replace(/[^\d,.\-]/g, '');
+
+  // If both comma and dot exist, assume comma is thousands and dot is decimal (common export)
+  // If only comma exists, assume comma is thousands (your data uses 375,000)
+  if (s.indexOf(',') > -1 && s.indexOf('.') > -1) {
+    s = s.replace(/,/g, '');
+  } else if (s.indexOf(',') > -1 && s.indexOf('.') === -1) {
+    s = s.replace(/,/g, '');
+  }
+
+  const n = Number(s);
+  return isNaN(n) ? null : (n * sign);
+}
+
+function normalizeInt_(value) {
+  const n = normalizeNumber_(value);
+  if (n == null) return null;
+  const i = Math.trunc(n);
+  return isFinite(i) ? i : null;
+}
+
+/**
+ * Money normalization wrapper.
+ * - Returns Number or null
+ * - Keeps decimals if present, but collapses exact .0 to integer (common for IDR exports)
+ */
+function normalizeMoney_(value) {
+  const n = normalizeNumber_(value);
+  if (n == null) return null;
+  const r = Math.round(n);
+  if (Math.abs(n - r) < 1e-9) return r;
+  return n;
+}
+
+
+/** =========================
+ * Date parsing (STRICT, locale-safe)
+ * IMPORTANT: Only use when schema says DATE/DATETIME.
+ * ========================= */
+function isValidDateObject_(d) {
+  return Object.prototype.toString.call(d) === '[object Date]' && !isNaN(d.getTime());
+}
+
+function isMidnight_(d) {
+  if (!isValidDateObject_(d)) return false;
+  return d.getHours() === 0 && d.getMinutes() === 0 && d.getSeconds() === 0 && d.getMilliseconds() === 0;
+}
+
+/**
+ * Best-effort "date-only" detector.
+ * In some spreadsheets the same calendar date can appear with a fixed hour offset
+ * (e.g., 07:00 or 14:00) due to timezone / number-format conversions.
+ * We treat these signatures as date-only so downstream writers can keep DATE cells as DATE.
+ */
+function isDateOnlySignature_(d) {
+  if (!isValidDateObject_(d)) return false;
+  if (d.getMinutes() !== 0 || d.getSeconds() !== 0 || d.getMilliseconds() !== 0) return false;
+  const h = d.getHours();
+  return h === 0 || h === 7 || h === 14;
+}
+
+
+function stripTime_(d) {
+  if (!isValidDateObject_(d)) return null;
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0, 0, 0);
+}
+
+/**
+ * Excel serial conversion (narrow range to avoid converting money into dates).
+ * - Epoch ms: >= 1e11 (approx 1973+) accepted
+ * - Excel serial: ONLY between 20000 and 60000 (~1954 to ~2064)
+ */
+function serialToDate_(n) {
+  if (n == null || !isFinite(n)) return null;
+
+  // epoch ms (very large)
+  if (n >= 100000000000) {
+    const d = new Date(n);
+    return isValidDateObject_(d) ? d : null;
+  }
+
+  // excel serial (narrow window)
+  if (n >= 20000 && n <= 60000) {
+    const d = new Date(Math.round((n - 25569) * 86400 * 1000));
+    return isValidDateObject_(d) ? d : null;
+  }
+
+  return null;
+}
+
+/**
+ * Parse date from mixed inputs.
+ * For ambiguous slash format, defaults to DD/MM/YYYY (Indonesia-friendly).
+ */
+function normalizeDate_(value) {
+  if (value == null || value === '') return null;
+
+  if (isValidDateObject_(value)) return value;
+
+  // Numeric: only treat as date if it's clearly epoch ms or plausible excel serial
+  if (typeof value === 'number' && isFinite(value)) {
+    return serialToDate_(value);
+  }
+
+  const s0 = String(value).trim();
+  if (!s0) return null;
+
+  // time-only => not a date
+  if (/^\d{1,2}:\d{2}(:\d{2})?$/.test(s0)) return null;
+
+  // dd/mm/yyyy or dd-mm-yyyy (prefer DD/MM when ambiguous)
+  let m = s0.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})(?:\s+(\d{1,2}):(\d{2})(?::(\d{2}))?)?$/);
+  if (m) {
+    const a = parseInt(m[1], 10);
+    const b = parseInt(m[2], 10);
+    let yy = parseInt(m[3], 10);
+    if (yy < 100) yy += 2000;
+
+    // Default to DD/MM.
+    // If one side clearly exceeds 12, infer accordingly.
+    let dd = a, mm = b - 1;
+    if (a <= 12 && b > 12) { dd = b; mm = a - 1; } // rare
+    if (a > 12 && b <= 12) { dd = a; mm = b - 1; } // normal dd/mm
+
+    const hh = m[4] ? parseInt(m[4], 10) : 0;
+    const mi = m[5] ? parseInt(m[5], 10) : 0;
+    const ss = m[6] ? parseInt(m[6], 10) : 0;
+    const d = new Date(yy, mm, dd, hh, mi, ss);
+    return isValidDateObject_(d) ? d : null;
+  }
+
+  // yyyy-mm-dd or yyyy/mm/dd
+  m = s0.match(/^(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})(?:\s+(\d{1,2}):(\d{2})(?::(\d{2}))?)?$/);
+  if (m) {
+    const yy = parseInt(m[1], 10);
+    const mm = parseInt(m[2], 10) - 1;
+    const dd = parseInt(m[3], 10);
+    const hh = m[4] ? parseInt(m[4], 10) : 0;
+    const mi = m[5] ? parseInt(m[5], 10) : 0;
+    const ss = m[6] ? parseInt(m[6], 10) : 0;
+    const d = new Date(yy, mm, dd, hh, mi, ss);
+    return isValidDateObject_(d) ? d : null;
+  }
+
+  // 03 September 25 / 12 December 2025 (supports Indonesian)
+  const months = {
+    jan:0, januari:0,
+    feb:1, februari:1,
+    mar:2, maret:2,
+    apr:3, april:3,
+    mei:4,
+    jun:5, juni:5,
+    jul:6, juli:6,
+    agu:7, ags:7, agustus:7, aug:7, august:7,
+    sep:8, september:8,
+    okt:9, oktober:9, oct:9, october:9,
+    nov:10, november:10,
+    des:11, desember:11, dec:11, december:11
+  };
+  m = s0.match(/^(\d{1,2})\s+([A-Za-z]+)\s+(\d{2,4})(?:,?\s+(\d{1,2}):(\d{2})(?::(\d{2}))?)?$/);
+  if (m) {
+    const dd = parseInt(m[1], 10);
+    const monKey = String(m[2]).toLowerCase();
+    const mm = (months[monKey] != null) ? months[monKey] : null;
+    if (mm == null) return null;
+    let yy = parseInt(m[3], 10);
+    if (yy < 100) yy += 2000;
+
+    const hh = m[4] ? parseInt(m[4], 10) : 0;
+    const mi = m[5] ? parseInt(m[5], 10) : 0;
+    const ss = m[6] ? parseInt(m[6], 10) : 0;
+    const d = new Date(yy, mm, dd, hh, mi, ss);
+    return isValidDateObject_(d) ? d : null;
+  }
+
+  
+  // Month-first English date like "January 24, 2025, 6:06 PM" (common Metabase export).
+  // Supports:
+  // - "Jan 24, 2025"
+  // - "January 24, 2025, 6:06 PM"
+  // - "January 24, 2025 18:06"
+  m = s0.match(/^([A-Za-z]+)\s+(\d{1,2})(?:st|nd|rd|th)?,\s*(\d{2,4})(?:,?\s+(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(AM|PM|am|pm)?)?$/);
+  if (m) {
+    const monKey = String(m[1]).toLowerCase();
+    const mm = (months[monKey] != null) ? months[monKey] : null;
+    if (mm == null) return null;
+    const dd = parseInt(m[2], 10);
+    let yy = parseInt(m[3], 10);
+    if (yy < 100) yy += 2000;
+
+    let hh = m[4] ? parseInt(m[4], 10) : 0;
+    const mi = m[5] ? parseInt(m[5], 10) : 0;
+    const ss = m[6] ? parseInt(m[6], 10) : 0;
+    const ampm = m[7] ? String(m[7]).toLowerCase() : '';
+    if (ampm === 'pm' && hh < 12) hh += 12;
+    if (ampm === 'am' && hh === 12) hh = 0;
+
+    const d = new Date(yy, mm, dd, hh, mi, ss);
+    return isValidDateObject_(d) ? d : null;
+  }
+
+// Numeric string: only treat as serial/epoch if plausible (avoid money->date)
+  if (/^\d+(\.\d+)?$/.test(s0)) {
+    const n = Number(s0);
+    if (!isNaN(n)) return serialToDate_(n);
+  }
+
+  // Last resort: native parse (kept, but can be unpredictable)
+  const dNative = new Date(s0);
+  return isValidDateObject_(dNative) ? dNative : null;
+}
+
+function diffDays_(d1, d2) {
+  const a = normalizeDate_(d1);
+  const b = normalizeDate_(d2);
+  if (!a || !b) return null;
+
+  // Calendar-day diff (ignores time-of-day and DST quirks)
+  const t1 = Date.UTC(a.getFullYear(), a.getMonth(), a.getDate());
+  const t2 = Date.UTC(b.getFullYear(), b.getMonth(), b.getDate());
+  return Math.floor((t2 - t1) / 86400000);
+}
+
+function monthDiff_(d1, d2) {
+  if (!d1 || !d2) return null;
+  const yearDiff = d2.getFullYear() - d1.getFullYear();
+  const monDiff = d2.getMonth() - d1.getMonth();
+  let r = yearDiff * 12 + monDiff;
+  if (d2.getDate() < d1.getDate()) r -= 1;
+  return r;
+}
+
+function getSubmissionYear_(val) {
+  const d = normalizeDate_(val);
+  return d ? d.getFullYear() : null;
+}
+
+/**
+ * Legacy cutoff guard.
+ * Prevents ReferenceError when utils run without 00_Config.
+ */
+function getLegacyCutoffYear_() {
+  try {
+    if (typeof LEGACY_SKIP_YEAR_BEFORE !== 'undefined') {
+      const y = Number(LEGACY_SKIP_YEAR_BEFORE);
+      if (Number.isFinite(y) && y > 1900 && y < 3000) return y;
+    }
+  } catch (e) {}
+  return 0;
+}
+
+function isLegacyBySubmission_(submissionValOrYear) {
+  if (submissionValOrYear == null || submissionValOrYear === '') return false;
+
+  // If caller passes a year directly
+  if (typeof submissionValOrYear === 'number' && submissionValOrYear > 1900 && submissionValOrYear < 3000) {
+    const cutoff = getLegacyCutoffYear_();
+    return cutoff ? (submissionValOrYear < cutoff) : false;
+  }
+
+  const d = normalizeDate_(submissionValOrYear);
+  const cutoff = getLegacyCutoffYear_();
+  return (cutoff && d) ? (d.getFullYear() < cutoff) : false;
+}
+
+/** =========================
+ * Typed coercion (core for 04/05 writers)
+ * ========================= */
+/**
+ * coerceByType_(value, type, opts?)
+ * Returns: Date | Number | String | '' | null
+ *
+ * Types:
+ * - 'DATE'       => Date (time stripped)
+ * - 'DATETIME'   => Date
+ * - 'TIMESTAMP'  => Date
+ * - 'INT'        => Number (integer)
+ * - 'MONEY0'     => Number
+ * - 'TEXT'       => String
+ *
+ * opts:
+ * - keepDateAsIsWhenDatetime: boolean
+ *   If type is DATETIME/TIMESTAMP and the input has no time component,
+ *   allow downstream code to format it as DATE (not forced here).
+ */
+function coerceByType_(value, type, opts) {
+  const t = String(type || '').toUpperCase();
+  const o = opts || {};
+
+  if (t === 'DATE') {
+    const d = normalizeDate_(value);
+    return d ? stripTime_(d) : null;
+  }
+
+  // DATE_AUTO:
+  // - if input clearly contains time, keep as Date (datetime)
+  // - otherwise, force to DATE (strip time)
+  if (t === 'DATE_AUTO') {
+    const d = normalizeDate_(value);
+    if (!d) return null;
+
+    // If caller passed a string, detect explicit time component.
+    if (typeof value === 'string') {
+      const s = String(value).trim();
+      const hasTime = /\b\d{1,2}:\d{2}(?::\d{2})?\b/.test(s);
+      return hasTime ? d : stripTime_(d);
+    }
+
+    // If caller passed a Date (or numeric that normalizes to a Date),
+    // treat common fixed-hour signatures as date-only.
+    if (isDateOnlySignature_(d)) return stripTime_(d);
+
+    // Otherwise keep time as-is.
+    return d;
+  }
+
+  if (t === 'DATETIME' || t === 'TIMESTAMP') {
+    const d = normalizeDate_(value);
+    if (!d) return null;
+    // Do not mutate time here; formatting decision belongs to writers (03/05)
+    return d;
+  }
+
+  if (t === 'INT') return normalizeInt_(value);
+  if (t === 'MONEY0') return normalizeMoney_(value);
+  if (t === 'TEXT') return (value == null ? '' : String(value));
+  return value;
+}
+
+/**
+ * Coerce a row using a (headerName -> type) registry.
+ * - headerRow: string[]
+ * - row: any[]
+ * - typeRegistry: { [headerName]: 'DATE'|'DATETIME'|'TIMESTAMP'|'INT'|'MONEY0'|'TEXT' }
+ */
+function coerceRowByTypes_(headerRow, row, typeRegistry, opts) {
+  if (!headerRow || !row || !typeRegistry) return row;
+  const out = new Array(row.length);
+  for (let i = 0; i < row.length; i++) out[i] = row[i];
+
+  for (let c = 0; c < headerRow.length; c++) {
+    const name = String(headerRow[c] || '').trim();
+    if (!name) continue;
+    const t = typeRegistry[name];
+    if (!t) continue;
+    out[c] = coerceByType_(out[c], t, opts);
+  }
+  return out;
+}
+
+/** =========================
+ * Formatting helpers for logs only (NOT sheet formatting)
+ * ========================= */
+function formatLogDate_(value) {
+  const d = normalizeDate_(value);
+  if (!d) return '';
+  return Utilities.formatDate(d, getTzSafe_(), 'd MMMM yyyy');
+}
+function formatLogDateShort_(value) {
+  const d = normalizeDate_(value);
+  if (!d) return '';
+  return Utilities.formatDate(d, getTzSafe_(), 'd MMM yyyy');
+}
+function formatLogDateTime_(value) {
+  const d = normalizeDate_(value);
+  if (!d) return '';
+  return Utilities.formatDate(d, getTzSafe_(), 'd MMMM yyyy, HH:mm');
+}
+function formatSubmittedOn_(val) {
+  const s = formatLogDate_(val);
+  return s ? ('Submitted on ' + s) : 'Submitted on N/A';
+}
+
+
+/**
+ * Format short dates for Special Case details (e.g., "30 Jan 21").
+ */
+function formatShortDate2y_(value) {
+  const d = normalizeDate_(value);
+  if (!d) return '';
+  return Utilities.formatDate(d, getTzSafe_(), 'd MMM yy');
+}
+
+/**
+ * Format dates for "Submitted on ..." notes (e.g., "Tue, 23 Dec 2025").
+ */
+function formatDowShortDate_(value) {
+  const d = normalizeDate_(value);
+  if (!d) return '';
+  return Utilities.formatDate(d, getTzSafe_(), 'EEE, dd MMM yyyy');
+}
+
+/**
+ * Convenience helper to check whether a status is excluded for the current run.
+ */
+function isExcludedLastStatus_(status) {
+  const s = String(status == null ? '' : status).trim();
+  if (!s) return false;
+  try { return getExcludedLastStatusesSet_().has(s); } catch (e) { return false; }
+}
+
+/** =========================
+ * Status / checkbox normalization
+ * ========================= */
+function normalizeCheckbox_(v) {
+  if (v === true || v === false) return v;
+  const s = String(v || '').trim().toLowerCase();
+  if (!s) return ''; // keep blank safe
+  return ['true','yes','1','y','checked','on'].indexOf(s) > -1;
+}
+function normalizeStatusValue_(v) {
+  if (v == null || v === '') return '';
+  return normalizeWhitespace_(v);
+}
+
+/** =========================
+ * Hyperlink formula helper (locale-safe)
+ * ========================= */
+function isSheetsErrorString_(s) {
+  const v = String(s == null ? '' : s).trim();
+  return v === '#ERROR!' || v === '#REF!' || v === '#N/A' || v === '#VALUE!' || v === '#DIV/0!' || v === '#NAME?';
+}
+
+
+/**
+ * Build a RichText hyperlink cell (no formula, no locale separator issues).
+ * Display text defaults to "LINK" and will never show #ERROR!.
+ */
+function makeRichTextHyperlink_(url, text) {
+  const u = String(url == null ? '' : url).trim();
+  let label = String(text == null ? 'LINK' : text);
+  if (!label.trim() || isSheetsErrorString_(label)) label = 'LINK';
+  if (!u || isSheetsErrorString_(u)) {
+    return SpreadsheetApp.newRichTextValue().setText('').build();
+  }
+  return SpreadsheetApp.newRichTextValue().setText(label).setLinkUrl(u).build();
+}
+
+/**
+ * Convenience: create a 2D RichTextValue matrix from 2D URL values.
+ */
+function makeRichTextHyperlinks2d_(urls2d, textOrNull) {
+  const label = (textOrNull == null) ? 'LINK' : textOrNull;
+  return (urls2d || []).map(row => (row || []).map(u => makeRichTextHyperlink_(u, label)));
+}
+
+/**
+ * DB Link helpers (forced display text = "LINK").
+ * Use these to comply with the spec that DB Link must always show "LINK" (clickable),
+ * while the source indicator (NEW/OLD) lives in Operational.DB.
+ */
+function makeDbLinkRichText_(url) {
+  return makeRichTextHyperlink_(url, 'LINK');
+}
+
+function makeDbLinkRichText2d_(urls2d) {
+  return (urls2d || []).map(row => (row || []).map(u => makeDbLinkRichText_(u)));
+}
+
+function makeDbLinkFormula_(url) {
+  return makeHyperlinkFormula_(url, 'LINK');
+}
+
+function makeDbLinkFormulaForSs_(ss, url) {
+  return makeHyperlinkFormulaForSs_(ss, url, 'LINK');
+}
+
+/**
+ * Best-effort: determine formula argument separator by spreadsheet locale.
+ * - Many non-English locales (incl. id_ID) use semicolon.
+ * - en_* typically uses comma.
+ */
+function getFormulaArgSep_(ss) {
+  try {
+    const loc = (ss && ss.getSpreadsheetLocale) ? String(ss.getSpreadsheetLocale() || '') : '';
+    if (!loc) return ','; // default
+    return (/^en/i.test(loc)) ? ',' : ';';
+  } catch (e) {
+    return ',';
+  }
+}
+
+/**
+ * Backward compatible signature.
+ * - Uses comma by default (safe for en locales).
+ * - Prefer makeHyperlinkFormulaForSs_ when writing into specific spreadsheets.
+ */
+function makeHyperlinkFormula_(url, text) {
+  // Backward-compatible signature.
+  // Prefer locale-aware separator to avoid #ERROR! in non-en spreadsheets.
+  let ss = null;
+  try { ss = SpreadsheetApp.getActiveSpreadsheet && SpreadsheetApp.getActiveSpreadsheet(); } catch (e) {}
+  const sep = getFormulaArgSep_(ss);
+  return makeHyperlinkFormulaWithSep_(url, text, sep);
+}
+
+function makeHyperlinkFormulaForSs_(ss, url, text) {
+  const sep = getFormulaArgSep_(ss);
+  return makeHyperlinkFormulaWithSep_(url, text, sep);
+}
+
+function makeHyperlinkFormulaWithSep_(url, text, sep) {
+  const u = String(url == null ? '' : url).trim();
+  if (!u || isSheetsErrorString_(u)) return '';
+
+  let label = String(text == null ? 'LINK' : text);
+  if (!label.trim() || isSheetsErrorString_(label)) label = 'LINK';
+
+  const safeUrl = u.replace(/"/g, '""');
+  const safeText = label.replace(/"/g, '""');
+
+  const argSep = (sep === ';') ? ';' : ',';
+  return '=HYPERLINK("' + safeUrl + '"' + argSep + '"' + safeText + '")';
+}
+
+/** =========================
+ * Data validation helpers (for dropdown auto-heal)
+ * ========================= */
+
+/**
+ * Read the first validation rule found in a range (top-left cell).
+ * Returns SpreadsheetApp.DataValidation | null
+ */
+function getDataValidation_(range) {
+  try {
+    if (!range) return null;
+    const dvs = range.getDataValidations();
+    if (!dvs || !dvs.length || !dvs[0] || !dvs[0].length) return null;
+    return dvs[0][0] || null;
+  } catch (e) {
+    return null;
+  }
+}
+
+/**
+ * Apply a single validation rule to entire range.
+ */
+function safeSetDataValidation_(range, rule) {
+  if (!range || isDryRun_()) return;
+  try { range.setDataValidation(rule); } catch (e) {}
+}
+
+/**
+ * Apply a 2D matrix of validations to range (must match size).
+ */
+function safeSetDataValidations_(range, rules2d) {
+  if (!range || isDryRun_()) return;
+  try {
+    assertSameCols_(rules2d, range.getNumColumns(), 'rules2d');
+    if (rules2d.length !== range.getNumRows()) throw new Error('rules2d rows mismatch.');
+    range.setDataValidations(rules2d);
+  } catch (e) {}
+}
+
+/**
+ * Paste ONLY data validation from source to target.
+ * This is the best shot at preserving dropdown "chip colors" + styles.
+ */
+function safePasteDataValidation_(sourceRange, targetRange) {
+  if (isDryRun_()) return;
+  try {
+    if (!sourceRange || !targetRange) return;
+    sourceRange.copyTo(targetRange, SpreadsheetApp.CopyPasteType.PASTE_DATA_VALIDATION, false);
+  } catch (e) {
+    // fallback to rule copy
+    safeCopyDataValidation_(sourceRange, targetRange);
+  }
+}
+
+/**
+ * Copy validation rule from source to target (fallback when paste fails).
+ */
+function safeCopyDataValidation_(sourceRange, targetRange) {
+  if (isDryRun_()) return;
+  try {
+    if (!sourceRange || !targetRange) return;
+    const rule = getDataValidation_(sourceRange);
+    if (!rule) return;
+    targetRange.setDataValidation(rule);
+  } catch (e) {}
+}
+
+/**
+ * Build checkbox rule that stores TRUE/FALSE (default behavior).
+ */
+function buildCheckboxRule_() {
+  try {
+    return SpreadsheetApp.newDataValidation()
+      .requireCheckbox()
+      .setAllowInvalid(false)
+      .build();
+  } catch (e) {
+    return null;
+  }
+}
+
+function safeEnsureCheckboxValidation_(targetRange, sourceRangeOptional) {
+  if (isDryRun_()) return;
+
+  // Prefer copying from a known-good source (preserve UI behaviors)
+  if (sourceRangeOptional) {
+    try {
+      safePasteDataValidation_(sourceRangeOptional, targetRange);
+      const dv = getDataValidation_(targetRange);
+      if (dv) return;
+    } catch (e) {}
+  }
+
+  // Fallback: build a checkbox rule
+  const rule = buildCheckboxRule_();
+  if (rule) safeSetDataValidation_(targetRange, rule);
+}
+
+/**
+ * Extract dropdown allowed values from a rule.
+ * Supports value-in-list and value-in-range (best effort).
+ * Returns string[] (trimmed, unique), may be empty.
+ */
+function extractAllowedValuesFromRule_(rule) {
+  try {
+    if (!rule) return [];
+    const crit = String(rule.getCriteriaType ? rule.getCriteriaType() : '');
+    const args = rule.getCriteriaValues ? (rule.getCriteriaValues() || []) : [];
+
+    // VALUE_IN_LIST: args = [values[], showDropdown]
+    if (crit.indexOf('VALUE_IN_LIST') > -1 && args.length) {
+      const list = Array.isArray(args[0]) ? args[0] : [];
+      return uniqueStrings_(list.map(x => String(x || '').trim()).filter(Boolean));
+    }
+
+    // VALUE_IN_RANGE: args = [range, showDropdown]
+    if (crit.indexOf('VALUE_IN_RANGE') > -1 && args.length && args[0] && args[0].getValues) {
+      const vals = args[0].getValues().flat().map(x => String(x || '').trim()).filter(Boolean);
+      return uniqueStrings_(vals);
+    }
+
+    return [];
+  } catch (e) {
+    return [];
+  }
+}
+
+/**
+ * Build dropdown validation rule from list (best-effort).
+ * Note: exact dropdown chip colors are not programmable reliably;
+ * preserve via safePasteDataValidation_ whenever possible.
+ */
+function buildDropdownRuleFromList_(values, showDropdown) {
+  try {
+    const list = uniqueStrings_(values || []);
+    if (!list.length) return null;
+
+    return SpreadsheetApp.newDataValidation()
+      .requireValueInList(list, showDropdown !== false)
+      .setAllowInvalid(false)
+      .build();
+  } catch (e) {
+    return null;
+  }
+}
+
+/**
+ * Union two string lists in stable order:
+ * - keep A order, append new ones from B
+ */
+function unionStringsStable_(a, b) {
+  const out = [];
+  const seen = Object.create(null);
+
+  (a || []).forEach(v => {
+    const s = String(v || '').trim();
+    if (!s) return;
+    const k = s.toLowerCase();
+    if (seen[k]) return;
+    seen[k] = 1;
+    out.push(s);
+  });
+
+  (b || []).forEach(v => {
+    const s = String(v || '').trim();
+    if (!s) return;
+    const k = s.toLowerCase();
+    if (seen[k]) return;
+    seen[k] = 1;
+    out.push(s);
+  });
+
+  return out;
+}
+
+function uniqueStrings_(arr) {
+  const out = [];
+  const seen = Object.create(null);
+  (arr || []).forEach(v => {
+    const s = String(v || '').trim();
+    if (!s) return;
+    const k = s.toLowerCase();
+    if (seen[k]) return;
+    seen[k] = 1;
+    out.push(s);
+  });
+  return out;
+}
+/** =========================
+ * Case-insensitive matching helpers (performance-friendly)
+ * =========================
+ * Generic utilities (still NO business logic).
+ * Intended to reduce repeated toLowerCase/RegExp compilation in routing/optional pipelines.
+ */
+function toLowerSafe_(v) {
+  return String(v == null ? '' : v).toLowerCase();
+}
+
+function includesCi_(haystack, needle) {
+  const h = toLowerSafe_(haystack);
+  const n = toLowerSafe_(needle);
+  if (!n) return false;
+  return h.indexOf(n) !== -1;
+}
+
+/**
+ * Convert a list of string patterns into compiled case-insensitive regexes.
+ * - Escapes plain strings, so "Qoala Monsta" matches literal text.
+ * - If an entry is already a RegExp, it is re-used (forced to 'i' when possible).
+ */
+function compileCiRegexList_(patterns) {
+  const out = [];
+  (patterns || []).forEach(function (p) {
+    if (p == null) return;
+    try {
+      if (p instanceof RegExp) {
+        const src = p.source;
+        const flags = (p.flags || '').indexOf('i') >= 0 ? p.flags : (p.flags + 'i');
+        out.push(new RegExp(src, flags));
+        return;
+      }
+    } catch (e) {}
+    const s = String(p).trim();
+    if (!s) return;
+    out.push(new RegExp(escapeRegex_(s), 'i'));
+  });
+  return out;
+}
+
+function escapeRegex_(s) {
+  return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function matchesAnyCi_(text, patternsOrRegexes) {
+  const t = String(text == null ? '' : text);
+  if (!t) return false;
+  const list = patternsOrRegexes || [];
+  // Fast path for plain strings (no regex construction).
+  for (let i = 0; i < list.length; i++) {
+    const p = list[i];
+    if (p == null) continue;
+    if (typeof p === 'string') {
+      if (includesCi_(t, p)) return true;
+      continue;
+    }
+    try {
+      if (p instanceof RegExp) {
+        if (p.test(t)) return true;
+        continue;
+      }
+    } catch (e) {}
+    // fallback: treat unknown type as string
+    if (includesCi_(t, String(p))) return true;
+  }
+  return false;
+}
+
+function buildCiSet_(arr) {
+  const set = Object.create(null);
+  (arr || []).forEach(function (v) {
+    const s = String(v == null ? '' : v).trim();
+    if (!s) return;
+    set[s.toLowerCase()] = true;
+  });
+  return set;
+}
+
+function inCiSet_(setObj, value) {
+  if (!setObj) return false;
+  const k = String(value == null ? '' : value).trim().toLowerCase();
+  return !!setObj[k];
+}
+/** =========================
+ * Insurance mapping helper
+ * =========================
+ * Returns short insurance code based on Raw: insurance_partner_name.
+ * Rules are defined in 00.gs via INSURANCE_SHORT_RULES.
+ *
+ * Matching:
+ * - case-insensitive substring match
+ * - returns '' when no match (avoid misleading "Other")
+ */
+function mapInsuranceShort_(insurancePartnerName) {
+  const s = String(insurancePartnerName == null ? '' : insurancePartnerName).trim().toLowerCase();
+  if (!s) return '';
+
+  // Prefer config-defined rules, but fallback to the default mapping required by the spec.
+  const rules = (typeof INSURANCE_SHORT_RULES !== 'undefined' && INSURANCE_SHORT_RULES && INSURANCE_SHORT_RULES.length)
+    ? INSURANCE_SHORT_RULES
+    : [
+        { needle: 'great eastern general insurance', short: 'GEGI' },
+        { needle: 'tokio marine', short: 'TMI' },
+        { needle: 'msig indonesia', short: 'MSIG' },
+        { needle: 'seainsure', short: 'MIGI' },
+        { needle: 'sompo insurance', short: 'Sompo' },
+        { needle: 'axa mandiri insurance', short: 'AXA' },
+        { needle: 'simas insurtech', short: 'Simas' }
+      ];
+
+  for (let i = 0; i < rules.length; i++) {
+    const r = rules[i];
+    if (!r) continue;
+
+    const needle = String(r.needle == null ? '' : r.needle).trim().toLowerCase();
+    if (!needle) continue;
+
+    if (s.indexOf(needle) !== -1) {
+      return String(r.short == null ? '' : r.short).trim();
+    }
+  }
+  return '';
+}
+
+
+/** =========================
+ * Gmail / Drive utilities (generic)
+ * =========================
+ * Still NO business logic:
+ * - label management
+ * - attachment selection helpers
+ * - XLSX -> Google Sheet conversion (requires Advanced Drive service)
+ */
+
+function getOrCreateGmailLabel_(labelName) {
+  const name = String(labelName == null ? '' : labelName).trim();
+  if (!name) throw new Error('Label name is required');
+  try {
+    const existing = GmailApp.getUserLabelByName(name);
+    if (existing) return existing;
+  } catch (e) {}
+  try {
+    if (isDryRun_()) return GmailApp.getUserLabelByName(name) || null;
+    return GmailApp.createLabel(name);
+  } catch (e2) {
+    // As a last resort, try re-fetch (race condition)
+    try { return GmailApp.getUserLabelByName(name) || null; } catch (e3) {}
+    throw new Error('Failed to create Gmail label: ' + name);
+  }
+}
+
+function addLabelToThread_(thread, labelName) {
+  if (!thread) return;
+  const label = getOrCreateGmailLabel_(labelName);
+  if (!label || isDryRun_()) return;
+  try { thread.addLabel(label); } catch (e) {}
+}
+
+function archiveThread_(thread) {
+  if (!thread || isDryRun_()) return;
+  try { thread.moveToArchive(); } catch (e) {}
+}
+
+/**
+ * QUEUE cleanup helper (generic):
+ * Success path must be deterministic:
+ * - mark read
+ * - remove queue label
+ * - move to trash
+ *
+ * Caller decides which queue label (e.g., QUEUED_MAIN / QUEUED_SUB).
+ */
+function cleanupQueuedThreadSuccess_(thread, queueLabelName) {
+  if (!thread || isDryRun_()) return;
+
+  // Mark read
+  try { thread.markRead(); } catch (e1) {}
+
+  // Remove label (do NOT create labels on cleanup)
+  try {
+    const ln = String(queueLabelName == null ? '' : queueLabelName).trim();
+    if (ln) {
+      const label = GmailApp.getUserLabelByName(ln);
+      if (label) thread.removeLabel(label);
+    }
+  } catch (e2) {}
+
+  // Trash
+  try { thread.moveToTrash(); } catch (e3) {}
+}
+
+/**
+ * Pick first attachment by filename prefix (+ optional extension constraint).
+ * Returns Blob or null.
+ */
+function pickFirstAttachmentByPrefix_(attachments, filenamePrefix, opts) {
+  const o = opts || {};
+  const prefix = String(filenamePrefix == null ? '' : filenamePrefix).trim();
+  const ext = String(o.extension == null ? '' : o.extension).trim().toLowerCase();
+  const mime = String(o.mimeType == null ? '' : o.mimeType).trim().toLowerCase();
+  const list = attachments || [];
+
+  for (let i = 0; i < list.length; i++) {
+    const b = list[i];
+    if (!b || !b.getName) continue;
+    const name = String(b.getName() || '');
+    if (prefix && name.indexOf(prefix) !== 0) continue;
+    if (ext && name.toLowerCase().slice(-ext.length) !== ext) continue;
+    if (mime) {
+      const ct = String((b.getContentType && b.getContentType()) || '').toLowerCase();
+      if (ct !== mime) continue;
+    }
+    return b;
+  }
+  return null;
+}
+
+function isLikelyXlsx_(blob) {
+  try {
+    if (!blob) return false;
+    const name = String((blob.getName && blob.getName()) || '').toLowerCase();
+    if (name.endsWith('.xlsx')) return true;
+    const ct = String((blob.getContentType && blob.getContentType()) || '').toLowerCase();
+    return ct.indexOf('spreadsheetml') > -1 || ct.indexOf('application/vnd.openxmlformats-officedocument') > -1;
+  } catch (e) {
+    return false;
+  }
+}
+
+/**
+ * Convert an XLSX blob into a temporary Google Spreadsheet.
+ * Requires Advanced Drive Service enabled (Resources -> Advanced Google services -> Drive API).
+ * Returns: { ss: Spreadsheet, fileId: string }
+ */
+function convertXlsxBlobToTempSpreadsheet_(xlsxBlob, titleOptional) {
+  if (!xlsxBlob) throw new Error('XLSX blob is required');
+  if (!isLikelyXlsx_(xlsxBlob)) throw new Error('Blob is not recognized as XLSX');
+
+  // Advanced Drive service guard
+  if (typeof Drive === 'undefined' || !Drive.Files || !Drive.Files.insert) {
+    throw new Error('Advanced Drive Service is required for XLSX conversion (Drive.Files.insert).');
+  }
+
+  const title = String(titleOptional || ('TMP_XLSX_' + nowStr_('yyyyMMdd_HHmmss')));
+  const resource = {
+    title: title,
+    mimeType: 'application/vnd.google-apps.spreadsheet'
+  };
+
+  const inserted = Drive.Files.insert(resource, xlsxBlob, { convert: true });
+  const fileId = inserted && inserted.id;
+  if (!fileId) throw new Error('Failed to convert XLSX to Google Sheet');
+
+  const ss = SpreadsheetApp.openById(fileId);
+  // Normalize temp spreadsheet settings to reduce timezone/locale drift from XLSX conversion.
+  try { ss.setSpreadsheetTimeZone(getTzSafe_()); } catch (eTz) {}
+  try { ss.setSpreadsheetLocale('en_US'); } catch (eLoc) {}
+  return { ss: ss, fileId: fileId };
+}
+
+function trashDriveFileById_(fileId) {
+  if (!fileId || isDryRun_()) return;
+  try { DriveApp.getFileById(fileId).setTrashed(true); } catch (e) {}
+}
+
+/** =========================
+ * Lock helpers (non-throwing)
+ * ========================= */
+
+/**
+ * Best-practice for frequent triggers (e.g., hourly SUB):
+ * - If lock is busy, SKIP instead of throwing, to avoid noisy failures.
+ *
+ * @param {number} timeoutMs How long to try acquiring the lock (ms). Typical: 200-800ms.
+ * @param {Function} fn Work to run under lock.
+ * @return {{acquired:boolean, result:any}} acquired=false means skipped.
+ */
+function withTryScriptLock_(timeoutMs, fn) {
+  const ms = (timeoutMs == null) ? 500 : Number(timeoutMs);
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(ms)) return { acquired: false, result: null };
+
+  try {
+    const res = (typeof fn === 'function') ? fn() : null;
+    return { acquired: true, result: res };
+  } finally {
+    try { lock.releaseLock(); } catch (e) {}
+  }
+
+}
+
+/** =========================
+ * Retry / backoff helpers (quota-safe)
+ * ========================= */
+
+/**
+ * Best-effort transient error detector.
+ * Keep this conservative — only retry errors that are likely recoverable.
+ */
+function isTransientError_(e) {
+  const msg = String((e && e.message) ? e.message : e || '').toLowerCase();
+  return (
+    msg.indexOf('service invoked too many times') >= 0 ||
+    msg.indexOf('rate limit') >= 0 ||
+    msg.indexOf('quota') >= 0 ||
+    msg.indexOf('timed out') >= 0 ||
+    msg.indexOf('timeout') >= 0 ||
+    msg.indexOf('internal error') >= 0 ||
+    msg.indexOf('backend error') >= 0 ||
+    msg.indexOf('please try again') >= 0 ||
+    msg.indexOf('failed to fetch') >= 0
+  );
+}
+
+/**
+ * Exponential backoff retry wrapper.
+ *
+ * opts:
+ * - maxRetries (default 4) => total attempts = 1 + maxRetries
+ * - baseDelayMs (default 300)
+ * - maxDelayMs (default 8000)
+ * - jitterRatio (default 0.2)
+ * - shouldRetry(err, attemptNo) => boolean (override)
+ * - onRetry({attemptNo, delayMs, err}) => void
+ */
+function withRetry_(fn, opts) {
+  const o = opts || {};
+  const maxRetries = (o.maxRetries == null) ? 4 : Math.max(0, Number(o.maxRetries));
+  const baseDelayMs = (o.baseDelayMs == null) ? 300 : Math.max(0, Number(o.baseDelayMs));
+  const maxDelayMs = (o.maxDelayMs == null) ? 8000 : Math.max(baseDelayMs, Number(o.maxDelayMs));
+  const jitterRatio = (o.jitterRatio == null) ? 0.2 : Math.max(0, Number(o.jitterRatio));
+
+  let lastErr = null;
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      return (typeof fn === 'function') ? fn(attempt) : null;
+    } catch (e) {
+      lastErr = e;
+      const shouldRetry = (typeof o.shouldRetry === 'function') ? !!o.shouldRetry(e, attempt) : isTransientError_(e);
+      if (!shouldRetry || attempt >= maxRetries) break;
+
+      const exp = Math.min(maxDelayMs, baseDelayMs * Math.pow(2, attempt));
+      const jitter = exp * jitterRatio * (Math.random() * 2 - 1); // ± jitterRatio
+      const delay = Math.max(0, Math.round(exp + jitter));
+
+      if (typeof o.onRetry === 'function') {
+        try { o.onRetry({ attemptNo: attempt + 1, delayMs: delay, err: e }); } catch (_) {}
+      }
+
+      if (!isDryRun_()) Utilities.sleep(delay);
+    }
+  }
+  throw lastErr;
+}
+
+/** =========================
+ * Idempotency / trace helpers
+ * ========================= */
+
+function newRequestId_() {
+  try { return Utilities.getUuid(); } catch (e) { return String(new Date().getTime()) + '-' + Math.random(); }
+}
+
+/**
+ * Transaction token cache (idempotency).
+ * Prevents accidental double-processing when triggers overlap or users manually rerun.
+ *
+ * Storage: Script Properties (single JSON map). Pruned aggressively to avoid hitting quota.
+ */
+const TXN_CACHE_PROP_KEY_V1 = 'TXN_CACHE_V1';
+
+function __loadTxnCache_() {
+  try {
+    const raw = PropertiesService.getScriptProperties().getProperty(TXN_CACHE_PROP_KEY_V1);
+    if (!raw) return {};
+    const obj = JSON.parse(raw);
+    return (obj && typeof obj === 'object') ? obj : {};
+  } catch (e) {
+    return {};
+  }
+}
+
+function __saveTxnCache_(cacheObj) {
+  try {
+    PropertiesService.getScriptProperties().setProperty(TXN_CACHE_PROP_KEY_V1, JSON.stringify(cacheObj || {}));
+  } catch (e) {}
+}
+
+function checkAndMarkTransaction_(token, ttlMs, opts) {
+  const enabled = (typeof CONFIG !== 'undefined' && CONFIG && CONFIG.features)
+    ? (CONFIG.features.enableTxnIdempotency !== false)
+    : true;
+  if (!enabled) return { duplicate: false, token: token };
+
+  const t = String(token || '').trim();
+  if (!t) return { duplicate: false, token: t };
+
+  const ttl = Math.max(0, Number(ttlMs == null ? 0 : ttlMs));
+  const now = Date.now();
+
+  const cache = __loadTxnCache_();
+  // prune: keep only last 7 days or last 200 entries
+  const PRUNE_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+  const cutoff = now - PRUNE_AGE_MS;
+
+  const keys = Object.keys(cache);
+  for (let i = 0; i < keys.length; i++) {
+    const k = keys[i];
+    const ts = Number(cache[k] || 0);
+    if (!ts || ts < cutoff) delete cache[k];
+  }
+
+  const prev = Number(cache[t] || 0);
+  if (prev && ttl > 0 && (now - prev) < ttl) {
+    return { duplicate: true, token: t, lastTs: prev, nowTs: now };
+  }
+
+  cache[t] = now;
+
+  // cap size
+  const keys2 = Object.keys(cache);
+  if (keys2.length > 200) {
+    keys2.sort((a, b) => Number(cache[a] || 0) - Number(cache[b] || 0));
+    const drop = keys2.slice(0, Math.max(0, keys2.length - 200));
+    drop.forEach(k => { delete cache[k]; });
+  }
+
+  __saveTxnCache_(cache);
+  return { duplicate: false, token: t, nowTs: now };
+}
+
+
+
+/**
+ * Very small JSON logger to make debugging consistent across files.
+ * Note: Apps Script Logger truncates long lines; keep payload small.
+ */
+function logJson_(obj) {
+  try {
+    Logger.log(JSON.stringify(obj));
+  } catch (e) {
+    Logger.log(String(obj));
+  }
+}
+
+
+/** =========================
+ * Sorting helpers
+ * ========================= */
+
+/**
+ * Sort a sheet by header names (multi-key) excluding the header row.
+ *
+ * Example:
+ * sortSheetDataByHeaderSpecs_(sheet, [
+ *   { header: 'Last Status Aging', ascending: false },
+ *   { header: 'Last Status', ascending: true },
+ *   { header: 'DB', ascending: true },
+ * ]);
+ *
+ * Headers are resolved with findHeaderIndexByCandidates_ (supports aliases).
+ *
+ * @param {GoogleAppsScript.Spreadsheet.Sheet} sheet
+ * @param {Array<{header:string|Array<string>, ascending:boolean}>} specs
+ * @param {number=} headerRowIndex Default 1
+ * @return {number} Number of sort keys applied
+ */
+function sortSheetDataByHeaderSpecs_(sheet, specs, headerRowIndex) {
+  if (!sheet) return 0;
+  const hdrRow = headerRowIndex == null ? 1 : Number(headerRowIndex);
+  const lastRow = sheet.getLastRow();
+  const lastCol = sheet.getLastColumn();
+  if (lastRow <= hdrRow || lastCol < 1) return 0;
+
+  const header = sheet.getRange(hdrRow, 1, 1, lastCol).getValues()[0] || [];
+  const idxMap = buildHeaderIndex_(header);
+
+  const sortSpecs = [];
+  (specs || []).forEach(s => {
+    if (!s) return;
+    const hdr = s.header;
+    const candidates = Array.isArray(hdr) ? hdr : [hdr];
+    const colIdx0 = findHeaderIndexByCandidates_(header, candidates, { headerIndex: idxMap, enableSnake: true });
+    if (colIdx0 == null || colIdx0 < 0) return;
+    sortSpecs.push({
+      column: colIdx0 + 1, // relative to range (we sort a range that starts at col 1)
+      ascending: !!s.ascending
+    });
+  });
+
+  if (!sortSpecs.length) return 0;
+
+  const dataRange = sheet.getRange(hdrRow + 1, 1, lastRow - hdrRow, lastCol);
+  if (!isDryRun_()) dataRange.sort(sortSpecs);
+  return sortSpecs.length;
+}
+
+/**
+ * Sort a sheet while preserving an existing filter (if present).
+ * - If sheet has a filter, sorts only within the filter range (excluding header row),
+ *   so the filter remains attached and active.
+ * - Falls back to sortSheetDataByHeaderSpecs_ if no filter exists.
+ *
+ * @param {GoogleAppsScript.Spreadsheet.Sheet} sheet
+ * @param {Array<{header:string|Array<string>, ascending:boolean}>} specs
+ * @param {number=} headerRowIndex Default 1
+ * @return {number} Number of sort keys applied
+ */
+function sortSheetDataByHeaderSpecsPreserveFilter_(sheet, specs, headerRowIndex) {
+  if (!sheet) return 0;
+
+  // Prefer filter range when filter exists.
+  let filter = null;
+  try { filter = sheet.getFilter ? sheet.getFilter() : null; } catch (e) { filter = null; }
+  if (!filter) return sortSheetDataByHeaderSpecs_(sheet, specs, headerRowIndex);
+
+  const fr = filter.getRange();
+  const frRow = fr.getRow();
+  const frCol = fr.getColumn();
+  const frNumRows = fr.getNumRows();
+  const frNumCols = fr.getNumColumns();
+
+  const hdrRow = headerRowIndex == null ? frRow : Number(headerRowIndex);
+  const dataStartRow = hdrRow + 1;
+  const dataEndRow = frRow + frNumRows - 1;
+  const dataNumRows = dataEndRow - hdrRow;
+  if (dataNumRows <= 0 || frNumCols < 1) return 0;
+
+  const header = sheet.getRange(hdrRow, frCol, 1, frNumCols).getValues()[0] || [];
+  const idxMap = buildHeaderIndex_(header);
+
+  const sortSpecs = [];
+  (specs || []).forEach(s => {
+    if (!s) return;
+    const hdr = s.header;
+    const candidates = Array.isArray(hdr) ? hdr : [hdr];
+    const colIdx0 = findHeaderIndexByCandidates_(header, candidates, { headerIndex: idxMap, enableSnake: true });
+    if (colIdx0 == null || colIdx0 < 0) return;
+    sortSpecs.push({ column: colIdx0 + 1, ascending: !!s.ascending });
+  });
+  if (!sortSpecs.length) return 0;
+
+  const dataRange = sheet.getRange(dataStartRow, frCol, dataNumRows, frNumCols);
+  if (!isDryRun_()) dataRange.sort(sortSpecs);
+  return sortSpecs.length;
+}
+
+
+
+/** =========================
+ * Enterprise observability helpers (structured logs + timing)
+ * ========================= */
+
+/** Initialize per-run context (flow + requestId). */
+function initRunContext_(flowName, opts) {
+  const o = opts || {};
+  const flow = String(flowName || o.flowName || '').trim();
+  const rid = String(o.requestId || '').trim() || (typeof newRequestId_ === 'function' ? newRequestId_() : ('' + new Date().getTime()));
+
+  try {
+    if (typeof RUNTIME !== 'undefined' && RUNTIME) {
+      RUNTIME.flowName = flow || RUNTIME.flowName || '';
+      RUNTIME.requestId = rid;
+      if (!RUNTIME.runStartedAt) RUNTIME.runStartedAt = new Date();
+    }
+  } catch (e0) {}
+
+  return { flowName: flow, requestId: rid };
+}
+
+/** Get current run context (best-effort). */
+function getRunContext_() {
+  try {
+    if (typeof RUNTIME !== 'undefined' && RUNTIME) {
+      return {
+        flowName: String(RUNTIME.flowName || ''),
+        requestId: String(RUNTIME.requestId || '')
+      };
+    }
+  } catch (e0) {}
+  return { flowName: '', requestId: '' };
+}
+
+/** Structured JSON log (Logger + optional sheet logLine_). */
+function logEvent_(level, event, message, meta) {
+  const ctx = getRunContext_();
+  const payload = Object.assign(
+    {
+      ts: new Date().toISOString(),
+      level: String(level || 'INFO').toUpperCase(),
+      event: String(event || ''),
+      message: String(message || ''),
+      flow: ctx.flowName,
+      requestId: ctx.requestId
+    },
+    meta ? { meta: meta } : {}
+  );
+
+  try { Logger.log(JSON.stringify(payload)); } catch (e0) {}
+
+  // Best-effort also write into legacy Log sheet via logLine_ when available.
+  try {
+    if (typeof logLine_ === 'function') {
+      logLine_(payload.event, payload.message, payload.flow, payload.requestId, payload.level);
+    }
+  } catch (e1) {}
+
+  return payload;
+}
+
+/** Execute fn and log duration (ms). */
+function withTiming_(event, fn, meta) {
+  const started = Date.now();
+  try {
+    const res = (typeof fn === 'function') ? fn() : null;
+    const dur = Date.now() - started;
+    logEvent_('INFO', event, 'OK', Object.assign({ durationMs: dur }, meta || {}));
+    return res;
+  } catch (err) {
+    const dur = Date.now() - started;
+    logEvent_('ERROR', event, String(err && err.message ? err.message : err), Object.assign({ durationMs: dur }, meta || {}));
+    throw err;
+  }
+}
+
+/** Fail-fast (or warn) when required headers are missing. */
+function assertSheetHasHeaders_(sheet, requiredHeaders, context) {
+  if (!sheet) throw new Error('assertSheetHasHeaders_: sheet is required');
+  const req = Array.isArray(requiredHeaders) ? requiredHeaders : [requiredHeaders];
+  const lc = Math.max(sheet.getLastColumn(), 1);
+  const hdr = sheet.getRange(1, 1, 1, lc).getValues()[0] || [];
+  const idx = buildHeaderIndex_(hdr);
+
+  const missing = [];
+  for (let i = 0; i < req.length; i++) {
+    const h = String(req[i] || '').trim();
+    if (!h) continue;
+    if (!Object.prototype.hasOwnProperty.call(idx, normalizeHeaderKey_(h))) missing.push(h);
+  }
+  if (!missing.length) return true;
+
+  const strict = !!(CONFIG && CONFIG.features && CONFIG.features.strictSchemaValidation);
+  const msg = 'Missing headers: ' + missing.join(', ');
+  if (strict) throw new Error(msg);
+  logEvent_('WARN', 'SCHEMA_WARN', msg, { sheet: sheet.getName ? sheet.getName() : '', context: context || '' });
+  return false;
+}
