@@ -383,7 +383,11 @@ function findHeaderIndexAny_(headerRowValues, candidates, opts) {
 
   // Optional snake-case map
   let snake = null;
-  if (o.enableSnakeCase) {
+  // Backward compatibility:
+  // - prefer enableSnakeCase
+  // - still honor legacy typo/alias enableSnake used by older callers
+  const useSnakeCase = !!(o.enableSnakeCase || o.enableSnake);
+  if (useSnakeCase) {
     snake = Object.create(null);
     (hdr || []).forEach((h, idx) => {
       const k = canonicalizeHeaderSnake_(h);
@@ -1708,7 +1712,7 @@ function sortSheetDataByHeaderSpecs_(sheet, specs, headerRowIndex) {
     if (!s) return;
     const hdr = s.header;
     const candidates = Array.isArray(hdr) ? hdr : [hdr];
-    const colIdx0 = findHeaderIndexByCandidates_(header, candidates, { headerIndex: idxMap, enableSnake: true });
+    const colIdx0 = findHeaderIndexByCandidates_(header, candidates, { headerIndex: idxMap, enableSnakeCase: true });
     if (colIdx0 == null || colIdx0 < 0) return;
     sortSpecs.push({
       column: colIdx0 + 1, // relative to range (we sort a range that starts at col 1)
@@ -1762,7 +1766,7 @@ function sortSheetDataByHeaderSpecsPreserveFilter_(sheet, specs, headerRowIndex)
     if (!s) return;
     const hdr = s.header;
     const candidates = Array.isArray(hdr) ? hdr : [hdr];
-    const colIdx0 = findHeaderIndexByCandidates_(header, candidates, { headerIndex: idxMap, enableSnake: true });
+    const colIdx0 = findHeaderIndexByCandidates_(header, candidates, { headerIndex: idxMap, enableSnakeCase: true });
     if (colIdx0 == null || colIdx0 < 0) return;
     sortSpecs.push({ column: colIdx0 + 1, ascending: !!s.ascending });
   });
