@@ -40,7 +40,7 @@ App.Registry = App.Registry || (function () {
 })();
 
 /** VERSION */
-const APP_VERSION = '2026.02.10-enterprise-refactor-r1';
+const APP_VERSION = '2026.03.26-enterprise-refactor-r2';
 
 /** Schema version for managed sheets */
 const SCHEMA_VERSION = 5;
@@ -51,6 +51,21 @@ const SCHEMA_VERSION = 5;
  * - false => normal behavior
  */
 const DRY_RUN = false;
+
+/**
+ * High-level config index.
+ * This is documentation-as-data for maintainers and introspection tools,
+ * not a runtime switchboard.
+ */
+const CONFIG_SECTION_INDEX = Object.freeze({
+  foundation: Object.freeze(['App.Registry', 'APP_VERSION', 'SCHEMA_VERSION', 'DRY_RUN']),
+  ingestion: Object.freeze(['EMAIL_INGEST_POLICY', 'SUB_EMAIL_INGEST_POLICY', 'SUB_FLOW_SPEC', 'FORM_INGEST_POLICY']),
+  workbook: Object.freeze(['MASTER_SPREADSHEET_ID', 'MASTER_RAW_SHEET_NAME', 'WEBAPP_MOVEMENT_POLICY', 'WORKBOOK_PROFILES']),
+  routing: Object.freeze(['OPS_ROUTING_POLICY', 'STATUS_TYPE_BY_LAST_STATUS', 'POSITION_BY_LAST_STATUS', 'FINISH_STATUSES']),
+  validationAndPresentation: Object.freeze(['VALIDATION_POLICY', 'VALIDATION_FALLBACKS', 'CHECKBOX_POLICY', 'LINK_POLICY', 'COLUMN_TYPES', 'COLUMN_ALIGNMENT']),
+  optionalSheets: Object.freeze(['SPECIAL_CASE_WRITER_POLICY', 'EVBIKE_POLICY', 'EXCLUSION_TAT_POLICY', 'OPTIONAL_SHEETS_FLAGS']),
+  observability: Object.freeze(['LOG_POLICY', 'MAPPING_ERROR_LOG_POLICY', 'DETAILS_LOG_POLICY', 'UI_FLAGS'])
+});
 
 /** =========================
  * Status groups (routing helpers)
@@ -511,7 +526,7 @@ const UI_FLAGS = Object.freeze({
 /**
  * Workbook profiles:
  * - PIC: full operational + optional sheets
- * - ADMIN: core sheets only (NO B2B/Special Case/EV-Bike)
+ * - ADMIN: core sheets only (NO B2B/SpecialCase/EV-Bike)
  */
 const WORKBOOK_PROFILES = Object.freeze({
   PIC: 'PIC',
@@ -1607,6 +1622,7 @@ const OPS_ROUTING_POLICY = Object.freeze({
 });
 
 const CONFIG = Object.freeze({
+  sectionIndex: CONFIG_SECTION_INDEX,
   spreadsheets: {
     // Single master workbook (all flows write here)
     Master: MASTER_SPREADSHEET_ID,
@@ -1627,6 +1643,7 @@ const CONFIG = Object.freeze({
   emailIngest: EMAIL_INGEST_POLICY,
   subEmailIngest: SUB_EMAIL_INGEST_POLICY,
   subFlow: SUB_FLOW_SPEC,
+  formIngestPolicy: FORM_INGEST_POLICY,
   rawDataCustomTailHeaders: RAW_DATA_CUSTOM_TAIL_HEADERS,
 
   // Mapping Team Claim is deprecated (process all data into master; no PIC routing)
@@ -1638,6 +1655,9 @@ const CONFIG = Object.freeze({
   logSpreadsheetId: getPropString_('LOG_SPREADSHEET_ID', '1TC9YjDo6qxWq17zPYEBqIryhaYbUMqGtaSH0F-G8IwE'),
   logSheetName: getPropString_('LOG_SHEET_NAME', 'Log'),
   detailsSheetName: 'Details',
+  detailsLogPolicy: DETAILS_LOG_POLICY,
+  mappingErrorLogPolicy: MAPPING_ERROR_LOG_POLICY,
+  logPolicy: LOG_POLICY,
 
   // WebApp movement tracking
   webappProjectSpreadsheetId: WEBAPP_PROJECT_SPREADSHEET_ID,
@@ -1645,6 +1665,7 @@ const CONFIG = Object.freeze({
 
   // Status type mapping (mandatory operational column)
   statusTypeByLastStatus: STATUS_TYPE_BY_LAST_STATUS,
+  positionByLastStatus: POSITION_BY_LAST_STATUS,
 
   // Second-year policy (STRICT)
   secondYearMarketValue: SECOND_YEAR_MARKET_VALUE_POLICY,
@@ -1666,6 +1687,20 @@ const CONFIG = Object.freeze({
     // Idempotency cache (transaction tokens)
     enableTxnIdempotency: getPropBool_('ENABLE_TXN_IDEMPOTENCY', true)
   }),
+
+  validationPolicy: VALIDATION_POLICY,
+  linkPolicy: LINK_POLICY,
+  checkboxPolicy: CHECKBOX_POLICY,
+  fixedSchemaPolicy: FIXED_SCHEMA_POLICY,
+  dateCoercionPolicy: DATE_COERCION_POLICY,
+  columnTypes: COLUMN_TYPES,
+  columnAlignment: COLUMN_ALIGNMENT,
+  associateColumnPolicy: ASSOCIATE_COLUMN_POLICY,
+  columnPlacementRules: COLUMN_PLACEMENT_RULES,
+
+  opsRouting: OPS_ROUTING_POLICY,
+  opsRoutingPolicy: OPS_ROUTING_POLICY,
+  opsRoutingPolicyV2: OPS_ROUTING_POLICY,
 
   /**
    * Workbook profiles determine which sheets are ensured/managed.
@@ -1788,9 +1823,6 @@ const CONFIG = Object.freeze({
     [OPS_ROUTING_POLICY.SHEETS.PO]: OPS_ROUTING_POLICY.LAST_STATUS_BY_SHEET['PO'],
     [OPS_ROUTING_POLICY.SHEETS.EXCLUSION]: OPS_ROUTING_POLICY.LAST_STATUS_BY_SHEET['Exclusion']
   },
-
-  // New: primary routing config (preferred by new modules)
-  opsRouting: OPS_ROUTING_POLICY,
 
   formFields: {
     // Deprecated: no longer used (single master sheet target).
