@@ -1,0 +1,188 @@
+/***************************************************************
+ * 99_RuntimeFixes.gs
+ * Targeted runtime guards + compatibility overrides.
+ *
+ * Purpose:
+ * - Reduce drift between legacy callers and new source-of-truth config.
+ * - Harden date parsing and filtered-sort behavior.
+ * - Keep this file intentionally small and surgical.
+ ***************************************************************/
+'use strict';
+
+(function bootstrapRuntimeFixes99_() {
+  const g = (typeof globalThis !== 'undefined') ? globalThis : Function('return this')();
+
+  /** ---------------------------------------------------------
+   * 05b claim highlight policy + aliases
+   * --------------------------------------------------------- */
+  try {
+    getOperationalClaimHighlightPolicy_ = function () {
+      const p =
+        (typeof CLAIM_HIGHLIGHT_POLICY !== 'undefined' && CLAIM_HIGHLIGHT_POLICY)
+        || (CONFIG && (CONFIG.CLAIM_HIGHLIGHT_POLICY || CONFIG.claimHighlightPolicy))
+        || {};
+
+      const pick = function (k, defBg, defNote) {
+        const o = p[k] || {};
+        return { bg: o.bg || defBg, note: o.note || defNote };
+      };
+
+      const dup = p.duplicate || {};
+      return {
+        expired: pick('expired', '#fff2cc', 'Policy already expired.'),
+        flex: pick('flex', '#f4c7c3', 'Flex claim.'),
+        b2b: pick('b2b', '#c9daf8', 'B2B claim.'),
+        secondYear: pick('secondYear', '#d9ead3', 'Second-Year (Market Value).'),
+        firstMonthPolicy: pick('firstMonthPolicy', '#d9d2e9', 'First-Month Policy.'),
+        remaining1Month: pick('remaining1Month', '#fce5cd', 'Policy Remaining <= 1 Month.'),
+        duplicate: {
+          bg: dup.bg || '#dd7e6b',
+          notePrefix: dup.notePrefix || 'Duplicate Claim - Refer to Claim Number'
+        }
+      };
+    };
+  } catch (e0) {}
+
+  try {
+    getClaimNumberHeaderAliases_ = function () {
+      const aliases =
+        (CONFIG && (CONFIG.CLAIM_NUMBER_HEADER_ALIASES || CONFIG.claimNumberHeaderAliases))
+        || (typeof CLAIM_HIGHLIGHT_POLICY !== 'undefined' && CLAIM_HIGHLIGHT_POLICY && CLAIM_HIGHLIGHT_POLICY.CLAIM_NUMBER_HEADER_ALIASES)
+        || ['Claim Number'];
+      return (aliases || []).map(function (s) { return String(s || '').trim(); }).filter(Boolean);
+    };
+  } catch (e1) {}
+
+  try {
+    normalizeInsuranceShort05b_ = function (insuranceName) {
+      if (typeof mapInsuranceShort_ === 'function') {
+        const out = mapInsuranceShort_(insuranceName);
+        if (out || String(insuranceName == null ? '' : insuranceName).trim() === '') return out;
+      }
+
+      const s = String(insuranceName == null ? '' : insuranceName).trim();
+      if (!s) return '';
+      const l = s.toLowerCase();
+      if (l.indexOf('great eastern general insurance') > -1) return 'GEGI';
+      if (l.indexOf('tokio marine') > -1) return 'TMI';
+      if (l.indexOf('msig indonesia') > -1) return 'MSIG';
+      if (l.indexOf('seainsure') > -1) return 'MIGI';
+      if (l.indexOf('sompo insurance') > -1) return 'Sompo';
+      if (l.indexOf('axa mandiri insurance') > -1) return 'AXA';
+      if (l.indexOf('simas insurtech') > -1) return 'Simas';
+      return s;
+    };
+  } catch (e2) {}
+
+  /** ---------------------------------------------------------
+   * 06c status type source-of-truth
+   * --------------------------------------------------------- */
+  try {
+    getStatusTypeMap06c_ = function () {
+      try {
+        if (CONFIG && (CONFIG.STATUS_TYPE_MAP || CONFIG.statusTypeMap || CONFIG.statusTypeByLastStatus)) {
+          return CONFIG.STATUS_TYPE_MAP || CONFIG.statusTypeMap || CONFIG.statusTypeByLastStatus;
+        }
+      } catch (e) {}
+
+      try {
+        if (typeof STATUS_TYPE_BY_LAST_STATUS !== 'undefined' && STATUS_TYPE_BY_LAST_STATUS) {
+          return STATUS_TYPE_BY_LAST_STATUS;
+        }
+      } catch (e2) {}
+
+      return {};
+    };
+  } catch (e3) {}
+
+  /** ---------------------------------------------------------
+   * 06c safer date coercion
+   * --------------------------------------------------------- */
+  try {
+    __toDate06_ = function (v) {
+      if (!v) return null;
+      if (Object.prototype.toString.call(v) === '[object Date]' && !isNaN(v.getTime())) return v;
+
+      if (typeof normalizeDate_ === 'function') {
+        try {
+          const d0 = normalizeDate_(v);
+          if (d0 && !isNaN(d0.getTime())) return d0;
+        } catch (e0) {}
+      }
+
+      if (typeof parseClaimLastUpdatedDatetime06c_ === 'function') {
+        try {
+          const d1 = parseClaimLastUpdatedDatetime06c_(v);
+          if (d1 && !isNaN(d1.getTime())) return d1;
+        } catch (e1) {}
+      }
+
+      if (typeof v === 'number') {
+        const dNum = new Date(Math.round((v - 25569) * 86400000));
+        return isNaN(dNum.getTime()) ? null : dNum;
+      }
+
+      if (typeof v === 'string') {
+        const s = String(v).trim();
+        if (!s) return null;
+
+        // Only allow native parse for unambiguous timezone/ISO-like strings.
+        if (/^[0-9]{4}-[0-9]{2}-[0-9]{2}(?:[T\s][0-9:.]+)?(?:Z|[+-][0-9]{2}:?[0-9]{2})?$/.test(s) || /\bGMT\b/i.test(s)) {
+          const dStr = new Date(s);
+          return isNaN(dStr.getTime()) ? null : dStr;
+        }
+      }
+      return null;
+    };
+  } catch (e4) {}
+
+  /** ---------------------------------------------------------
+   * 06c filter-preserving sort with relative column indexes
+   * --------------------------------------------------------- */
+  try {
+    sortOperationalSheetPreserveFilter06c_ = function (sheet) {
+      if (typeof DRY_RUN !== 'undefined' && DRY_RUN) return;
+      if (!sheet) return;
+
+      const lr = sheet.getLastRow();
+      const lc = sheet.getLastColumn();
+      if (lr < 2 || lc < 1) return;
+
+      const header = sheet.getRange(1, 1, 1, lc).getValues()[0].map(__normalizeHeaderText06_);
+      const idxDate = __findHeaderIndexFlexible06_(header, 'Last Status Date');
+      const idxStatus = __findHeaderIndexFlexible06_(header, 'Last Status');
+      if (idxDate === -1 || idxStatus === -1) return;
+
+      try {
+        const filter = sheet.getFilter ? sheet.getFilter() : null;
+        if (filter && filter.getRange) {
+          const fr = filter.getRange();
+          const sr = fr.getRow();
+          const sc = fr.getColumn();
+          const nr = fr.getNumRows();
+          const nc = fr.getNumColumns();
+          if (nr <= 1) return;
+
+          const absDate = idxDate + 1;
+          const absStatus = idxStatus + 1;
+          const frColEnd = sc + nc - 1;
+          if (absDate < sc || absDate > frColEnd || absStatus < sc || absStatus > frColEnd) return;
+
+          const relSort = [
+            { column: absDate - sc + 1, ascending: true },
+            { column: absStatus - sc + 1, ascending: true }
+          ];
+          sheet.getRange(sr + 1, sc, nr - 1, nc).sort(relSort);
+          return;
+        }
+      } catch (e0) {}
+
+      try {
+        sheet.getRange(2, 1, lr - 1, lc).sort([
+          { column: idxDate + 1, ascending: true },
+          { column: idxStatus + 1, ascending: true }
+        ]);
+      } catch (e1) {}
+    };
+  } catch (e5) {}
+})();
