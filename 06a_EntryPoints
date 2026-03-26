@@ -137,22 +137,28 @@ function buildRoutingIndex06_(routingMap) {
 }
 
 function getUnmappedPartnerMinSubmissionDate06_() {
-  let s = null;
+  // Cache per execution to avoid reparsing the same policy value repeatedly.
+  if (typeof RUNTIME !== 'undefined' && RUNTIME && RUNTIME._unmappedPartnerMinSubmissionDate instanceof Date) {
+    return RUNTIME._unmappedPartnerMinSubmissionDate;
+  }
+
+  const fallback = new Date(2025, 5, 1); // June 1, 2025 (local)
+  let raw = null;
   try {
-    if (typeof DETAILS_LOG_POLICY !== 'undefined' && DETAILS_LOG_POLICY && DETAILS_LOG_POLICY.UNMAPPED_PARTNER_MIN_SUBMISSION_DATE) {
-      s = DETAILS_LOG_POLICY.UNMAPPED_PARTNER_MIN_SUBMISSION_DATE;
-    } else if (CONFIG && CONFIG.DETAILS_LOG_POLICY && CONFIG.DETAILS_LOG_POLICY.UNMAPPED_PARTNER_MIN_SUBMISSION_DATE) {
-      s = CONFIG.DETAILS_LOG_POLICY.UNMAPPED_PARTNER_MIN_SUBMISSION_DATE;
-    } else if (CONFIG && CONFIG.detailsLogPolicy && CONFIG.detailsLogPolicy.UNMAPPED_PARTNER_MIN_SUBMISSION_DATE) {
-      s = CONFIG.detailsLogPolicy.UNMAPPED_PARTNER_MIN_SUBMISSION_DATE;
+    if (typeof DETAILS_LOG_POLICY !== 'undefined' && DETAILS_LOG_POLICY) {
+      raw = DETAILS_LOG_POLICY.UNMAPPED_PARTNER_MIN_SUBMISSION_DATE || null;
+    }
+    if (!raw && CONFIG && CONFIG.detailsLogPolicy) {
+      raw = CONFIG.detailsLogPolicy.UNMAPPED_PARTNER_MIN_SUBMISSION_DATE || null;
     }
   } catch (e) {}
 
-  const fallback = new Date(2025, 5, 1); // June 1, 2025 (local)
-  if (!s) return fallback;
-
-  const d = __toDate06_(s);
-  return d ? new Date(d.getFullYear(), d.getMonth(), d.getDate()) : fallback;
+  const d = raw ? __toDate06_(raw) : null;
+  const out = d ? new Date(d.getFullYear(), d.getMonth(), d.getDate()) : fallback;
+  try {
+    if (typeof RUNTIME !== 'undefined' && RUNTIME) RUNTIME._unmappedPartnerMinSubmissionDate = out;
+  } catch (e2) {}
+  return out;
 }
 
 function filterUnknownPartnerRowsByMinSubmissionDate06_(rows, minDate) {
@@ -2662,4 +2668,3 @@ function runManual(picOrFileIdsCsv, fileIdsCsvMaybe) {
     }
   });
 }
-
