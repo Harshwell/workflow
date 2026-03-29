@@ -1333,6 +1333,14 @@ function __findHeaderIndexFlexible06_(headers, desiredHeader) {
   const want = __normalizeHeaderText06_(desiredHeader);
   if (!want) return -1;
 
+  // 0) shared utility exact normalized lookup
+  try {
+    if (typeof findHeaderIndexByCandidates_ === 'function') {
+      const ix = findHeaderIndexByCandidates_(headers, [want]);
+      if (ix > -1) return ix;
+    }
+  } catch (e0) {}
+
   // 1) exact match
   let idx0 = headers.indexOf(want);
   if (idx0 > -1) return idx0;

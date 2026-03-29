@@ -2375,6 +2375,8 @@ function __scoreScMatch06a_(scNorm, keywords) {
 
 /** Append missing rows into Submission (rules differ for OLD vs NEW). */
 function __appendSubmissionFromRawIfMissing06a_(ss, rawMap, rawHdrIdx, dbTag) {
+  if (typeof __appendSubmissionFromRawIfMissing06e_ === 'function') {
+    return __appendSubmissionFromRawIfMissing06e_(ss, rawMap, rawHdrIdx, dbTag);
   const sh = ss.getSheetByName('Submission');
   if (!sh) {
     try { logLine_('SUB_WARN', 'Submission sheet not found (skip append)', '', '', 'WARN'); } catch (e1) {}
@@ -2511,10 +2513,7 @@ function __appendSubmissionFromRawIfMissing06a_(ss, rawMap, rawHdrIdx, dbTag) {
       try { logLine_('SUB_WARN', 'Failed to apply RichText hyperlinks for DB Link', String(e4), '', 'WARN'); } catch (e5) {}
     }
   }
-
-  try { logLine_('SUB_APP', 'Appended rows to Submission', dbTag, 'count=' + rowsToAppend.length, 'INFO'); } catch (e6) {}
-
-  return { appended: rowsToAppend.length };
+  throw new Error('__appendSubmissionFromRawIfMissing06e_ is not available.');
 }
 
 /** Sort operational sheets by Last Status Aging (Z->A), Last Status (A->Z), DB (A->Z). */
@@ -2525,79 +2524,10 @@ function __appendSubmissionFromRawIfMissing06a_(ss, rawMap, rawHdrIdx, dbTag) {
  *  3) Last Status (A->Z)
  */
 function __sortOperationalSheetsSub06a_(ss, sheetNames, sortSpecs) {
-  const names = Array.isArray(sheetNames) ? sheetNames : [];
-  const out = { sheets: {}, sortedSheets: 0, skippedSheets: 0 };
-
-  // SUB sort is enforced by requirement; ignore legacy default unless explicitly configured.
-  const enforcedSpecs = [
-        { headerCandidates: ['Last Status Date', 'claim_last_updated_datetime', 'claim last updated datetime'], ascending: true },
-    { headerCandidates: ['Last Status', 'last_status', 'last status'], ascending: true }
-  ];
-
-  for (let i = 0; i < names.length; i++) {
-    const name = String(names[i] || '').trim();
-    if (!name) continue;
-
-    const sh = ss.getSheetByName(name);
-    if (!sh) { out.sheets[name] = { skipped: 'not found' }; out.skippedSheets++; continue; }
-
-    const lastRow = sh.getLastRow();
-    const lastCol = sh.getLastColumn();
-    if (lastRow < 3 || lastCol < 2) { out.sheets[name] = { skipped: 'too few rows' }; out.skippedSheets++; continue; }
-
-    try {
-      const hdr = sh.getRange(1, 1, 1, lastCol).getValues()[0].map(h => String(h || '').trim());
-      const norm = hdr.map(h => h.toLowerCase());
-
-      function idxByCandidates(cands) {
-        for (let k = 0; k < cands.length; k++) {
-          const key = String(cands[k] || '').toLowerCase();
-          const j = norm.indexOf(key);
-          if (j >= 0) return j;
-        }
-        return -1;
-      }
-
-      const sortCriteria = [];
-      enforcedSpecs.forEach(s => {
-        const idx = idxByCandidates(s.headerCandidates);
-        if (idx >= 0) sortCriteria.push({ column: idx + 1, ascending: !!s.ascending });
-      });
-
-      if (!sortCriteria.length) {
-        out.sheets[name] = { skipped: 'missing headers for sort' };
-        out.skippedSheets++;
-        continue;
-      }
-
-      // Preserve filter: sort only the data body, not the header.
-      const filter = sh.getFilter ? sh.getFilter() : null;
-      if (filter && filter.getRange) {
-        const fr = filter.getRange();
-        const sr = fr.getRow();
-        const sc = fr.getColumn();
-        const nr = fr.getNumRows();
-        const nc = fr.getNumColumns();
-
-        if (nr <= 1) { out.sheets[name] = { skipped: 'filter range too small' }; out.skippedSheets++; continue; }
-
-        const body = sh.getRange(sr + 1, sc, nr - 1, nc);
-        if (!isDryRun_()) body.sort(sortCriteria);
-      } else {
-        const body = sh.getRange(2, 1, lastRow - 1, lastCol);
-        if (!isDryRun_()) body.sort(sortCriteria);
-      }
-
-      out.sheets[name] = { sorted: true, criteria: sortCriteria.length };
-      out.sortedSheets++;
-    } catch (e0) {
-      out.sheets[name] = { error: String(e0 && e0.message ? e0.message : e0) };
-      out.skippedSheets++;
-      try { logLine_('SUB_WARN', 'Sort failed', name, String(e0), 'WARN'); } catch (e1) {}
-    }
+  if (typeof __sortOperationalSheetsSub06e_ === 'function') {
+    return __sortOperationalSheetsSub06e_(ss, sheetNames, sortSpecs);
   }
-
-  return out;
+  throw new Error('__sortOperationalSheetsSub06e_ is not available.');
 }
 
 

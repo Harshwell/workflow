@@ -243,6 +243,14 @@ Perubahan lanjutan yang sudah diterapkan setelah patch critical sebelumnya:
 - Helper DB classifier dan parser datetime claim dipusatkan ke `01_Utils` untuk memangkas duplikasi lintas modul.
 - Helper map insurance di modul operasional diarahkan ke `mapInsuranceShort_()` yang sudah jadi source bersama.
 - `getStatusTypeMap06c_` sekarang strict ke source-of-truth config (tanpa hardcoded fallback map lokal).
+- `enrichOperationalSheetsFromRaw06_` mulai dipisah bertahap dengan resolver indeks raw terpusat agar maintenance lebih aman.
+- Header matching mulai dikonsolidasikan ke util shared untuk mengurangi mismatch lintas modul.
+
+
+### Update struktur SUB helper (2026-03-29, phase 4A)
+
+- Implementasi helper SUB untuk append ke `Submission` dan sort operational dipindahkan ke `06e_SubHelpers`.
+- `06a_EntryPoints` tetap mempertahankan nama fungsi existing sebagai delegator supaya caller lama tidak pecah.
 
 ### Yang sudah bagus
 

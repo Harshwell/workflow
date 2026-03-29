@@ -675,179 +675,36 @@ function enrichOperationalSheetsFromRaw06_(ss, rawValues, headerIndexRaw, pic, o
   if (DRY_RUN) return;
   if (!ss || !rawValues || !rawValues.length || !headerIndexRaw) return;
 
-  const isAdmin = (pic === 'Admin');
-  let sheets = isAdmin
-    ? (CONFIG && CONFIG.sheetsByPic && CONFIG.sheetsByPic.adminOperational ? CONFIG.sheetsByPic.adminOperational : [])
-    : (CONFIG && CONFIG.sheetsByPic && CONFIG.sheetsByPic.picOperational ? CONFIG.sheetsByPic.picOperational : []);
-
-  if (!Array.isArray(sheets) || !sheets.length) {
-    sheets = ['Submission','Ask Detail','OR - OLD','Start','Finish','SC - Farhan','SC - Meilani','SC - Ivan','PO','Exclusion'];
-  }
+  let sheets = getOperationalSheetNames06b_(pic);
 
   // Flow context for formatting decisions (default: main)
   const flowName = ((opts && (opts.flow || opts.Flow || opts.flowName)) || (typeof RUNTIME !== 'undefined' && RUNTIME ? RUNTIME.flowName : '') || 'main')
     .toString().trim().toLowerCase();
 
-  // Only core operational sheets (exclude optional modules)
-  sheets = sheets.filter(n => n !== 'B2B' && n !== 'EV-Bike' && n !== 'Special Case' && n !== 'Raw Data');
-
-  const idxClaimRaw = resolveRawIdx06_(headerIndexRaw, [
-    (CONFIG && CONFIG.headers && CONFIG.headers.claimNumber) ? CONFIG.headers.claimNumber : null,
-    'claim_number',
-    'Claim Number'
-  ]);
+  const rawIdx = __resolveEnrichRawIndexes06b_(headerIndexRaw);
+  const idxClaimRaw = rawIdx.idxClaimRaw;
   if (idxClaimRaw == null) return;
 
   const rawClaimMap = buildRawClaimMap06_(rawValues, idxClaimRaw);
-
-  // Raw indices (best-effort; will stay null if header missing)
-  const idxDbRaw = resolveRawIdx06_(headerIndexRaw, [
-    (CONFIG && CONFIG.headers && (CONFIG.headers.db || CONFIG.headers.dbClass || CONFIG.headers.dbStatus))
-      ? (CONFIG.headers.db || CONFIG.headers.dbClass || CONFIG.headers.dbStatus)
-      : null,
-    'DB'
-  ]);
-
-  const idxPartnerRaw = resolveRawIdx06_(headerIndexRaw, [
-    (CONFIG && CONFIG.headers && (CONFIG.headers.partnerName || CONFIG.headers.partner)) ? (CONFIG.headers.partnerName || CONFIG.headers.partner) : null,
-    'partner_name',
-    'Partner Name',
-    'Partner'
-  ]);
-
-  const idxInsuranceRaw = resolveRawIdx06_(headerIndexRaw, [
-    (CONFIG && CONFIG.headers && (CONFIG.headers.insurance || CONFIG.headers.insuranceName || CONFIG.headers.insuranceCode)) ? (CONFIG.headers.insurance || CONFIG.headers.insuranceName || CONFIG.headers.insuranceCode) : null,
-    'insurance',
-    'insurance_name',
-    'insurance_code',
-    'Insurance',
-    'Insurance Code'
-  ]);
-
-  const idxDeviceTypeRaw = resolveRawIdx06_(headerIndexRaw, [
-    (CONFIG && CONFIG.headers && (CONFIG.headers.deviceType || CONFIG.headers.device_type)) ? (CONFIG.headers.deviceType || CONFIG.headers.device_type) : null,
-    'device_type',
-    'Device Type'
-  ]);
-
-  const idxServiceCenterRaw = resolveRawIdx06_(headerIndexRaw, [
-    (CONFIG && CONFIG.headers && (CONFIG.headers.serviceCenter || CONFIG.headers.scName)) ? (CONFIG.headers.serviceCenter || CONFIG.headers.scName) : null,
-    'service_center',
-    'sc_name',
-    'Service Center',
-    'SC Name'
-  ]);
-
-  const idxLsaRaw = resolveRawIdx06_(headerIndexRaw, [
-    (CONFIG && CONFIG.headers && CONFIG.headers.lastStatusAging) ? CONFIG.headers.lastStatusAging : null,
-    'Last Status Aging',
-    'LSA',
-    'last_status_aging',
-    'lsa'
-  ]);
-
-  const idxAlaRaw = resolveRawIdx06_(headerIndexRaw, [
-    (CONFIG && CONFIG.headers && CONFIG.headers.activityLogAging) ? CONFIG.headers.activityLogAging : null,
-    (CONFIG && CONFIG.headers && (CONFIG.headers.ala || CONFIG.headers.ALA)) ? (CONFIG.headers.ala || CONFIG.headers.ALA) : null,
-    'Activity Log Aging',
-    'ALA',
-    'activity_log_aging',
-    'ala'
-  ]);
-
-  const idxTatRaw = resolveRawIdx06_(headerIndexRaw, [
-    (CONFIG && CONFIG.headers && (CONFIG.headers.tat || CONFIG.headers.TAT)) ? (CONFIG.headers.tat || CONFIG.headers.TAT) : null,
-    'TAT',
-    'tat'
-  ]);
-
-  // Mandatory columns (from Raw)
-  const idxProductRaw = resolveRawIdx06_(headerIndexRaw, [
-    (CONFIG && CONFIG.headers && (CONFIG.headers.productName || CONFIG.headers.product)) ? (CONFIG.headers.productName || CONFIG.headers.product) : null,
-    'product_name',
-    'Product Name',
-    'Product'
-  ]);
-
-  const idxBrandRaw = resolveRawIdx06_(headerIndexRaw, [
-    (CONFIG && CONFIG.headers && (CONFIG.headers.deviceBrand || CONFIG.headers.brand)) ? (CONFIG.headers.deviceBrand || CONFIG.headers.brand) : null,
-    'device_brand',
-    'Device Brand',
-    'Brand'
-  ]);
-
-  const idxImeiRaw = resolveRawIdx06_(headerIndexRaw, [
-    (CONFIG && CONFIG.headers && (CONFIG.headers.imeiNumber || CONFIG.headers.imei || CONFIG.headers.serialNumber)) ? (CONFIG.headers.imeiNumber || CONFIG.headers.imei || CONFIG.headers.serialNumber) : null,
-    'imei_number',
-    'IMEI',
-    'IMEI/SN',
-    'SN',
-    'Serial Number'
-  ]);
-
-  const idxSumInsuredRaw = resolveRawIdx06_(headerIndexRaw, [
-    (CONFIG && CONFIG.headers && (CONFIG.headers.sumInsuredAmount || CONFIG.headers.sumInsured)) ? (CONFIG.headers.sumInsuredAmount || CONFIG.headers.sumInsured) : null,
-    'sum_insured_amount',
-    'Sum Insured Amount',
-    'Sum Insured'
-  ]);
-
-  const idxClaimAmtRaw = resolveRawIdx06_(headerIndexRaw, [
-    (CONFIG && CONFIG.headers && (CONFIG.headers.claimAmount)) ? CONFIG.headers.claimAmount : null,
-    'claim_amount',
-    'Claim Amount'
-  ]);
-
-  const idxOwnRiskRaw = resolveRawIdx06_(headerIndexRaw, [
-    (CONFIG && CONFIG.headers && (CONFIG.headers.claimOwnRiskAmount || CONFIG.headers.ownRiskAmount)) ? (CONFIG.headers.claimOwnRiskAmount || CONFIG.headers.ownRiskAmount) : null,
-    'claim_own_risk_amount',
-    'Claim Own Risk Amount',
-    'Own Risk Amount'
-  ]);
-
-  const idxNettRaw = resolveRawIdx06_(headerIndexRaw, [
-    (CONFIG && CONFIG.headers && (CONFIG.headers.nettClaimAmount || CONFIG.headers.netClaimAmount)) ? (CONFIG.headers.nettClaimAmount || CONFIG.headers.netClaimAmount) : null,
-    'nett_claim_amount',
-    'Nett Claim Amount',
-    'Net Claim Amount'
-  ]);
-  // Optional (new): Activity Log from Raw
-  // Main flow uses Raw Data → prefer last_activity_log, fallback to activity_log.
-  const idxActivityLogRaw = resolveRawIdx06_(headerIndexRaw, [
-    (CONFIG && CONFIG.headers && (CONFIG.headers.lastActivityLog || CONFIG.headers.last_activity_log)) ? (CONFIG.headers.lastActivityLog || CONFIG.headers.last_activity_log) : null,
-    'last_activity_log',
-    'Last Activity Log',
-    'Last Activity',
-    'activity_log',
-    'Activity Log'
-  ]);
-
-  // Optional (new): Claim last updated datetime for Last Status Date
-  const idxClaimLastUpdatedRaw = resolveRawIdx06_(headerIndexRaw, [
-    (CONFIG && CONFIG.headers && (CONFIG.headers.claimLastUpdatedDatetime || CONFIG.headers.claim_last_updated_datetime)) ? (CONFIG.headers.claimLastUpdatedDatetime || CONFIG.headers.claim_last_updated_datetime) : null,
-    'claim_last_updated_datetime',
-    'Claim Last Updated Datetime',
-    'Claim Last Updated Date',
-    'claim_last_updated_date'
-  ]);
-
-  // Optional (legacy but widely present in MAIN/FORM exports): last_update / Last Update Datetime
-  // This is the primary source for Last Status Date when flow is main/form.
-  const idxLastUpdateRaw = resolveRawIdx06_(headerIndexRaw, [
-    (CONFIG && CONFIG.headers && CONFIG.headers.lastUpdate) ? CONFIG.headers.lastUpdate : null,
-    'last_update',
-    'Last Update Datetime',
-    'Last Update',
-    'last update datetime'
-  ]);
-
-  // Optional: Remarks in Raw (for restore)
-  const idxRemarksRaw = resolveRawIdx06_(headerIndexRaw, [
-    (CONFIG && CONFIG.headers && (CONFIG.headers.remarks || CONFIG.headers.remark)) ? (CONFIG.headers.remarks || CONFIG.headers.remark) : null,
-    'Remarks',
-    'remarks',
-    'Remark'
-  ]);
+  const idxDbRaw = rawIdx.idxDbRaw;
+  const idxPartnerRaw = rawIdx.idxPartnerRaw;
+  const idxInsuranceRaw = rawIdx.idxInsuranceRaw;
+  const idxDeviceTypeRaw = rawIdx.idxDeviceTypeRaw;
+  const idxServiceCenterRaw = rawIdx.idxServiceCenterRaw;
+  const idxLsaRaw = rawIdx.idxLsaRaw;
+  const idxAlaRaw = rawIdx.idxAlaRaw;
+  const idxTatRaw = rawIdx.idxTatRaw;
+  const idxProductRaw = rawIdx.idxProductRaw;
+  const idxBrandRaw = rawIdx.idxBrandRaw;
+  const idxImeiRaw = rawIdx.idxImeiRaw;
+  const idxSumInsuredRaw = rawIdx.idxSumInsuredRaw;
+  const idxClaimAmtRaw = rawIdx.idxClaimAmtRaw;
+  const idxOwnRiskRaw = rawIdx.idxOwnRiskRaw;
+  const idxNettRaw = rawIdx.idxNettRaw;
+  const idxActivityLogRaw = rawIdx.idxActivityLogRaw;
+  const idxClaimLastUpdatedRaw = rawIdx.idxClaimLastUpdatedRaw;
+  const idxLastUpdateRaw = rawIdx.idxLastUpdateRaw;
+  const idxRemarksRaw = rawIdx.idxRemarksRaw;
 
   const fmt = _fmt06_();
   const moneyFmt = fmt && fmt.MONEY0 ? fmt.MONEY0 : '#,##0';
@@ -1093,6 +950,139 @@ function getOperationalSheetNames06b_(pic) {
   }
   // Only core operational sheets (exclude optional modules)
   return sheets.filter(n => n && n !== 'B2B' && n !== 'EV-Bike' && n !== 'Special Case' && n !== 'Raw Data');
+}
+
+function __resolveEnrichRawIndexes06b_(headerIndexRaw) {
+  return {
+    idxClaimRaw: resolveRawIdx06_(headerIndexRaw, [
+      (CONFIG && CONFIG.headers && CONFIG.headers.claimNumber) ? CONFIG.headers.claimNumber : null,
+      'claim_number',
+      'Claim Number'
+    ]),
+    idxDbRaw: resolveRawIdx06_(headerIndexRaw, [
+      (CONFIG && CONFIG.headers && (CONFIG.headers.db || CONFIG.headers.dbClass || CONFIG.headers.dbStatus))
+        ? (CONFIG.headers.db || CONFIG.headers.dbClass || CONFIG.headers.dbStatus)
+        : null,
+      'DB'
+    ]),
+    idxPartnerRaw: resolveRawIdx06_(headerIndexRaw, [
+      (CONFIG && CONFIG.headers && (CONFIG.headers.partnerName || CONFIG.headers.partner)) ? (CONFIG.headers.partnerName || CONFIG.headers.partner) : null,
+      'partner_name',
+      'Partner Name',
+      'Partner'
+    ]),
+    idxInsuranceRaw: resolveRawIdx06_(headerIndexRaw, [
+      (CONFIG && CONFIG.headers && (CONFIG.headers.insurance || CONFIG.headers.insuranceName || CONFIG.headers.insuranceCode)) ? (CONFIG.headers.insurance || CONFIG.headers.insuranceName || CONFIG.headers.insuranceCode) : null,
+      'insurance',
+      'insurance_name',
+      'insurance_code',
+      'Insurance',
+      'Insurance Code'
+    ]),
+    idxDeviceTypeRaw: resolveRawIdx06_(headerIndexRaw, [
+      (CONFIG && CONFIG.headers && (CONFIG.headers.deviceType || CONFIG.headers.device_type)) ? (CONFIG.headers.deviceType || CONFIG.headers.device_type) : null,
+      'device_type',
+      'Device Type'
+    ]),
+    idxServiceCenterRaw: resolveRawIdx06_(headerIndexRaw, [
+      (CONFIG && CONFIG.headers && (CONFIG.headers.serviceCenter || CONFIG.headers.scName)) ? (CONFIG.headers.serviceCenter || CONFIG.headers.scName) : null,
+      'service_center',
+      'sc_name',
+      'Service Center',
+      'SC Name'
+    ]),
+    idxLsaRaw: resolveRawIdx06_(headerIndexRaw, [
+      (CONFIG && CONFIG.headers && CONFIG.headers.lastStatusAging) ? CONFIG.headers.lastStatusAging : null,
+      'Last Status Aging',
+      'LSA',
+      'last_status_aging',
+      'lsa'
+    ]),
+    idxAlaRaw: resolveRawIdx06_(headerIndexRaw, [
+      (CONFIG && CONFIG.headers && CONFIG.headers.activityLogAging) ? CONFIG.headers.activityLogAging : null,
+      (CONFIG && CONFIG.headers && (CONFIG.headers.ala || CONFIG.headers.ALA)) ? (CONFIG.headers.ala || CONFIG.headers.ALA) : null,
+      'Activity Log Aging',
+      'ALA',
+      'activity_log_aging',
+      'ala'
+    ]),
+    idxTatRaw: resolveRawIdx06_(headerIndexRaw, [
+      (CONFIG && CONFIG.headers && (CONFIG.headers.tat || CONFIG.headers.TAT)) ? (CONFIG.headers.tat || CONFIG.headers.TAT) : null,
+      'TAT',
+      'tat'
+    ]),
+    idxProductRaw: resolveRawIdx06_(headerIndexRaw, [
+      (CONFIG && CONFIG.headers && (CONFIG.headers.productName || CONFIG.headers.product)) ? (CONFIG.headers.productName || CONFIG.headers.product) : null,
+      'product_name',
+      'Product Name',
+      'Product'
+    ]),
+    idxBrandRaw: resolveRawIdx06_(headerIndexRaw, [
+      (CONFIG && CONFIG.headers && (CONFIG.headers.deviceBrand || CONFIG.headers.brand)) ? (CONFIG.headers.deviceBrand || CONFIG.headers.brand) : null,
+      'device_brand',
+      'Device Brand',
+      'Brand'
+    ]),
+    idxImeiRaw: resolveRawIdx06_(headerIndexRaw, [
+      (CONFIG && CONFIG.headers && (CONFIG.headers.imeiNumber || CONFIG.headers.imei || CONFIG.headers.serialNumber)) ? (CONFIG.headers.imeiNumber || CONFIG.headers.imei || CONFIG.headers.serialNumber) : null,
+      'imei_number',
+      'IMEI',
+      'IMEI/SN',
+      'SN',
+      'Serial Number'
+    ]),
+    idxSumInsuredRaw: resolveRawIdx06_(headerIndexRaw, [
+      (CONFIG && CONFIG.headers && (CONFIG.headers.sumInsuredAmount || CONFIG.headers.sumInsured)) ? (CONFIG.headers.sumInsuredAmount || CONFIG.headers.sumInsured) : null,
+      'sum_insured_amount',
+      'Sum Insured Amount',
+      'Sum Insured'
+    ]),
+    idxClaimAmtRaw: resolveRawIdx06_(headerIndexRaw, [
+      (CONFIG && CONFIG.headers && (CONFIG.headers.claimAmount)) ? CONFIG.headers.claimAmount : null,
+      'claim_amount',
+      'Claim Amount'
+    ]),
+    idxOwnRiskRaw: resolveRawIdx06_(headerIndexRaw, [
+      (CONFIG && CONFIG.headers && (CONFIG.headers.claimOwnRiskAmount || CONFIG.headers.ownRiskAmount)) ? (CONFIG.headers.claimOwnRiskAmount || CONFIG.headers.ownRiskAmount) : null,
+      'claim_own_risk_amount',
+      'Claim Own Risk Amount',
+      'Own Risk Amount'
+    ]),
+    idxNettRaw: resolveRawIdx06_(headerIndexRaw, [
+      (CONFIG && CONFIG.headers && (CONFIG.headers.nettClaimAmount || CONFIG.headers.netClaimAmount)) ? (CONFIG.headers.nettClaimAmount || CONFIG.headers.netClaimAmount) : null,
+      'nett_claim_amount',
+      'Nett Claim Amount',
+      'Net Claim Amount'
+    ]),
+    idxActivityLogRaw: resolveRawIdx06_(headerIndexRaw, [
+      (CONFIG && CONFIG.headers && (CONFIG.headers.lastActivityLog || CONFIG.headers.last_activity_log)) ? (CONFIG.headers.lastActivityLog || CONFIG.headers.last_activity_log) : null,
+      'last_activity_log',
+      'Last Activity Log',
+      'Last Activity',
+      'activity_log',
+      'Activity Log'
+    ]),
+    idxClaimLastUpdatedRaw: resolveRawIdx06_(headerIndexRaw, [
+      (CONFIG && CONFIG.headers && (CONFIG.headers.claimLastUpdatedDatetime || CONFIG.headers.claim_last_updated_datetime)) ? (CONFIG.headers.claimLastUpdatedDatetime || CONFIG.headers.claim_last_updated_datetime) : null,
+      'claim_last_updated_datetime',
+      'Claim Last Updated Datetime',
+      'Claim Last Updated Date',
+      'claim_last_updated_date'
+    ]),
+    idxLastUpdateRaw: resolveRawIdx06_(headerIndexRaw, [
+      (CONFIG && CONFIG.headers && CONFIG.headers.lastUpdate) ? CONFIG.headers.lastUpdate : null,
+      'last_update',
+      'Last Update Datetime',
+      'Last Update',
+      'last update datetime'
+    ]),
+    idxRemarksRaw: resolveRawIdx06_(headerIndexRaw, [
+      (CONFIG && CONFIG.headers && (CONFIG.headers.remarks || CONFIG.headers.remark)) ? (CONFIG.headers.remarks || CONFIG.headers.remark) : null,
+      'Remarks',
+      'remarks',
+      'Remark'
+    ])
+  };
 }
 
 /**
@@ -1472,4 +1462,3 @@ function tagOverviewFlow06b_(ss, profileName, flowName) {
   sh.getRange(rowTarget, idxFlow + 1).setValue(flowName);
   return true;
 }
-

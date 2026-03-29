@@ -42,6 +42,11 @@ function __normalizeHeaderText05a_(v) {
 
 /** Case-insensitive exact header matcher (backup/restore resilience). */
 function __findHeaderIndex05a_(headerRow, name) {
+  try {
+    if (typeof findHeaderIndexByCandidates_ === 'function') {
+      return findHeaderIndexByCandidates_(headerRow, [name]);
+    }
+  } catch (e) {}
   const want = __normalizeHeaderText05a_(name).toLowerCase();
   if (!want) return -1;
   const h = Array.isArray(headerRow) ? headerRow : [];
