@@ -130,7 +130,7 @@ const BRANCH_KEYWORDS = Object.freeze({
   'B-Store': ['b-store', 'bstore'],
   'EzCare': ['ezcare', 'ez care'],
   'Deltasindo': ['deltasindo'],
-  'MDP': 'mdp'
+  'MDP': ['mdp']
 });
 
 
@@ -212,7 +212,10 @@ const WEBAPP_MOVEMENT_POLICY = Object.freeze({
     'Status Type',
 
     'Event ID'
-  ])
+  ]),
+
+  // Existing Event-ID lookup for Past uses recent rows only (performance guard).
+  PAST_EVENT_SCAN_MAX_ROWS: getPropInt_('WEBAPP_PAST_EVENT_SCAN_MAX_ROWS', 5000)
 });
 
 
