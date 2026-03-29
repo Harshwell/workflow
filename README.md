@@ -237,6 +237,13 @@ Perubahan lanjutan yang sudah diterapkan setelah patch critical sebelumnya:
 - Resolusi excluded-last-status di 05a diubah jadi lazy per-call + cache runtime (menghindari cache stale module-level).
 - `backupOpsToRawFull_` tidak lagi me-reassign parameter `rawValues`; sekarang pakai buffer lokal (`workingRawValues`) supaya alur data lebih eksplisit.
 
+
+### Update konsolidasi helper (2026-03-29, phase 3)
+
+- Helper DB classifier dan parser datetime claim dipusatkan ke `01_Utils` untuk memangkas duplikasi lintas modul.
+- Helper map insurance di modul operasional diarahkan ke `mapInsuranceShort_()` yang sudah jadi source bersama.
+- `getStatusTypeMap06c_` sekarang strict ke source-of-truth config (tanpa hardcoded fallback map lokal).
+
 ### Yang sudah bagus
 
 - Struktur modul numerik sudah memberi urutan mental yang cukup jelas

@@ -9,7 +9,8 @@
 
 /** Local DRY_RUN guard to avoid load-order ReferenceError. */
 function __isDryRun05c__() {
-  try { return !!DRY_RUN; } catch (e) { return false; }
+  try { if (typeof isDryRun_ === 'function') return !!isDryRun_(); } catch (e) {}
+  try { return !!DRY_RUN; } catch (e2) { return false; }
 }
 
 
@@ -37,6 +38,9 @@ function __getHeaderRow05c_(sh) {
 
 /** DB classifier from Claim Number (SFP/SFX/SMR -> OLD, VVMAR/GADLD -> NEW) */
 function computeDbValueFromClaimNumber05c_(claimNumber) {
+  try {
+    if (typeof computeDbValueFromClaimNumber_ === 'function') return computeDbValueFromClaimNumber_(claimNumber);
+  } catch (e) {}
   const s = String(claimNumber == null ? '' : claimNumber).trim().toUpperCase();
   if (!s) return '';
   if (s.indexOf('SFP') > -1 || s.indexOf('SFX') > -1 || s.indexOf('SMR') > -1) return 'OLD';

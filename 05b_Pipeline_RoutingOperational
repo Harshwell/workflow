@@ -731,6 +731,9 @@ function formatLogDate05b_(v) {
  *  - DB = NEW if Claim Number contains: VVMAR, GADLD
  */
 function computeDbValueFromClaimNumber05b_(claimNumber) {
+  try {
+    if (typeof computeDbValueFromClaimNumber_ === 'function') return computeDbValueFromClaimNumber_(claimNumber);
+  } catch (e) {}
   const s = String(claimNumber == null ? '' : claimNumber).trim().toUpperCase();
   if (!s) return '';
   if (s.indexOf('SFP') !== -1 || s.indexOf('SFX') !== -1 || s.indexOf('SMR') !== -1) return 'OLD';
@@ -753,16 +756,12 @@ function computeDbValueFromClaimNumber05b_(claimNumber) {
 function normalizeInsuranceShort05b_(insuranceName) {
   const s = String(insuranceName == null ? '' : insuranceName).trim();
   if (!s) return '';
-  const l = s.toLowerCase();
-
-  if (l.indexOf('great eastern general insurance') > -1) return 'GEGI';
-  if (l.indexOf('tokio marine') > -1) return 'TMI';
-  if (l.indexOf('msig indonesia') > -1) return 'MSIG';
-  if (l.indexOf('seainsure') > -1) return 'MIGI';
-  if (l.indexOf('sompo insurance') > -1) return 'Sompo';
-  if (l.indexOf('axa mandiri insurance') > -1) return 'AXA';
-  if (l.indexOf('simas insurtech') > -1) return 'Simas';
-
+  try {
+    if (typeof mapInsuranceShort_ === 'function') {
+      const mapped = String(mapInsuranceShort_(s) || '').trim();
+      if (mapped) return mapped;
+    }
+  } catch (e) {}
   return s;
 }
 

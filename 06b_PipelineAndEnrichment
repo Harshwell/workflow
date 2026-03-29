@@ -596,6 +596,9 @@ function ensureHeadersAtEnd06_(sh, headersToEnsure) {
  * - '' : no match (leave DB as-is)
  */
 function computeDbValueFromClaimNumber06_(claimNumber) {
+  try {
+    if (typeof computeDbValueFromClaimNumber_ === 'function') return computeDbValueFromClaimNumber_(claimNumber);
+  } catch (e) {}
   const s = String(claimNumber == null ? '' : claimNumber).trim().toUpperCase();
   if (!s) return '';
   if (s.indexOf('SFP') !== -1 || s.indexOf('SFX') !== -1 || s.indexOf('SMR') !== -1) return 'OLD';
@@ -611,16 +614,12 @@ function computeDbValueFromClaimNumber06_(claimNumber) {
 function normalizeInsuranceShort06_(insuranceVal) {
   const s0 = String(insuranceVal == null ? '' : insuranceVal).trim();
   if (!s0) return '';
-  const s = s0.toLowerCase();
-
-  if (s.indexOf('great eastern general insurance') !== -1) return 'GEGI';
-  if (s.indexOf('tokio marine') !== -1) return 'TMI';
-  if (s.indexOf('msig indonesia') !== -1) return 'MSIG';
-  if (s.indexOf('seainsure') !== -1) return 'MIGI';
-  if (s.indexOf('sompo insurance') !== -1) return 'Sompo';
-  if (s.indexOf('axa mandiri insurance') !== -1) return 'AXA';
-  if (s.indexOf('simas insurtech') !== -1) return 'Simas';
-
+  try {
+    if (typeof mapInsuranceShort_ === 'function') {
+      const mapped = String(mapInsuranceShort_(s0) || '').trim();
+      if (mapped) return mapped;
+    }
+  } catch (e) {}
   return s0;
 }
 
@@ -1231,91 +1230,16 @@ function restoreRemarksToOperationalFromRaw06b_(ss, rawValues, headerIndexRaw, p
 
 /** Parse "January 24, 2025, 6:06 PM" (and similar) into Date. Returns null if invalid/empty. */
 function parseClaimLastUpdatedDatetime06b_(v) {
-  if (v == null || v === '') return null;
-  if (Object.prototype.toString.call(v) === '[object Date]') return isNaN(v.getTime()) ? null : v;
-
-  // Prefer shared strict parser when available.
   try {
-    if (typeof parseClaimLastUpdatedDatetime06c_ === 'function') {
-      const d0 = parseClaimLastUpdatedDatetime06c_(v);
-      if (d0 && !isNaN(d0.getTime())) return d0;
-    }
+    if (typeof parseClaimLastUpdatedDatetime_ === 'function') return parseClaimLastUpdatedDatetime_(v);
   } catch (e0) {}
-
-  const s = String(v || '').trim();
-  if (!s) return null;
-
-  const tz = (() => {
-    try { return Session.getScriptTimeZone() || 'Asia/Jakarta'; } catch (e) { return 'Asia/Jakarta'; }
-  })();
-
-  // STRICT parsing (WIB) to avoid timezone shifts.
-  const patterns = [
-    'MMMM d, yyyy, h:mm a',
-    'MMMM d, yyyy, hh:mm a',
-    'MMMM d, yyyy, h:mm:ss a',
-    'MMMM d, yyyy, hh:mm:ss a',
-    'MMM d, yyyy, h:mm a',
-    'MMM d, yyyy, hh:mm a',
-    'yyyy-MM-dd HH:mm:ss',
-    'yyyy-MM-dd HH:mm',
-    'yyyy/MM/dd HH:mm:ss',
-    'yyyy/MM/dd HH:mm',
-    'dd/MM/yyyy HH:mm:ss',
-    'dd/MM/yyyy HH:mm'
-  ];
-
-  for (let i = 0; i < patterns.length; i++) {
-    try {
-      const d = Utilities.parseDate(s, tz, patterns[i]);
-      if (d && !isNaN(d.getTime())) return d;
-    } catch (e1) {}
-  }
-
-  // Manual month-name parse (English) -> parse as ISO in WIB.
-  const m = s.match(/^([A-Za-z]+)\s+(\d{1,2}),\s*(\d{4}),\s*(\d{1,2}):(\d{2})\s*([AP]M)$/i);
-  if (m) {
-    const monName = String(m[1] || '').toLowerCase();
-    const day = Number(m[2]);
-    const year = Number(m[3]);
-    let hh = Number(m[4]);
-    const mm = Number(m[5]);
-    const ampm = String(m[6] || '').toUpperCase();
-
-    const months = {
-      january:1,february:2,march:3,april:4,may:5,june:6,july:7,august:8,september:9,october:10,november:11,december:12,
-      jan:1,feb:2,mar:3,apr:4,jun:6,jul:7,aug:8,sep:9,oct:10,nov:11,dec:12
-    };
-    const mon = months[monName];
-    if (mon) {
-      if (ampm === 'PM' && hh < 12) hh += 12;
-      if (ampm === 'AM' && hh === 12) hh = 0;
-      const iso = Utilities.formatString('%04d-%02d-%02d %02d:%02d:00', year, mon, day, hh, mm);
-      try {
-        const d2 = Utilities.parseDate(iso, tz, 'yyyy-MM-dd HH:mm:ss');
-        if (d2 && !isNaN(d2.getTime())) return d2;
-      } catch (e2) {}
-    }
-  }
-
-  if (typeof normalizeDate_ === 'function') {
-    try {
-      const d3 = normalizeDate_(s);
-      if (d3 && !isNaN(d3.getTime())) return d3;
-    } catch (e3) {}
-  }
-
-  if (typeof tryNativeParseUnambiguousDate_ === 'function') {
-    try {
-      const d4 = tryNativeParseUnambiguousDate_(s);
-      if (d4 && !isNaN(d4.getTime())) return d4;
-    } catch (e4) {}
-  }
-
+  try {
+    if (typeof parseClaimLastUpdatedDatetime06c_ === 'function') return parseClaimLastUpdatedDatetime06c_(v);
+  } catch (e1) {}
   return null;
 }
 
-/** Status Type resolution; prefers shared 06c implementation when available. */
+/*** Status Type resolution; prefers shared 06c implementation when available. */
 function getStatusTypeFromLastStatus06b_(lastStatus) {
   try { if (typeof getStatusType06c_ === 'function') return getStatusType06c_(lastStatus); } catch (e) {}
   const s = String(lastStatus || '').trim();

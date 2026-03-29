@@ -8,6 +8,14 @@ Formatnya sengaja sederhana: **Added / Changed / Fixed**. Tidak perlu sok formal
 
 ## 2026-03-29
 
+
+### 2026-03-29 (phase 3 consolidation pass)
+- `01_Utils` menambahkan helper bersama `computeDbValueFromClaimNumber_` dan `parseClaimLastUpdatedDatetime_` untuk menghapus duplikasi logika lintas modul.
+- `05b`, `05c`, `06b` sekarang mendelegasikan DB/insurance helper ke utility terpusat (`computeDbValueFromClaimNumber_`, `mapInsuranceShort_`).
+- `05c` DRY_RUN guard disejajarkan ke `isDryRun_()` agar perilaku dry-run konsisten lintas modul.
+- `06c` `getStatusTypeMap06c_` tidak lagi membawa hardcoded fallback map; mapping hanya dari source-of-truth config/global.
+- `06b` dan `06c` parser datetime claim kini mendelegasikan ke parser terpusat `parseClaimLastUpdatedDatetime_`.
+
 ### Changed
 - `03_SheetsAndValidation`: tambah `sv03_getDateAutoNumberFormatForColumn_` sebagai resolver `DATE_AUTO` yang aman (date-only fallback, datetime bila sample berisi komponen waktu).
 - `05b_Pipeline_RoutingOperational`: apply highlight operational kini memakai isolasi error per-sheet agar kegagalan satu sheet tidak memutus pemrosesan sheet lainnya.
