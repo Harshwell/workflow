@@ -8,16 +8,14 @@ Formatnya sengaja sederhana: **Added / Changed / Fixed**. Tidak perlu sok formal
 
 ## 2026-03-29
 
-
-### 2026-03-29 (phase 3 consolidation pass)
+### Phase 3 consolidation pass
 - `01_Utils` menambahkan helper bersama `computeDbValueFromClaimNumber_` dan `parseClaimLastUpdatedDatetime_` untuk menghapus duplikasi logika lintas modul.
 - `05b`, `05c`, `06b` sekarang mendelegasikan DB/insurance helper ke utility terpusat (`computeDbValueFromClaimNumber_`, `mapInsuranceShort_`).
 - `05c` DRY_RUN guard disejajarkan ke `isDryRun_()` agar perilaku dry-run konsisten lintas modul.
 - `06c` `getStatusTypeMap06c_` tidak lagi membawa hardcoded fallback map; mapping hanya dari source-of-truth config/global.
 - `06b` dan `06c` parser datetime claim kini mendelegasikan ke parser terpusat `parseClaimLastUpdatedDatetime_`.
 
-
-### 2026-03-29 (phase 4 structural pass)
+### Phase 4 structural pass
 - Split sebagian helper SUB dari `06a_EntryPoints` ke file baru `06e_SubHelpers` (implementasi append Submission + sort operational dipindahkan; `06a` menyisakan delegator untuk menjaga kompatibilitas trigger/caller).
 - `static_smoke_check.js` diperbarui untuk memuat `06e_SubHelpers` agar validasi load-order tetap mencakup helper baru.
 - Tambah modul `06f_RuntimeAssertions` dan preflight non-fatal di `runPipeline_` + `runSubEmailIngest` untuk mendeteksi simbol penting yang hilang lebih awal.
