@@ -235,9 +235,7 @@ function processB2B_(ss, rawValues, headerIndexRaw, pic) { // `pic` kept for bac
   if (!rawValues || !rawValues.length) return 0;
 
   const OPTIONAL_FLAGS = (typeof __OPTIONAL_FLAGS !== 'undefined' && __OPTIONAL_FLAGS) ? __OPTIONAL_FLAGS : {};
-  const EXCLUDED_LAST_STATUSES = (typeof __EXCLUDED_LAST_STATUSES !== 'undefined' && __EXCLUDED_LAST_STATUSES && __EXCLUDED_LAST_STATUSES.size)
-    ? __EXCLUDED_LAST_STATUSES
-    : getSpecialCaseExcludedStatuses_();
+  const EXCLUDED_LAST_STATUSES = getSpecialCaseExcludedStatuses_();
 
   const idxBP = headerIndexRaw[h.businessPartner];
   const idxClaim = headerIndexRaw[h.claimNumber];
@@ -421,6 +419,9 @@ function getSpecialCaseExcludedStatuses_() {
   } catch (e) {}
   try {
     if (typeof buildExcludedLastStatusesSet_ === 'function') return buildExcludedLastStatusesSet_();
+  } catch (e) {}
+  try {
+    if (typeof __getExcludedLastStatuses05a_ === 'function') return __getExcludedLastStatuses05a_();
   } catch (e) {}
 
   // Backward-compatible fallbacks.
@@ -1026,9 +1027,7 @@ function processEVBike_(ss, rawValues, headerIndexRaw, pic) { // `pic` kept for 
 
 
   const OPTIONAL_FLAGS = (typeof __OPTIONAL_FLAGS !== 'undefined' && __OPTIONAL_FLAGS) ? __OPTIONAL_FLAGS : {};
-  const EXCLUDED_LAST_STATUSES = (typeof __EXCLUDED_LAST_STATUSES !== 'undefined' && __EXCLUDED_LAST_STATUSES && __EXCLUDED_LAST_STATUSES.size)
-    ? __EXCLUDED_LAST_STATUSES
-    : getSpecialCaseExcludedStatuses_();
+  const EXCLUDED_LAST_STATUSES = getSpecialCaseExcludedStatuses_();
 
   const idxBP = headerIndexRaw[h.businessPartner];
   const idxOwner = headerIndexRaw['customer_name'];
@@ -1187,6 +1186,8 @@ function processEVBike_(ss, rawValues, headerIndexRaw, pic) { // `pic` kept for 
       const info = submissionCandidates[key];
       const claim = key;
       if (!claim) continue;
+      if (seenClaims.has(claim)) continue;
+      seenClaims.add(claim);
 
       // Ensure in-sheet row exists (append if missing)
       let pos = (claimColIdx != null) ? existingMap[claim] : null;

@@ -190,6 +190,13 @@ Minimal cek:
 - schema fixed vs non-fixed
 - apakah sheet itu boleh auto-heal atau harus diperlakukan manual
 
+### Jika mengubah movement tracking WebApp
+Minimal cek:
+- `WEBAPP_MOVEMENT_POLICY` (termasuk batas scan histori `Past`)
+- helper load existing event id (`__loadExistingEventIds06c_`)
+- urutan snapshot PREV/CURR dan dedup Event ID
+- dampak performa saat jumlah baris histori besar
+
 ---
 
 ## Safe editing sequence

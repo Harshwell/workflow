@@ -1126,6 +1126,28 @@ function sv03_applyNumberFormatsByType_(sh, headerRow) {
   });
 }
 
+
+function sv03_getDateAutoNumberFormatForColumn_(sh, col1, rows) {
+  const fallback = (_SV03_FORMATS && _SV03_FORMATS.DATE_AUTO) ? _SV03_FORMATS.DATE_AUTO : ((_SV03_FORMATS && _SV03_FORMATS.DATE) ? _SV03_FORMATS.DATE : 'd mmm yy');
+  if (!sh || !col1 || !rows) return fallback;
+
+  // If column contains explicit time components, prefer datetime display.
+  // Otherwise keep date-only format.
+  try {
+    const sampleRows = Math.max(1, Math.min(Number(rows) || 1, 200));
+    const vals = sh.getRange(2, col1, sampleRows, 1).getValues();
+    for (let i = 0; i < vals.length; i++) {
+      const v = vals[i] ? vals[i][0] : null;
+      if (!(v instanceof Date) || isNaN(v.getTime())) continue;
+      if (v.getHours() !== 0 || v.getMinutes() !== 0 || v.getSeconds() !== 0 || v.getMilliseconds() !== 0) {
+        return (_SV03_FORMATS && _SV03_FORMATS.DATETIME) ? _SV03_FORMATS.DATETIME : 'd mmm yy, HH:mm';
+      }
+    }
+  } catch (e) {}
+
+  return fallback;
+}
+
 function sv03_applyAlignment_(sh, headerRow) {
   if (!sh || !headerRow || DRY_RUN) return;
 

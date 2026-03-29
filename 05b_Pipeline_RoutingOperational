@@ -865,31 +865,32 @@ const __setNotes05b__ = (range, matrix, sheetName) => {
 
 // Priority (single fill): FLEX > B2B > EXPIRED
   sheets.forEach(name => {
-    const sh = ss.getSheetByName(name);
-    if (!sh) return;
+    try {
+      const sh = ss.getSheetByName(name);
+      if (!sh) return;
 
-    const lastRow = sh.getLastRow();
-    if (lastRow < 2) return;
+      const lastRow = sh.getLastRow();
+      if (lastRow < 2) return;
 
-    const lastCol = Math.max(sh.getLastColumn(), 1);
-    const header = sh.getRange(1, 1, 1, lastCol)
-      .getValues()[0]
-      .map(v => String(v || '').trim());
+      const lastCol = Math.max(sh.getLastColumn(), 1);
+      const header = sh.getRange(1, 1, 1, lastCol)
+        .getValues()[0]
+        .map(v => String(v || '').trim());
 
-    const idxClaim = resolveHeaderIndexByAliases_(header, getClaimNumberHeaderAliases_());
-    if (idxClaim == null) return;
+      const idxClaim = resolveHeaderIndexByAliases_(header, getClaimNumberHeaderAliases_());
+      if (idxClaim == null) return;
 
-    const n = lastRow - 1;
-    const rng = sh.getRange(2, idxClaim + 1, n, 1);
+      const n = lastRow - 1;
+      const rng = sh.getRange(2, idxClaim + 1, n, 1);
 
-    const vals = rng.getValues();
-    const bgs = rng.getBackgrounds();
-    const notes = rng.getNotes();
+      const vals = rng.getValues();
+      const bgs = rng.getBackgrounds();
+      const notes = rng.getNotes();
 
-    let bgChanged = false;
-    let noteChanged = false;
+      let bgChanged = false;
+      let noteChanged = false;
 
-    for (let i = 0; i < n; i++) {
+      for (let i = 0; i < n; i++) {
       const claim = String((vals[i] && vals[i][0]) || '').trim();
       const claimKey = claim ? claim.toUpperCase() : '';
 
@@ -929,8 +930,11 @@ const __setNotes05b__ = (range, matrix, sheetName) => {
       }
     }
 
-    if (bgChanged) __setBgs05b__(rng, bgs, name);
-    if (noteChanged) __setNotes05b__(rng, notes, name);
+      if (bgChanged) __setBgs05b__(rng, bgs, name);
+      if (noteChanged) __setNotes05b__(rng, notes, name);
+    } catch (sheetErr) {
+      try { if (typeof logLine_ === 'function') logLine_('WARN', 'HIGHLIGHT_SKIP', String(name || ''), String(sheetErr), 'WARN'); } catch (eLog) {}
+    }
   });
 }
 
