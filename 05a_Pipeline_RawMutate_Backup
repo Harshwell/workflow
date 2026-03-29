@@ -42,6 +42,11 @@ function __normalizeHeaderText05a_(v) {
 
 /** Case-insensitive exact header matcher (backup/restore resilience). */
 function __findHeaderIndex05a_(headerRow, name) {
+  try {
+    if (typeof findHeaderIndexByCandidates_ === 'function') {
+      return findHeaderIndexByCandidates_(headerRow, [name]);
+    }
+  } catch (e) {}
   const want = __normalizeHeaderText05a_(name).toLowerCase();
   if (!want) return -1;
   const h = Array.isArray(headerRow) ? headerRow : [];
@@ -118,26 +123,44 @@ var __SPECIAL_RULES = (function () {
   return Object.freeze({});
 })();
 
-var __EXCLUDED_LAST_STATUSES = (function () {
-  // Prefer per-run builder from 00_Config if available
-  try { if (typeof getExcludedLastStatusesSet_ === 'function') return getExcludedLastStatusesSet_(); } catch (e) {}
-  try { if (typeof buildExcludedLastStatusesSet_ === 'function') return buildExcludedLastStatusesSet_(); } catch (e) {}
-
-  // Back-compat: older versions exposed a Set directly
+function __getExcludedLastStatuses05a_() {
   try {
-    if (typeof EXCLUDED_LAST_STATUSES !== 'undefined' &&
-        EXCLUDED_LAST_STATUSES &&
-        EXCLUDED_LAST_STATUSES.has) return EXCLUDED_LAST_STATUSES;
-  } catch (e) {}
+    if (typeof RUNTIME !== 'undefined' && RUNTIME && RUNTIME.__excludedLastStatuses05a) {
+      return RUNTIME.__excludedLastStatuses05a;
+    }
+  } catch (e0) {}
 
-  // Newer versions may expose a base array
-  try {
-    if (typeof EXCLUDED_LAST_STATUSES_BASE !== 'undefined' &&
-        Array.isArray(EXCLUDED_LAST_STATUSES_BASE)) return new Set(EXCLUDED_LAST_STATUSES_BASE);
-  } catch (e) {}
+  let out = null;
 
-  return new Set();
-})();
+  // Prefer per-run builder from 00_Config if available.
+  try { if (typeof getExcludedLastStatusesSet_ === 'function') out = getExcludedLastStatusesSet_(); } catch (e) {}
+  if (!out) {
+    try { if (typeof buildExcludedLastStatusesSet_ === 'function') out = buildExcludedLastStatusesSet_(); } catch (e2) {}
+  }
+
+  // Back-compat: older versions exposed a Set directly.
+  if (!out) {
+    try {
+      if (typeof EXCLUDED_LAST_STATUSES !== 'undefined' && EXCLUDED_LAST_STATUSES && EXCLUDED_LAST_STATUSES.has) {
+        out = EXCLUDED_LAST_STATUSES;
+      }
+    } catch (e3) {}
+  }
+
+  // Newer versions may expose a base array.
+  if (!out) {
+    try {
+      if (typeof EXCLUDED_LAST_STATUSES_BASE !== 'undefined' && Array.isArray(EXCLUDED_LAST_STATUSES_BASE)) {
+        out = new Set(EXCLUDED_LAST_STATUSES_BASE);
+      }
+    } catch (e4) {}
+  }
+
+  if (!out || !out.has) out = new Set();
+
+  try { if (typeof RUNTIME !== 'undefined' && RUNTIME) RUNTIME.__excludedLastStatuses05a = out; } catch (e5) {}
+  return out;
+}
 
 /** =========================
  *  RAW WRITE (Main -> Raw)
@@ -777,16 +800,16 @@ function backupOpsToRawFull_(ss, rawSheet, rawValues, headerIndexRaw, pic) {
 
   // Ensure rawValues are loaded (rows only, no header)
   const rawRowCount = Math.max(0, rawSheet.getLastRow() - 1);
-  if (!rawValues || rawValues.length !== rawRowCount) {
-    if (rawRowCount === 0) return { updated: 0, notes: 'Raw has no rows' };
-    rawValues = rawSheet.getRange(2, 1, rawRowCount, rawSheet.getLastColumn()).getValues();
-  }
-  if (!rawValues.length) return { updated: 0, notes: 'Raw has no rows' };
+  const workingRawValues = (rawValues && rawValues.length === rawRowCount)
+    ? rawValues
+    : (rawRowCount > 0 ? rawSheet.getRange(2, 1, rawRowCount, rawSheet.getLastColumn()).getValues() : []);
+
+  if (!workingRawValues.length) return { updated: 0, notes: 'Raw has no rows' };
 
   // Build claim -> raw row index map
   const rawMap = {};
-  for (let i = 0; i < rawValues.length; i++) {
-    const key = String(rawValues[i][idxRawClaim] || '').trim().toUpperCase();
+  for (let i = 0; i < workingRawValues.length; i++) {
+    const key = String(workingRawValues[i][idxRawClaim] || '').trim().toUpperCase();
     if (key) rawMap[key] = i;
   }
 

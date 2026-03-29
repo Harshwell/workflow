@@ -49,6 +49,7 @@ flowchart LR
     A --> D[04_ParseAndAging]
     A --> E[05* Pipeline Stages]
     A --> F[06* Entry / Post Process]
+    F --> G[06e_SubHelpers (SUB internals)]
 
     B --> D
     B --> E
@@ -64,7 +65,7 @@ flowchart LR
 Interpretasi praktis:
 
 - `00_Config` adalah policy backbone
-- `01_Utils` adalah utility backbone
+- `01_Utils` adalah utility backbone (termasuk helper header matching bersama seperti `findHeaderIndexByCandidates_`)
 - `03_SheetsAndValidation` adalah schema/layout backbone
 - `06a_EntryPoints` adalah orchestration entry backbone
 
@@ -189,6 +190,13 @@ Minimal cek:
 - flags/policy di `00_Config`
 - schema fixed vs non-fixed
 - apakah sheet itu boleh auto-heal atau harus diperlakukan manual
+
+### Jika mengubah movement tracking WebApp
+Minimal cek:
+- `WEBAPP_MOVEMENT_POLICY` (termasuk batas scan histori `Past`)
+- helper load existing event id (`__loadExistingEventIds06c_`)
+- urutan snapshot PREV/CURR dan dedup Event ID
+- dampak performa saat jumlah baris histori besar
 
 ---
 
