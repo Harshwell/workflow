@@ -130,7 +130,7 @@ const BRANCH_KEYWORDS = Object.freeze({
   'B-Store': ['b-store', 'bstore'],
   'EzCare': ['ezcare', 'ez care'],
   'Deltasindo': ['deltasindo'],
-  'MDP': 'mdp'
+  'MDP': ['mdp']
 });
 
 

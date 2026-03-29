@@ -1088,6 +1088,8 @@ function runSubEmailIngest(maxThreads) {
 
     // Sorting spec (multi-key) after SUB completes.
     const sortSpecs = (Array.isArray(subFlow.SORT_SPECS) && subFlow.SORT_SPECS.length) ? subFlow.SORT_SPECS : null;
+    const queuedLabel = getOrCreateGmailLabel_(String(pMerged.QUEUED_LABEL || pMerged.QUEUE_LABEL || 'QUEUED_SUB').trim());
+
     // Idempotency: prevent duplicate processing of the same queued SUB email.
     try {
       const tok = ['SUB', thread.getId(), msg.getId(), picked.oldAtt.getName(), picked.oldAtt.getSize(), picked.newAtt.getName(), picked.newAtt.getSize()].join('|');
@@ -1115,7 +1117,6 @@ try {
 }
 
     // Process OLD then NEW; cleanup email only if both succeed.
-    const queueLabel = String(pMerged.QUEUED_LABEL || pMerged.QUEUE_LABEL || 'QUEUED_SUB').trim();
 
     const rOld = __processSubAttachment06a_(masterSs, picked.oldAtt, {
       dbTag: 'OLD',
@@ -2422,21 +2423,28 @@ function __appendSubmissionFromRawIfMissing06a_(ss, rawMap, rawHdrIdx, dbTag) {
 
   const flow = (typeof CONFIG === 'object' && CONFIG && CONFIG.subFlow) ? CONFIG.subFlow : null;
   let dbValue = String(dbTag || '').trim().toUpperCase();
-  let wantStatus = 'CLAIM_INITIATE'; // Strict: only CLAIM_INITIATE can be inserted as NEW claim (Submission)
+  let wantStatus = (dbValue === 'OLD') ? 'SUBMITTED' : 'CLAIM_INITIATE';
 
-  // Prefer configured DB tag mapping when available, but keep strict insert rule.
+  // Prefer configured DB tag + trigger status mapping when available.
   try {
     if (flow && flow.SUBMISSION_RULES) {
-      if (dbValue === 'OLD' && flow.SUBMISSION_RULES.OLD && flow.SUBMISSION_RULES.OLD.DB_VALUE) {
-        dbValue = String(flow.SUBMISSION_RULES.OLD.DB_VALUE || '').trim().toUpperCase();
-      } else if (dbValue === 'NEW' && flow.SUBMISSION_RULES.NEW && flow.SUBMISSION_RULES.NEW.DB_VALUE) {
-        dbValue = String(flow.SUBMISSION_RULES.NEW.DB_VALUE || '').trim().toUpperCase();
+      if (dbValue === 'OLD' && flow.SUBMISSION_RULES.OLD) {
+        if (flow.SUBMISSION_RULES.OLD.DB_VALUE) {
+          dbValue = String(flow.SUBMISSION_RULES.OLD.DB_VALUE || '').trim().toUpperCase();
+        }
+        if (flow.SUBMISSION_RULES.OLD.TRIGGER_RAW_LAST_STATUS) {
+          wantStatus = String(flow.SUBMISSION_RULES.OLD.TRIGGER_RAW_LAST_STATUS || '').trim().toUpperCase();
+        }
+      } else if (dbValue === 'NEW' && flow.SUBMISSION_RULES.NEW) {
+        if (flow.SUBMISSION_RULES.NEW.DB_VALUE) {
+          dbValue = String(flow.SUBMISSION_RULES.NEW.DB_VALUE || '').trim().toUpperCase();
+        }
+        if (flow.SUBMISSION_RULES.NEW.TRIGGER_RAW_LAST_STATUS) {
+          wantStatus = String(flow.SUBMISSION_RULES.NEW.TRIGGER_RAW_LAST_STATUS || '').trim().toUpperCase();
+        }
       }
     }
   } catch (e0) {}
-
-  // Enforce strict rule regardless of config
-  wantStatus = 'CLAIM_INITIATE';
 
   const rowsToAppend = [];
   const richLinks = []; // { rowOffset, url }
