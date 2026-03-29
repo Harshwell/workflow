@@ -28,6 +28,8 @@ const SOURCE_FILES = [
   '06d_IntegratedMaintenance',
   '06e_SubHelpers',
   '06f_RuntimeAssertions'
+  '06e_SubHelpers'
+  '06d_IntegratedMaintenance'
 ];
 
 function createContext() {
