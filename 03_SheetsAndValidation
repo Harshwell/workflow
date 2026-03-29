@@ -391,7 +391,7 @@ function sv03_getProfileSpec_(profile) {
 
   const core = (base && base.core) ? Array.from(base.core) : ['Raw Data'];
 
-  const operational = (base && base.operational)
+  let operational = (base && base.operational)
     ? Array.from(base.operational)
     : (isAdmin
       ? ((CONFIG.sheetsByPic && Array.isArray(CONFIG.sheetsByPic.adminOperational)) ? CONFIG.sheetsByPic.adminOperational : [])
