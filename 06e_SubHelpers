@@ -151,6 +151,25 @@ function __sortOperationalSheetsSub06e_(ss, sheetNames, sortSpecs) {
   const names = Array.isArray(sheetNames) ? sheetNames : [];
   const out = { sheets: {}, sortedSheets: 0, skippedSheets: 0 };
 
+  // Default SUB sort order:
+  // 1) Submission Date (A->Z)
+  // 2) Last Status Date (A->Z)
+  // 3) Last Status (A->Z)
+  const defaultSpecs = [
+    { headerCandidates: ['Submission Date', 'claim_submission_date', 'claim submitted datetime'], ascending: true },
+    { headerCandidates: ['Last Status Date', 'claim_last_updated_datetime', 'claim last updated datetime'], ascending: true },
+    { headerCandidates: ['Last Status', 'last_status', 'last status'], ascending: true }
+  ];
+
+  const normalizedSpecs = (Array.isArray(sortSpecs) && sortSpecs.length)
+    ? sortSpecs.map(s => ({
+        headerCandidates: Array.isArray(s && s.headerCandidates)
+          ? s.headerCandidates
+          : (s && s.header ? [s.header] : []),
+        ascending: (s && typeof s.ascending === 'boolean') ? s.ascending : true
+      }))
+    : defaultSpecs;
+
   // SUB sort is enforced by requirement; ignore legacy default unless explicitly configured.
   const enforcedSpecs = [
         { headerCandidates: ['Last Status Date', 'claim_last_updated_datetime', 'claim last updated datetime'], ascending: true },
@@ -182,6 +201,7 @@ function __sortOperationalSheetsSub06e_(ss, sheetNames, sortSpecs) {
       }
 
       const sortCriteria = [];
+      normalizedSpecs.forEach(s => {
       enforcedSpecs.forEach(s => {
         const idx = idxByCandidates(s.headerCandidates);
         if (idx >= 0) sortCriteria.push({ column: idx + 1, ascending: !!s.ascending });

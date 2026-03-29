@@ -22,6 +22,10 @@ Formatnya sengaja sederhana: **Added / Changed / Fixed**. Tidak perlu sok formal
 - `static_smoke_check.js` diperbarui untuk memuat `06e_SubHelpers` agar validasi load-order tetap mencakup helper baru.
 - Tambah modul `06f_RuntimeAssertions` dan preflight non-fatal di `runPipeline_` + `runSubEmailIngest` untuk mendeteksi simbol penting yang hilang lebih awal.
 
+### Changed
+- Phase 4B-4D incremental hardening: `enrichOperationalSheetsFromRaw06_` sekarang memakai resolver indeks raw terpusat (`__resolveEnrichRawIndexes06b_`) untuk mengecilkan kompleksitas fungsi inti.
+- `06e_SubHelpers` sort SUB kini mengutamakan `Submission Date` -> `Last Status Date` -> `Last Status` dan tetap mendukung `sortSpecs` custom saat diberikan.
+- Header matching lintas modul mulai dikonsolidasikan melalui util bersama `findHeaderIndexByCandidates_` (dipakai oleh 05a/06c).
 ### 2026-03-29 (phase 4 structural pass)
 - Split sebagian helper SUB dari `06a_EntryPoints` ke file baru `06e_SubHelpers` (implementasi append Submission + sort operational dipindahkan; `06a` menyisakan delegator untuk menjaga kompatibilitas trigger/caller).
 - `static_smoke_check.js` diperbarui untuk memuat `06e_SubHelpers` agar validasi load-order tetap mencakup helper baru.
@@ -38,6 +42,7 @@ Formatnya sengaja sederhana: **Added / Changed / Fixed**. Tidak perlu sok formal
 ### Fixed
 - `05a_Pipeline_RawMutate_Backup`: cache `__EXCLUDED_LAST_STATUSES` dipindah dari module-load ke lazy per-call (`__getExcludedLastStatuses05a_`) dengan runtime cache.
 - `05a_Pipeline_RawMutate_Backup`: `backupOpsToRawFull_` tidak lagi me-reassign parameter `rawValues`, mengurangi risiko drift state dan side effect yang tidak eksplisit.
+- `06b` status-type fallback hardcoded dihapus agar tetap konsisten ke source-of-truth (`CONFIG`/`STATUS_TYPE_BY_LAST_STATUS`).
 
 ## 2026-03-26
 
