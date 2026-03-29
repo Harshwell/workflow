@@ -2400,11 +2400,21 @@ function webappMovementSnapshotCurrAndTrackForSub06c_(masterSs, rawOldName, rawN
   };
 }
 
+function __getPastEventScanMaxRows06c_() {
+  try {
+    if (typeof WEBAPP_MOVEMENT_POLICY !== 'undefined' && WEBAPP_MOVEMENT_POLICY) {
+      const n = Number(WEBAPP_MOVEMENT_POLICY.PAST_EVENT_SCAN_MAX_ROWS || 0);
+      if (isFinite(n) && n > 0) return Math.floor(n);
+    }
+  } catch (e) {}
+  return 5000;
+}
+
 /** Load existing Event IDs from Daily and Past. */
 function __loadExistingEventIds06c_(webappSs, dailyName, pastName) {
   const set = Object.create(null);
 
-  function loadOne(name) {
+  function loadOne(name, maxRows) {
     const sh = webappSs.getSheetByName(name);
     if (!sh) return;
     const lr = sh.getLastRow();
@@ -2413,16 +2423,19 @@ function __loadExistingEventIds06c_(webappSs, dailyName, pastName) {
     const header = sh.getRange(1, 1, 1, lc).getValues()[0].map(__normalizeHeaderText06_);
     const idxEvent = __findHeaderIndexFlexible06_(header, 'Event ID');
     if (idxEvent === -1) return;
-    const n = lr - 1;
-    const vals = sh.getRange(2, idxEvent + 1, n, 1).getValues();
+    const nAll = lr - 1;
+    const n = (maxRows && maxRows > 0) ? Math.min(nAll, maxRows) : nAll;
+    if (n <= 0) return;
+    const startRow = lr - n + 1;
+    const vals = sh.getRange(startRow, idxEvent + 1, n, 1).getValues();
     for (let i = 0; i < n; i++) {
       const v = String(vals[i][0] || '').trim();
       if (v) set[v] = true;
     }
   }
 
-  loadOne(dailyName);
-  loadOne(pastName);
+  loadOne(dailyName, 0);
+  loadOne(pastName, __getPastEventScanMaxRows06c_());
   return set;
 }
 
