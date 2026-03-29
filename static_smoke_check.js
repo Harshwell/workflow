@@ -26,6 +26,8 @@ const SOURCE_FILES = [
   '06b_PipelineAndEnrichment',
   '06c_PostProcessAndUtils',
   '06d_IntegratedMaintenance',
+  '06e_SubHelpers',
+  '06f_RuntimeAssertions'
   '06e_SubHelpers'
   '06d_IntegratedMaintenance'
 ];

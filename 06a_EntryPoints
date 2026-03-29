@@ -974,6 +974,7 @@ function installSubEmailIngestTrigger() {
  */
 function runSubEmailIngest(maxThreads) {
   try { if (typeof resetRuntime_ === 'function') resetRuntime_(); } catch (err0) {}
+  try { if (typeof runtimePreflight06f_ === 'function') runtimePreflight06f_('SUB_PIPELINE'); } catch (ePf) {}
 
   // Skip 08:00 hour to avoid collision with MAIN daily ingest.
   try {

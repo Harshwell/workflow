@@ -50,6 +50,7 @@ flowchart LR
     A --> E[05* Pipeline Stages]
     A --> F[06* Entry / Post Process]
     F --> G[06e_SubHelpers (SUB internals)]
+    F --> H[06f_RuntimeAssertions (preflight checks)]
 
     B --> D
     B --> E
