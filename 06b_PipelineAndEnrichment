@@ -7,6 +7,7 @@
  * Pipeline Orchestrator
  * ========================= */
 function runPipeline_(pic, fileIds, opts) {
+  try { if (typeof runtimePreflight06f_ === 'function') runtimePreflight06f_('MAIN_PIPELINE'); } catch (ePf) {}
   const key = resolveSpreadsheetKey_(pic);
   validateConfigForPic_(key);
 
@@ -596,6 +597,9 @@ function ensureHeadersAtEnd06_(sh, headersToEnsure) {
  * - '' : no match (leave DB as-is)
  */
 function computeDbValueFromClaimNumber06_(claimNumber) {
+  try {
+    if (typeof computeDbValueFromClaimNumber_ === 'function') return computeDbValueFromClaimNumber_(claimNumber);
+  } catch (e) {}
   const s = String(claimNumber == null ? '' : claimNumber).trim().toUpperCase();
   if (!s) return '';
   if (s.indexOf('SFP') !== -1 || s.indexOf('SFX') !== -1 || s.indexOf('SMR') !== -1) return 'OLD';
@@ -611,16 +615,12 @@ function computeDbValueFromClaimNumber06_(claimNumber) {
 function normalizeInsuranceShort06_(insuranceVal) {
   const s0 = String(insuranceVal == null ? '' : insuranceVal).trim();
   if (!s0) return '';
-  const s = s0.toLowerCase();
-
-  if (s.indexOf('great eastern general insurance') !== -1) return 'GEGI';
-  if (s.indexOf('tokio marine') !== -1) return 'TMI';
-  if (s.indexOf('msig indonesia') !== -1) return 'MSIG';
-  if (s.indexOf('seainsure') !== -1) return 'MIGI';
-  if (s.indexOf('sompo insurance') !== -1) return 'Sompo';
-  if (s.indexOf('axa mandiri insurance') !== -1) return 'AXA';
-  if (s.indexOf('simas insurtech') !== -1) return 'Simas';
-
+  try {
+    if (typeof mapInsuranceShort_ === 'function') {
+      const mapped = String(mapInsuranceShort_(s0) || '').trim();
+      if (mapped) return mapped;
+    }
+  } catch (e) {}
   return s0;
 }
 
@@ -676,179 +676,36 @@ function enrichOperationalSheetsFromRaw06_(ss, rawValues, headerIndexRaw, pic, o
   if (DRY_RUN) return;
   if (!ss || !rawValues || !rawValues.length || !headerIndexRaw) return;
 
-  const isAdmin = (pic === 'Admin');
-  let sheets = isAdmin
-    ? (CONFIG && CONFIG.sheetsByPic && CONFIG.sheetsByPic.adminOperational ? CONFIG.sheetsByPic.adminOperational : [])
-    : (CONFIG && CONFIG.sheetsByPic && CONFIG.sheetsByPic.picOperational ? CONFIG.sheetsByPic.picOperational : []);
-
-  if (!Array.isArray(sheets) || !sheets.length) {
-    sheets = ['Submission','Ask Detail','OR - OLD','Start','Finish','SC - Farhan','SC - Meilani','SC - Ivan','PO','Exclusion'];
-  }
+  let sheets = getOperationalSheetNames06b_(pic);
 
   // Flow context for formatting decisions (default: main)
   const flowName = ((opts && (opts.flow || opts.Flow || opts.flowName)) || (typeof RUNTIME !== 'undefined' && RUNTIME ? RUNTIME.flowName : '') || 'main')
     .toString().trim().toLowerCase();
 
-  // Only core operational sheets (exclude optional modules)
-  sheets = sheets.filter(n => n !== 'B2B' && n !== 'EV-Bike' && n !== 'Special Case' && n !== 'Raw Data');
-
-  const idxClaimRaw = resolveRawIdx06_(headerIndexRaw, [
-    (CONFIG && CONFIG.headers && CONFIG.headers.claimNumber) ? CONFIG.headers.claimNumber : null,
-    'claim_number',
-    'Claim Number'
-  ]);
+  const rawIdx = __resolveEnrichRawIndexes06b_(headerIndexRaw);
+  const idxClaimRaw = rawIdx.idxClaimRaw;
   if (idxClaimRaw == null) return;
 
   const rawClaimMap = buildRawClaimMap06_(rawValues, idxClaimRaw);
-
-  // Raw indices (best-effort; will stay null if header missing)
-  const idxDbRaw = resolveRawIdx06_(headerIndexRaw, [
-    (CONFIG && CONFIG.headers && (CONFIG.headers.db || CONFIG.headers.dbClass || CONFIG.headers.dbStatus))
-      ? (CONFIG.headers.db || CONFIG.headers.dbClass || CONFIG.headers.dbStatus)
-      : null,
-    'DB'
-  ]);
-
-  const idxPartnerRaw = resolveRawIdx06_(headerIndexRaw, [
-    (CONFIG && CONFIG.headers && (CONFIG.headers.partnerName || CONFIG.headers.partner)) ? (CONFIG.headers.partnerName || CONFIG.headers.partner) : null,
-    'partner_name',
-    'Partner Name',
-    'Partner'
-  ]);
-
-  const idxInsuranceRaw = resolveRawIdx06_(headerIndexRaw, [
-    (CONFIG && CONFIG.headers && (CONFIG.headers.insurance || CONFIG.headers.insuranceName || CONFIG.headers.insuranceCode)) ? (CONFIG.headers.insurance || CONFIG.headers.insuranceName || CONFIG.headers.insuranceCode) : null,
-    'insurance',
-    'insurance_name',
-    'insurance_code',
-    'Insurance',
-    'Insurance Code'
-  ]);
-
-  const idxDeviceTypeRaw = resolveRawIdx06_(headerIndexRaw, [
-    (CONFIG && CONFIG.headers && (CONFIG.headers.deviceType || CONFIG.headers.device_type)) ? (CONFIG.headers.deviceType || CONFIG.headers.device_type) : null,
-    'device_type',
-    'Device Type'
-  ]);
-
-  const idxServiceCenterRaw = resolveRawIdx06_(headerIndexRaw, [
-    (CONFIG && CONFIG.headers && (CONFIG.headers.serviceCenter || CONFIG.headers.scName)) ? (CONFIG.headers.serviceCenter || CONFIG.headers.scName) : null,
-    'service_center',
-    'sc_name',
-    'Service Center',
-    'SC Name'
-  ]);
-
-  const idxLsaRaw = resolveRawIdx06_(headerIndexRaw, [
-    (CONFIG && CONFIG.headers && CONFIG.headers.lastStatusAging) ? CONFIG.headers.lastStatusAging : null,
-    'Last Status Aging',
-    'LSA',
-    'last_status_aging',
-    'lsa'
-  ]);
-
-  const idxAlaRaw = resolveRawIdx06_(headerIndexRaw, [
-    (CONFIG && CONFIG.headers && CONFIG.headers.activityLogAging) ? CONFIG.headers.activityLogAging : null,
-    (CONFIG && CONFIG.headers && (CONFIG.headers.ala || CONFIG.headers.ALA)) ? (CONFIG.headers.ala || CONFIG.headers.ALA) : null,
-    'Activity Log Aging',
-    'ALA',
-    'activity_log_aging',
-    'ala'
-  ]);
-
-  const idxTatRaw = resolveRawIdx06_(headerIndexRaw, [
-    (CONFIG && CONFIG.headers && (CONFIG.headers.tat || CONFIG.headers.TAT)) ? (CONFIG.headers.tat || CONFIG.headers.TAT) : null,
-    'TAT',
-    'tat'
-  ]);
-
-  // Mandatory columns (from Raw)
-  const idxProductRaw = resolveRawIdx06_(headerIndexRaw, [
-    (CONFIG && CONFIG.headers && (CONFIG.headers.productName || CONFIG.headers.product)) ? (CONFIG.headers.productName || CONFIG.headers.product) : null,
-    'product_name',
-    'Product Name',
-    'Product'
-  ]);
-
-  const idxBrandRaw = resolveRawIdx06_(headerIndexRaw, [
-    (CONFIG && CONFIG.headers && (CONFIG.headers.deviceBrand || CONFIG.headers.brand)) ? (CONFIG.headers.deviceBrand || CONFIG.headers.brand) : null,
-    'device_brand',
-    'Device Brand',
-    'Brand'
-  ]);
-
-  const idxImeiRaw = resolveRawIdx06_(headerIndexRaw, [
-    (CONFIG && CONFIG.headers && (CONFIG.headers.imeiNumber || CONFIG.headers.imei || CONFIG.headers.serialNumber)) ? (CONFIG.headers.imeiNumber || CONFIG.headers.imei || CONFIG.headers.serialNumber) : null,
-    'imei_number',
-    'IMEI',
-    'IMEI/SN',
-    'SN',
-    'Serial Number'
-  ]);
-
-  const idxSumInsuredRaw = resolveRawIdx06_(headerIndexRaw, [
-    (CONFIG && CONFIG.headers && (CONFIG.headers.sumInsuredAmount || CONFIG.headers.sumInsured)) ? (CONFIG.headers.sumInsuredAmount || CONFIG.headers.sumInsured) : null,
-    'sum_insured_amount',
-    'Sum Insured Amount',
-    'Sum Insured'
-  ]);
-
-  const idxClaimAmtRaw = resolveRawIdx06_(headerIndexRaw, [
-    (CONFIG && CONFIG.headers && (CONFIG.headers.claimAmount)) ? CONFIG.headers.claimAmount : null,
-    'claim_amount',
-    'Claim Amount'
-  ]);
-
-  const idxOwnRiskRaw = resolveRawIdx06_(headerIndexRaw, [
-    (CONFIG && CONFIG.headers && (CONFIG.headers.claimOwnRiskAmount || CONFIG.headers.ownRiskAmount)) ? (CONFIG.headers.claimOwnRiskAmount || CONFIG.headers.ownRiskAmount) : null,
-    'claim_own_risk_amount',
-    'Claim Own Risk Amount',
-    'Own Risk Amount'
-  ]);
-
-  const idxNettRaw = resolveRawIdx06_(headerIndexRaw, [
-    (CONFIG && CONFIG.headers && (CONFIG.headers.nettClaimAmount || CONFIG.headers.netClaimAmount)) ? (CONFIG.headers.nettClaimAmount || CONFIG.headers.netClaimAmount) : null,
-    'nett_claim_amount',
-    'Nett Claim Amount',
-    'Net Claim Amount'
-  ]);
-  // Optional (new): Activity Log from Raw
-  // Main flow uses Raw Data → prefer last_activity_log, fallback to activity_log.
-  const idxActivityLogRaw = resolveRawIdx06_(headerIndexRaw, [
-    (CONFIG && CONFIG.headers && (CONFIG.headers.lastActivityLog || CONFIG.headers.last_activity_log)) ? (CONFIG.headers.lastActivityLog || CONFIG.headers.last_activity_log) : null,
-    'last_activity_log',
-    'Last Activity Log',
-    'Last Activity',
-    'activity_log',
-    'Activity Log'
-  ]);
-
-  // Optional (new): Claim last updated datetime for Last Status Date
-  const idxClaimLastUpdatedRaw = resolveRawIdx06_(headerIndexRaw, [
-    (CONFIG && CONFIG.headers && (CONFIG.headers.claimLastUpdatedDatetime || CONFIG.headers.claim_last_updated_datetime)) ? (CONFIG.headers.claimLastUpdatedDatetime || CONFIG.headers.claim_last_updated_datetime) : null,
-    'claim_last_updated_datetime',
-    'Claim Last Updated Datetime',
-    'Claim Last Updated Date',
-    'claim_last_updated_date'
-  ]);
-
-  // Optional (legacy but widely present in MAIN/FORM exports): last_update / Last Update Datetime
-  // This is the primary source for Last Status Date when flow is main/form.
-  const idxLastUpdateRaw = resolveRawIdx06_(headerIndexRaw, [
-    (CONFIG && CONFIG.headers && CONFIG.headers.lastUpdate) ? CONFIG.headers.lastUpdate : null,
-    'last_update',
-    'Last Update Datetime',
-    'Last Update',
-    'last update datetime'
-  ]);
-
-  // Optional: Remarks in Raw (for restore)
-  const idxRemarksRaw = resolveRawIdx06_(headerIndexRaw, [
-    (CONFIG && CONFIG.headers && (CONFIG.headers.remarks || CONFIG.headers.remark)) ? (CONFIG.headers.remarks || CONFIG.headers.remark) : null,
-    'Remarks',
-    'remarks',
-    'Remark'
-  ]);
+  const idxDbRaw = rawIdx.idxDbRaw;
+  const idxPartnerRaw = rawIdx.idxPartnerRaw;
+  const idxInsuranceRaw = rawIdx.idxInsuranceRaw;
+  const idxDeviceTypeRaw = rawIdx.idxDeviceTypeRaw;
+  const idxServiceCenterRaw = rawIdx.idxServiceCenterRaw;
+  const idxLsaRaw = rawIdx.idxLsaRaw;
+  const idxAlaRaw = rawIdx.idxAlaRaw;
+  const idxTatRaw = rawIdx.idxTatRaw;
+  const idxProductRaw = rawIdx.idxProductRaw;
+  const idxBrandRaw = rawIdx.idxBrandRaw;
+  const idxImeiRaw = rawIdx.idxImeiRaw;
+  const idxSumInsuredRaw = rawIdx.idxSumInsuredRaw;
+  const idxClaimAmtRaw = rawIdx.idxClaimAmtRaw;
+  const idxOwnRiskRaw = rawIdx.idxOwnRiskRaw;
+  const idxNettRaw = rawIdx.idxNettRaw;
+  const idxActivityLogRaw = rawIdx.idxActivityLogRaw;
+  const idxClaimLastUpdatedRaw = rawIdx.idxClaimLastUpdatedRaw;
+  const idxLastUpdateRaw = rawIdx.idxLastUpdateRaw;
+  const idxRemarksRaw = rawIdx.idxRemarksRaw;
 
   const fmt = _fmt06_();
   const moneyFmt = fmt && fmt.MONEY0 ? fmt.MONEY0 : '#,##0';
@@ -1096,6 +953,139 @@ function getOperationalSheetNames06b_(pic) {
   return sheets.filter(n => n && n !== 'B2B' && n !== 'EV-Bike' && n !== 'Special Case' && n !== 'Raw Data');
 }
 
+function __resolveEnrichRawIndexes06b_(headerIndexRaw) {
+  return {
+    idxClaimRaw: resolveRawIdx06_(headerIndexRaw, [
+      (CONFIG && CONFIG.headers && CONFIG.headers.claimNumber) ? CONFIG.headers.claimNumber : null,
+      'claim_number',
+      'Claim Number'
+    ]),
+    idxDbRaw: resolveRawIdx06_(headerIndexRaw, [
+      (CONFIG && CONFIG.headers && (CONFIG.headers.db || CONFIG.headers.dbClass || CONFIG.headers.dbStatus))
+        ? (CONFIG.headers.db || CONFIG.headers.dbClass || CONFIG.headers.dbStatus)
+        : null,
+      'DB'
+    ]),
+    idxPartnerRaw: resolveRawIdx06_(headerIndexRaw, [
+      (CONFIG && CONFIG.headers && (CONFIG.headers.partnerName || CONFIG.headers.partner)) ? (CONFIG.headers.partnerName || CONFIG.headers.partner) : null,
+      'partner_name',
+      'Partner Name',
+      'Partner'
+    ]),
+    idxInsuranceRaw: resolveRawIdx06_(headerIndexRaw, [
+      (CONFIG && CONFIG.headers && (CONFIG.headers.insurance || CONFIG.headers.insuranceName || CONFIG.headers.insuranceCode)) ? (CONFIG.headers.insurance || CONFIG.headers.insuranceName || CONFIG.headers.insuranceCode) : null,
+      'insurance',
+      'insurance_name',
+      'insurance_code',
+      'Insurance',
+      'Insurance Code'
+    ]),
+    idxDeviceTypeRaw: resolveRawIdx06_(headerIndexRaw, [
+      (CONFIG && CONFIG.headers && (CONFIG.headers.deviceType || CONFIG.headers.device_type)) ? (CONFIG.headers.deviceType || CONFIG.headers.device_type) : null,
+      'device_type',
+      'Device Type'
+    ]),
+    idxServiceCenterRaw: resolveRawIdx06_(headerIndexRaw, [
+      (CONFIG && CONFIG.headers && (CONFIG.headers.serviceCenter || CONFIG.headers.scName)) ? (CONFIG.headers.serviceCenter || CONFIG.headers.scName) : null,
+      'service_center',
+      'sc_name',
+      'Service Center',
+      'SC Name'
+    ]),
+    idxLsaRaw: resolveRawIdx06_(headerIndexRaw, [
+      (CONFIG && CONFIG.headers && CONFIG.headers.lastStatusAging) ? CONFIG.headers.lastStatusAging : null,
+      'Last Status Aging',
+      'LSA',
+      'last_status_aging',
+      'lsa'
+    ]),
+    idxAlaRaw: resolveRawIdx06_(headerIndexRaw, [
+      (CONFIG && CONFIG.headers && CONFIG.headers.activityLogAging) ? CONFIG.headers.activityLogAging : null,
+      (CONFIG && CONFIG.headers && (CONFIG.headers.ala || CONFIG.headers.ALA)) ? (CONFIG.headers.ala || CONFIG.headers.ALA) : null,
+      'Activity Log Aging',
+      'ALA',
+      'activity_log_aging',
+      'ala'
+    ]),
+    idxTatRaw: resolveRawIdx06_(headerIndexRaw, [
+      (CONFIG && CONFIG.headers && (CONFIG.headers.tat || CONFIG.headers.TAT)) ? (CONFIG.headers.tat || CONFIG.headers.TAT) : null,
+      'TAT',
+      'tat'
+    ]),
+    idxProductRaw: resolveRawIdx06_(headerIndexRaw, [
+      (CONFIG && CONFIG.headers && (CONFIG.headers.productName || CONFIG.headers.product)) ? (CONFIG.headers.productName || CONFIG.headers.product) : null,
+      'product_name',
+      'Product Name',
+      'Product'
+    ]),
+    idxBrandRaw: resolveRawIdx06_(headerIndexRaw, [
+      (CONFIG && CONFIG.headers && (CONFIG.headers.deviceBrand || CONFIG.headers.brand)) ? (CONFIG.headers.deviceBrand || CONFIG.headers.brand) : null,
+      'device_brand',
+      'Device Brand',
+      'Brand'
+    ]),
+    idxImeiRaw: resolveRawIdx06_(headerIndexRaw, [
+      (CONFIG && CONFIG.headers && (CONFIG.headers.imeiNumber || CONFIG.headers.imei || CONFIG.headers.serialNumber)) ? (CONFIG.headers.imeiNumber || CONFIG.headers.imei || CONFIG.headers.serialNumber) : null,
+      'imei_number',
+      'IMEI',
+      'IMEI/SN',
+      'SN',
+      'Serial Number'
+    ]),
+    idxSumInsuredRaw: resolveRawIdx06_(headerIndexRaw, [
+      (CONFIG && CONFIG.headers && (CONFIG.headers.sumInsuredAmount || CONFIG.headers.sumInsured)) ? (CONFIG.headers.sumInsuredAmount || CONFIG.headers.sumInsured) : null,
+      'sum_insured_amount',
+      'Sum Insured Amount',
+      'Sum Insured'
+    ]),
+    idxClaimAmtRaw: resolveRawIdx06_(headerIndexRaw, [
+      (CONFIG && CONFIG.headers && (CONFIG.headers.claimAmount)) ? CONFIG.headers.claimAmount : null,
+      'claim_amount',
+      'Claim Amount'
+    ]),
+    idxOwnRiskRaw: resolveRawIdx06_(headerIndexRaw, [
+      (CONFIG && CONFIG.headers && (CONFIG.headers.claimOwnRiskAmount || CONFIG.headers.ownRiskAmount)) ? (CONFIG.headers.claimOwnRiskAmount || CONFIG.headers.ownRiskAmount) : null,
+      'claim_own_risk_amount',
+      'Claim Own Risk Amount',
+      'Own Risk Amount'
+    ]),
+    idxNettRaw: resolveRawIdx06_(headerIndexRaw, [
+      (CONFIG && CONFIG.headers && (CONFIG.headers.nettClaimAmount || CONFIG.headers.netClaimAmount)) ? (CONFIG.headers.nettClaimAmount || CONFIG.headers.netClaimAmount) : null,
+      'nett_claim_amount',
+      'Nett Claim Amount',
+      'Net Claim Amount'
+    ]),
+    idxActivityLogRaw: resolveRawIdx06_(headerIndexRaw, [
+      (CONFIG && CONFIG.headers && (CONFIG.headers.lastActivityLog || CONFIG.headers.last_activity_log)) ? (CONFIG.headers.lastActivityLog || CONFIG.headers.last_activity_log) : null,
+      'last_activity_log',
+      'Last Activity Log',
+      'Last Activity',
+      'activity_log',
+      'Activity Log'
+    ]),
+    idxClaimLastUpdatedRaw: resolveRawIdx06_(headerIndexRaw, [
+      (CONFIG && CONFIG.headers && (CONFIG.headers.claimLastUpdatedDatetime || CONFIG.headers.claim_last_updated_datetime)) ? (CONFIG.headers.claimLastUpdatedDatetime || CONFIG.headers.claim_last_updated_datetime) : null,
+      'claim_last_updated_datetime',
+      'Claim Last Updated Datetime',
+      'Claim Last Updated Date',
+      'claim_last_updated_date'
+    ]),
+    idxLastUpdateRaw: resolveRawIdx06_(headerIndexRaw, [
+      (CONFIG && CONFIG.headers && CONFIG.headers.lastUpdate) ? CONFIG.headers.lastUpdate : null,
+      'last_update',
+      'Last Update Datetime',
+      'Last Update',
+      'last update datetime'
+    ]),
+    idxRemarksRaw: resolveRawIdx06_(headerIndexRaw, [
+      (CONFIG && CONFIG.headers && (CONFIG.headers.remarks || CONFIG.headers.remark)) ? (CONFIG.headers.remarks || CONFIG.headers.remark) : null,
+      'Remarks',
+      'remarks',
+      'Remark'
+    ])
+  };
+}
+
 /**
  * Backup non-empty Remarks from operational sheets into in-memory Raw values.
  * - Idempotent: only sets when ops remark is non-empty.
@@ -1231,91 +1221,16 @@ function restoreRemarksToOperationalFromRaw06b_(ss, rawValues, headerIndexRaw, p
 
 /** Parse "January 24, 2025, 6:06 PM" (and similar) into Date. Returns null if invalid/empty. */
 function parseClaimLastUpdatedDatetime06b_(v) {
-  if (v == null || v === '') return null;
-  if (Object.prototype.toString.call(v) === '[object Date]') return isNaN(v.getTime()) ? null : v;
-
-  // Prefer shared strict parser when available.
   try {
-    if (typeof parseClaimLastUpdatedDatetime06c_ === 'function') {
-      const d0 = parseClaimLastUpdatedDatetime06c_(v);
-      if (d0 && !isNaN(d0.getTime())) return d0;
-    }
+    if (typeof parseClaimLastUpdatedDatetime_ === 'function') return parseClaimLastUpdatedDatetime_(v);
   } catch (e0) {}
-
-  const s = String(v || '').trim();
-  if (!s) return null;
-
-  const tz = (() => {
-    try { return Session.getScriptTimeZone() || 'Asia/Jakarta'; } catch (e) { return 'Asia/Jakarta'; }
-  })();
-
-  // STRICT parsing (WIB) to avoid timezone shifts.
-  const patterns = [
-    'MMMM d, yyyy, h:mm a',
-    'MMMM d, yyyy, hh:mm a',
-    'MMMM d, yyyy, h:mm:ss a',
-    'MMMM d, yyyy, hh:mm:ss a',
-    'MMM d, yyyy, h:mm a',
-    'MMM d, yyyy, hh:mm a',
-    'yyyy-MM-dd HH:mm:ss',
-    'yyyy-MM-dd HH:mm',
-    'yyyy/MM/dd HH:mm:ss',
-    'yyyy/MM/dd HH:mm',
-    'dd/MM/yyyy HH:mm:ss',
-    'dd/MM/yyyy HH:mm'
-  ];
-
-  for (let i = 0; i < patterns.length; i++) {
-    try {
-      const d = Utilities.parseDate(s, tz, patterns[i]);
-      if (d && !isNaN(d.getTime())) return d;
-    } catch (e1) {}
-  }
-
-  // Manual month-name parse (English) -> parse as ISO in WIB.
-  const m = s.match(/^([A-Za-z]+)\s+(\d{1,2}),\s*(\d{4}),\s*(\d{1,2}):(\d{2})\s*([AP]M)$/i);
-  if (m) {
-    const monName = String(m[1] || '').toLowerCase();
-    const day = Number(m[2]);
-    const year = Number(m[3]);
-    let hh = Number(m[4]);
-    const mm = Number(m[5]);
-    const ampm = String(m[6] || '').toUpperCase();
-
-    const months = {
-      january:1,february:2,march:3,april:4,may:5,june:6,july:7,august:8,september:9,october:10,november:11,december:12,
-      jan:1,feb:2,mar:3,apr:4,jun:6,jul:7,aug:8,sep:9,oct:10,nov:11,dec:12
-    };
-    const mon = months[monName];
-    if (mon) {
-      if (ampm === 'PM' && hh < 12) hh += 12;
-      if (ampm === 'AM' && hh === 12) hh = 0;
-      const iso = Utilities.formatString('%04d-%02d-%02d %02d:%02d:00', year, mon, day, hh, mm);
-      try {
-        const d2 = Utilities.parseDate(iso, tz, 'yyyy-MM-dd HH:mm:ss');
-        if (d2 && !isNaN(d2.getTime())) return d2;
-      } catch (e2) {}
-    }
-  }
-
-  if (typeof normalizeDate_ === 'function') {
-    try {
-      const d3 = normalizeDate_(s);
-      if (d3 && !isNaN(d3.getTime())) return d3;
-    } catch (e3) {}
-  }
-
-  if (typeof tryNativeParseUnambiguousDate_ === 'function') {
-    try {
-      const d4 = tryNativeParseUnambiguousDate_(s);
-      if (d4 && !isNaN(d4.getTime())) return d4;
-    } catch (e4) {}
-  }
-
+  try {
+    if (typeof parseClaimLastUpdatedDatetime06c_ === 'function') return parseClaimLastUpdatedDatetime06c_(v);
+  } catch (e1) {}
   return null;
 }
 
-/** Status Type resolution; prefers shared 06c implementation when available. */
+/*** Status Type resolution; prefers shared 06c implementation when available. */
 function getStatusTypeFromLastStatus06b_(lastStatus) {
   try { if (typeof getStatusType06c_ === 'function') return getStatusType06c_(lastStatus); } catch (e) {}
   const s = String(lastStatus || '').trim();
@@ -1349,112 +1264,7 @@ function getStatusTypeMap06b_() {
       return __STATUS_TYPE_MAP_06B;
     }
   } catch (e2) {}
-  // Fallback map (kept aligned with 2026 spec; if 06c/config is present, it is preferred).
-  __STATUS_TYPE_MAP_06B = {
-    'CLAIM_INITIATE':'OPEN',
-    'QOALA_ASK_DETAIL':'FOLLOW UP',
-    'CUSTOMER_RESUBMIT_DOCUMENT':'OPEN',
-    'QOALA_CLAIM_RESUBMIT_DOCUMENT_REQ_QOALA':'OPEN',
-    'CLAIM_EXPIRE':'CLOSE',
-    'QOALA_CLAIM_REOPEN':'OPEN',
-    'QOALA_CLAIM_APPROVE_WALKIN':'FOLLOW UP',
-    'WAITING_WALKIN_START':'FOLLOW UP',
-    'CLAIM_EXPIRE_WALKIN':'CLOSE',
-    'QOALA_CLAIM_REOPEN_WALKIN':'FOLLOW UP',
-    'QOALA_CLAIM_APPROVE_PICKUP':'FOLLOW UP',
-    'WAITING_PICKUP_START':'FOLLOW UP',
-    'COURIER_PICKUP_START':'FOLLOW UP',
-    'COURIER_PICKUP_START_DONE':'FOLLOW UP',
-    'SUBMITTED':'OPEN',
-    'QOALA_CLAIM_ASK_DETAIL':'FOLLOW UP',
-    'QOALA_CLAIM_RESUBMIT_DOC':'OPEN',
-    'WAITING_PAYMENT':'FOLLOW UP',
-    'DONE_EXPIRED':'CLOSE',
-    'WAITING_COURIER_START':'FOLLOW UP',
-    'CLAIM_ADDED_SC':'FOLLOW UP',
-    'RECEIVED_SC':'FOLLOW UP',
-    'ESTIMATE_COST':'OPEN',
-    'ON_PROGRESS':'FOLLOW UP',
-    'INSURANCE_ASK_DETAIL':'FOLLOW UP',
-    'CX_UPLOAD_DOC':'FOLLOW UP',
-    'APPROVED':'FOLLOW UP',
-    'INSURANCE_APPROVED':'FOLLOW UP',
-    'REPLACED':'OPEN',
-    'DONE_REPAIR':'DONE - FOLLOW UP',
-    'WAITING_WALKIN_FINISH':'DONE - FOLLOW UP',
-    'COURIER_PICKED_UP':'FOLLOW UP',
-    'WAITING_COURIER_FINISH':'DONE - FOLLOW UP',
-    'SERVICE_CENTER_CLAIM_RECEIVE':'FOLLOW UP',
-    'SERVICE_CENTER_CLAIM_ESTIMATE':'OPEN',
-    'QOALA_CLAIM_RESUBMIT_ESTIMATE':'FOLLOW UP',
-    'SERVICE_CENTER_CLAIM_RESUBMIT_ESTIMATE':'OPEN',
-    'SERVICE_CENTER_CLAIM_WAITING_REPAIR':'FOLLOW UP',
-    'SERVICE_CENTER_CLAIM_ON_PROGRESS':'FOLLOW UP',
-    'SERVICE_CENTER_CLAIM_CHANGE_IMEI':'FOLLOW UP',
-    'QOALA_CLAIM_APPROVE_REPAIR':'FOLLOW UP',
-    'QOALA_CLAIM_APPROVE_REPLACE':'FOLLOW UP',
-    'INSURANCE_CLAIM_REVIEW':'FOLLOW UP',
-    'INSURANCE_CLAIM_APPROVE_REPAIR':'FOLLOW UP',
-    'INSURANCE_CLAIM_ASK_DETAIL_ADDITIONAL':'FOLLOW UP',
-    'QOALA_CLAIM_RESUBMIT_DOCUMENT_ADDITIONAL':'FOLLOW UP',
-    'CLAIM_EXPIRE_INSURANCE':'FOLLOW UP',
-    'QOALA_CLAIM_REOPEN_INSURANCE_CASHLESS':'OPEN',
-    'CUSTOMER_WAITING_PAYMENT_DEDUCTIBLE_EXCESS_FEE_REPAIR':'FOLLOW UP',
-    'CUSTOMER_APPROVE_DEDUCTIBLE_EXCESS_FEE_REPAIR':'FOLLOW UP',
-    'CUSTOMER_APPROVE_DEDUCTIBLE_EXCESS_FEE_REPAIR_EXPIRED':'FOLLOW UP',
-    'CUSTOMER_PAID_DEDUCTIBLE_EXCESS_FEE_REPAIR':'FOLLOW UP',
-    'SERVICE_CENTER_CLAIM_DONE_REPAIR_WALKIN':'FOLLOW UP',
-    'SERVICE_CENTER_CLAIM_WAITING_WALKIN_FINISH':'DONE - FOLLOW UP',
-    'SERVICE_CENTER_CLAIM_DONE':'DONE',
-    'SERVICE_CENTER_CLAIM_DONE_REPAIR_PICKUP':'FOLLOW UP',
-    'SERVICE_CENTER_CLAIM_WAITING_PICKUP_FINISH':'DONE - FOLLOW UP',
-    'COURIER_CLAIM_PICKUP_FINISH':'FOLLOW UP',
-    'COURIER_CLAIM_PICKUP_FINISH_DONE':'DONE',
-    'INSURANCE_APPROVED_REPLACED':'FOLLOW UP',
-    'DONE_REJECTED':'CLOSE',
-    'DONE':'DONE',
-    'DONE_REPLACED':'DONE',
-    'DONE_REJECT':'CLOSE',
-    'QOALA_REQUEST_SALVAGE':'FOLLOW UP',
-    'PAYMENT_NOT_COMPLETE':'CLOSE',
-    'DONE_CANCEL':'CLOSE',
-    'INSURANCE_REJECTED':'FOLLOW UP',
-    'CUSTOMER_WAITING_PAYMENT_DEDUCTIBLE_EXCESS_FEE_REPLACE':'FOLLOW UP',
-    'CUSTOMER_APPROVE_DEDUCTIBLE_EXCESS_FEE_REPLACE':'FOLLOW UP',
-    'CUSTOMER_APPROVE_DEDUCTIBLE_EXCESS_FEE_REPLACE_EXPIRED':'FOLLOW UP',
-    'CUSTOMER_PAID_DEDUCTIBLE_EXCESS_FEE_RREPLACE':'FOLLOW UP',
-    'CUSTOMER_PAID_DEDUCTIBLE_EXCESS_FEE_REPLACE':'FOLLOW UP',
-    'INSURANCE_CLAIM_APPROVE_REPLACE':'FOLLOW UP',
-    'SERVICE_CENTER_REPAIR_CANCELLED_FOR_REPLACE':'OPEN',
-    'QOALA_PROCESS_REPLACE':'OPEN',
-    'QOALA_PROCESS_REPLACE_WALKIN':'OPEN',
-    'CUSTOMER_WAITING_EXCESS_REPLACE_WALKIN':'FOLLOW UP',
-    'CUSTOMER_PAID_EXCESS_REPLACE_WALKIN':'FOLLOW UP',
-    'QOALA_WAITING_CUSTOMER_REPLACE':'FOLLOW UP',
-    'CUSTOMER_RECEIVE_REPLACE':'DONE',
-    'QOALA_PROCESS_REPLACE_PICKUP':'OPEN',
-    'CUSTOMER_WAITING_EXCESS_REPLACE_PICKUP':'FOLLOW UP',
-    'CUSTOMER_PAID_EXCESS_REPLACE_PICKUP':'FOLLOW UP',
-    'COURIER_WAITING_REPLACE_PICKUP':'FOLLOW UP',
-    'COURIER_REPLACE_PICKUP':'FOLLOW UP',
-    'COURIER_REPLACE_PICKUP_DONE':'DONE',
-    'QOALA_CLAIM_REJECT':'CLOSE',
-    'QOALA_CLAIM_REJECT_PICKUP':'CLOSE - FOLLOW UP',
-    'QOALA_CLAIM_REJECT_WALKIN':'CLOSE - FOLLOW UP',
-    'CUSTOMER_REJECT_PAYMENT_DEDUCTIBLE_EXCESS_FEE_WALKIN':'FOLLOW UP',
-    'CUSTOMER_REJECT_PAYMENT_DEDUCTIBLE_EXCESS_FEE_PICKUP':'FOLLOW UP',
-    'INSURANCE_CLAIM_REJECT_WALKIN':'FOLLOW UP',
-    'INSURANCE_CLAIM_REJECT_PICKUP':'FOLLOW UP',
-    'SERVICE_CENTER_CLAIM_WAITING_WALKIN_REJECT':'CLOSE - FOLLOW UP',
-    'SERVICE_CENTER_CLAIM_DONE_REJECT':'CLOSE - REJECT',
-    'SERVICE_CENTER_CLAIM_WAITING_PICKUP_REJECT':'CLOSE - FOLLOW UP',
-    'COURIER_CLAIM_PICKUP_REJECT':'FOLLOW UP',
-    'COURIER_CLAIM_PICKUP_REJECT_DONE':'CLOSE - REJECT',
-    'INSURANCE_CLAIM_WAITING_PAID_REPAIR':'DONE - WAIT INSURANCE',
-    'INSURANCE_CLAIM_PAID_REPAIR':'DONE - INSURANCE',
-    'INSURANCE_CLAIM_WAITING_PAID_REPLACE':'DONE - WAIT INSURANCE',
-    'INSURANCE_CLAIM_PAID_REPLACE':'DONE - INSURANCE'
-  };
+  __STATUS_TYPE_MAP_06B = {};
   return __STATUS_TYPE_MAP_06B;
 }
 
@@ -1548,4 +1358,3 @@ function tagOverviewFlow06b_(ss, profileName, flowName) {
   sh.getRange(rowTarget, idxFlow + 1).setValue(flowName);
   return true;
 }
-

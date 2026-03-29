@@ -225,6 +225,34 @@ Putaran hardening terbaru sudah menutup beberapa sumber masalah yang paling berb
 
 Catatan: daftar temuan di bawah tetap berguna sebagai konteks desain, tetapi beberapa poin prioritas tingginya sudah ditangani oleh hardening terbaru.
 
+
+### Update stabilisasi berikutnya (2026-03-29, fase lanjutan)
+
+Perubahan lanjutan yang sudah diterapkan setelah patch critical sebelumnya:
+
+- `sv03_getDateAutoNumberFormatForColumn_` ditambahkan agar format `DATE_AUTO` tidak lagi melempar ReferenceError saat schema-format enforcement berjalan.
+- `applyOperationalClaimHighlightsByRaw_` sekarang mengisolasi error per-sheet (try/catch per sheet), jadi kegagalan satu sheet tidak menghentikan highlight di sheet lain.
+- EV-Bike sekarang dedup claim lebih ketat saat overlay dari `Submission` (menghindari proses ulang claim yang sudah diproses dari Raw pada run yang sama).
+- Scan Event ID untuk sheet `Past` dibatasi (windowed read) agar post-process movement tracking lebih scalable pada sheet historis besar.
+- Resolusi excluded-last-status di 05a diubah jadi lazy per-call + cache runtime (menghindari cache stale module-level).
+- `backupOpsToRawFull_` tidak lagi me-reassign parameter `rawValues`; sekarang pakai buffer lokal (`workingRawValues`) supaya alur data lebih eksplisit.
+
+
+### Update konsolidasi helper (2026-03-29, phase 3)
+
+- Helper DB classifier dan parser datetime claim dipusatkan ke `01_Utils` untuk memangkas duplikasi lintas modul.
+- Helper map insurance di modul operasional diarahkan ke `mapInsuranceShort_()` yang sudah jadi source bersama.
+- `getStatusTypeMap06c_` sekarang strict ke source-of-truth config (tanpa hardcoded fallback map lokal).
+- `enrichOperationalSheetsFromRaw06_` mulai dipisah bertahap dengan resolver indeks raw terpusat agar maintenance lebih aman.
+- Header matching mulai dikonsolidasikan ke util shared untuk mengurangi mismatch lintas modul.
+
+
+### Update struktur SUB helper (2026-03-29, phase 4A)
+
+- Implementasi helper SUB untuk append ke `Submission` dan sort operational dipindahkan ke `06e_SubHelpers`.
+- `06a_EntryPoints` tetap mempertahankan nama fungsi existing sebagai delegator supaya caller lama tidak pecah.
+- Ditambahkan runtime preflight non-fatal (`06f_RuntimeAssertions`) di flow MAIN/SUB untuk deteksi dini missing symbol tanpa memutus run.
+
 ### Yang sudah bagus
 
 - Struktur modul numerik sudah memberi urutan mental yang cukup jelas
