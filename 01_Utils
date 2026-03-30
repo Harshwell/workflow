@@ -299,6 +299,23 @@ function buildHeaderIndex_(headerRowValues) {
 }
 
 /**
+ * Resolve first matching header index by candidate names.
+ * - Supports exact (case-insensitive normalized) lookup.
+ * - Returns -1 when no candidate matches.
+ */
+function findHeaderIndexByCandidates_(headerRowValues, candidates) {
+  const hdr = Array.isArray(headerRowValues) ? headerRowValues : [];
+  const idx = buildHeaderIndex_(hdr);
+  const list = Array.isArray(candidates) ? candidates : [candidates];
+  for (let i = 0; i < list.length; i++) {
+    const key = normalizeHeaderKey_(list[i]);
+    if (!key) continue;
+    if (idx[key] != null) return idx[key];
+  }
+  return -1;
+}
+
+/**
  * Build a case-insensitive header index.
  * - Trims, normalizes whitespace/NBSP, lowercases
  * - Keeps the first occurrence when duplicates exist
@@ -1329,6 +1346,80 @@ function inCiSet_(setObj, value) {
   const k = String(value == null ? '' : value).trim().toLowerCase();
   return !!setObj[k];
 }
+
+/** =========================
+ * Shared claim helpers
+ * ========================= */
+function computeDbValueFromClaimNumber_(claimNumber) {
+  const s = String(claimNumber == null ? '' : claimNumber).trim().toUpperCase();
+  if (!s) return '';
+  if (s.indexOf('SFP') !== -1 || s.indexOf('SFX') !== -1 || s.indexOf('SMR') !== -1) return 'OLD';
+  if (s.indexOf('VVMAR') !== -1 || s.indexOf('GADLD') !== -1) return 'NEW';
+  return '';
+}
+
+function parseClaimLastUpdatedDatetime_(v) {
+  if (v == null || v === '') return null;
+  if (Object.prototype.toString.call(v) === '[object Date]') return isNaN(v.getTime()) ? null : v;
+
+  const s = String(v || '').trim();
+  if (!s) return null;
+
+  const tz = getTzSafe_();
+  const patterns = [
+    'MMMM d, yyyy, h:mm a',
+    'MMMM d, yyyy, hh:mm a',
+    'MMMM d, yyyy, h:mm:ss a',
+    'MMMM d, yyyy, hh:mm:ss a',
+    'MMM d, yyyy, h:mm a',
+    'MMM d, yyyy, hh:mm a',
+    'yyyy-MM-dd HH:mm:ss',
+    'yyyy-MM-dd HH:mm',
+    'yyyy/MM/dd HH:mm:ss',
+    'yyyy/MM/dd HH:mm',
+    'dd/MM/yyyy HH:mm:ss',
+    'dd/MM/yyyy HH:mm',
+    'd/M/yyyy H:mm:ss',
+    'd/M/yyyy H:mm'
+  ];
+
+  for (let i = 0; i < patterns.length; i++) {
+    try {
+      const d = Utilities.parseDate(s, tz, patterns[i]);
+      if (d && !isNaN(d.getTime())) return d;
+    } catch (e) {}
+  }
+
+  const m = s.match(/^\s*([A-Za-z]+)\s+(\d{1,2})\s*,\s*(\d{4})\s*,\s*(\d{1,2})\s*:\s*(\d{2})(?::(\d{2}))?\s*([AaPp][Mm])\s*$/);
+  if (!m) return null;
+
+  const monthName = String(m[1] || '').toLowerCase();
+  const day = parseInt(m[2], 10);
+  const year = parseInt(m[3], 10);
+  let hh = parseInt(m[4], 10);
+  const mm = parseInt(m[5], 10);
+  const ss = m[6] ? parseInt(m[6], 10) : 0;
+  const ampm = String(m[7] || '').toUpperCase();
+
+  const months = {
+    january:1,february:2,march:3,april:4,may:5,june:6,july:7,august:8,september:9,october:10,november:11,december:12,
+    jan:1,feb:2,mar:3,apr:4,jun:6,jul:7,aug:8,sep:9,oct:10,nov:11,dec:12
+  };
+  const month = months[monthName];
+  if (!month || isNaN(day) || isNaN(year) || isNaN(hh) || isNaN(mm) || isNaN(ss)) return null;
+
+  if (ampm === 'PM' && hh < 12) hh += 12;
+  if (ampm === 'AM' && hh === 12) hh = 0;
+
+  const iso = Utilities.formatString('%04d-%02d-%02d %02d:%02d:%02d', year, month, day, hh, mm, ss);
+  try {
+    const d2 = Utilities.parseDate(iso, tz, 'yyyy-MM-dd HH:mm:ss');
+    if (d2 && !isNaN(d2.getTime())) return d2;
+  } catch (e2) {}
+
+  return null;
+}
+
 /** =========================
  * Insurance mapping helper
  * =========================
