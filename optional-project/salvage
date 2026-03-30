@@ -178,6 +178,7 @@ function wasThreadProcessedRecently_(threadId) {
 
   const cutoffMs = Date.now() - (windowHours * 60 * 60 * 1000);
   return prevAt.getTime() >= cutoffMs;
+  return !!(prevAt && !Number.isNaN(prevAt.getTime()));
 }
 
 function rememberProcessedThread_(threadId) {
