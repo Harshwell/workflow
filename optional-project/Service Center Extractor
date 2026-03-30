@@ -171,6 +171,31 @@ const LAST_STATUS_LABELS = {
   COURIER_PICKUP_START_DONE: "Delivered to Service Center",
 };
 
+const RUNTIME_CACHE = {
+  normByValue: {},
+  normSize: 0,
+  normMaxSize: 3000,
+};
+
+function _validateConfig_() {
+  var requiredText = [
+    "SCRIPT_VERSION",
+    "FLOW_NAME",
+    "DEST_SPREADSHEET_ID",
+    "OVERVIEW_SHEET",
+    "UNMAPPED_SHEET_NAME",
+  ];
+  for (var i = 0; i < requiredText.length; i++) {
+    var key = requiredText[i];
+    if (!String(CONFIG[key] || "").trim()) {
+      throw new Error('Invalid CONFIG: "' + key + '" is required.');
+    }
+  }
+  if (!CONFIG.SOURCE_SHEETS || !CONFIG.SOURCE_SHEETS.length) {
+    throw new Error("Invalid CONFIG: SOURCE_SHEETS must not be empty.");
+  }
+}
+
 /* =========================
  *  MENU
  * ========================= */
@@ -187,6 +212,7 @@ function onOpen() {
  * ========================= */
 
 function runServiceCenterTransfer() {
+  _validateConfig_();
   var lock = LockService.getScriptLock();
   if (!lock.tryLock(CONFIG.RUN_GUARD.LOCK_WAIT_MS)) {
     _setProgressSafe_("Skipped: another run is still in progress.");
@@ -1053,14 +1079,23 @@ function _findHeaderIndex_(headers, candidates) {
   var exactHeaders = headers.map(function (h) { return String(h || "").trim(); });
   var normalizedHeaders = exactHeaders.map(_norm_);
   var normalizedCandidates = candidates.map(_norm_);
+  var exactIndex = {};
+  var normalizedIndex = {};
+
+  for (var hi = 0; hi < exactHeaders.length; hi++) {
+    if (!exactIndex.hasOwnProperty(exactHeaders[hi])) exactIndex[exactHeaders[hi]] = hi;
+    if (!normalizedIndex.hasOwnProperty(normalizedHeaders[hi])) normalizedIndex[normalizedHeaders[hi]] = hi;
+  }
 
   for (var i = 0; i < candidates.length; i++) {
-    var exactIdx = exactHeaders.indexOf(String(candidates[i]));
+    var exactCandidate = String(candidates[i] || "").trim();
+    var exactIdx = exactIndex.hasOwnProperty(exactCandidate) ? exactIndex[exactCandidate] : -1;
     if (exactIdx >= 0) return exactIdx;
   }
 
   for (var j = 0; j < normalizedCandidates.length; j++) {
-    var normIdx = normalizedHeaders.indexOf(normalizedCandidates[j]);
+    var normKey = normalizedCandidates[j];
+    var normIdx = normalizedIndex.hasOwnProperty(normKey) ? normalizedIndex[normKey] : -1;
     if (normIdx >= 0) return normIdx;
   }
 
@@ -1197,11 +1232,12 @@ function _coerceToDate_(value) {
   }
 
   if (typeof value === "number" && isFinite(value)) {
-    var ms = Math.round((value - 25569) * 86400 * 1000);
-    var serialDate = new Date(ms);
+    var serialDays = Math.floor(value - 25569);
+    var utcMs = serialDays * 86400 * 1000;
+    var serialDate = new Date(utcMs);
     return isNaN(serialDate.getTime())
       ? null
-      : new Date(serialDate.getFullYear(), serialDate.getMonth(), serialDate.getDate());
+      : new Date(serialDate.getUTCFullYear(), serialDate.getUTCMonth(), serialDate.getUTCDate());
   }
 
   var raw = String(value || "").trim();
@@ -1243,12 +1279,26 @@ function _buildValidatedDate_(year, month, day) {
 }
 
 function _norm_(value) {
-  return String(value || "")
+  var raw = String(value || "");
+  if (RUNTIME_CACHE.normByValue.hasOwnProperty(raw)) {
+    return RUNTIME_CACHE.normByValue[raw];
+  }
+
+  var normalized = raw
     .toLowerCase()
     .normalize("NFKD")
     .replace(/[\u0300-\u036f]/g, "")
     .replace(/[^a-z0-9]+/g, " ")
     .trim();
+
+  if (RUNTIME_CACHE.normSize >= RUNTIME_CACHE.normMaxSize) {
+    RUNTIME_CACHE.normByValue = {};
+    RUNTIME_CACHE.normSize = 0;
+  }
+
+  RUNTIME_CACHE.normByValue[raw] = normalized;
+  RUNTIME_CACHE.normSize += 1;
+  return normalized;
 }
 
 /* =========================
