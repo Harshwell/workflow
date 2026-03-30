@@ -9,7 +9,8 @@
 
 /** Local DRY_RUN guard to avoid load-order ReferenceError. */
 function __isDryRun05c__() {
-  try { return !!DRY_RUN; } catch (e) { return false; }
+  try { if (typeof isDryRun_ === 'function') return !!isDryRun_(); } catch (e) {}
+  try { return !!DRY_RUN; } catch (e2) { return false; }
 }
 
 
@@ -37,6 +38,9 @@ function __getHeaderRow05c_(sh) {
 
 /** DB classifier from Claim Number (SFP/SFX/SMR -> OLD, VVMAR/GADLD -> NEW) */
 function computeDbValueFromClaimNumber05c_(claimNumber) {
+  try {
+    if (typeof computeDbValueFromClaimNumber_ === 'function') return computeDbValueFromClaimNumber_(claimNumber);
+  } catch (e) {}
   const s = String(claimNumber == null ? '' : claimNumber).trim().toUpperCase();
   if (!s) return '';
   if (s.indexOf('SFP') > -1 || s.indexOf('SFX') > -1 || s.indexOf('SMR') > -1) return 'OLD';
@@ -235,9 +239,7 @@ function processB2B_(ss, rawValues, headerIndexRaw, pic) { // `pic` kept for bac
   if (!rawValues || !rawValues.length) return 0;
 
   const OPTIONAL_FLAGS = (typeof __OPTIONAL_FLAGS !== 'undefined' && __OPTIONAL_FLAGS) ? __OPTIONAL_FLAGS : {};
-  const EXCLUDED_LAST_STATUSES = (typeof __EXCLUDED_LAST_STATUSES !== 'undefined' && __EXCLUDED_LAST_STATUSES && __EXCLUDED_LAST_STATUSES.size)
-    ? __EXCLUDED_LAST_STATUSES
-    : getSpecialCaseExcludedStatuses_();
+  const EXCLUDED_LAST_STATUSES = getSpecialCaseExcludedStatuses_();
 
   const idxBP = headerIndexRaw[h.businessPartner];
   const idxClaim = headerIndexRaw[h.claimNumber];
@@ -421,6 +423,9 @@ function getSpecialCaseExcludedStatuses_() {
   } catch (e) {}
   try {
     if (typeof buildExcludedLastStatusesSet_ === 'function') return buildExcludedLastStatusesSet_();
+  } catch (e) {}
+  try {
+    if (typeof __getExcludedLastStatuses05a_ === 'function') return __getExcludedLastStatuses05a_();
   } catch (e) {}
 
   // Backward-compatible fallbacks.
@@ -1026,9 +1031,7 @@ function processEVBike_(ss, rawValues, headerIndexRaw, pic) { // `pic` kept for 
 
 
   const OPTIONAL_FLAGS = (typeof __OPTIONAL_FLAGS !== 'undefined' && __OPTIONAL_FLAGS) ? __OPTIONAL_FLAGS : {};
-  const EXCLUDED_LAST_STATUSES = (typeof __EXCLUDED_LAST_STATUSES !== 'undefined' && __EXCLUDED_LAST_STATUSES && __EXCLUDED_LAST_STATUSES.size)
-    ? __EXCLUDED_LAST_STATUSES
-    : getSpecialCaseExcludedStatuses_();
+  const EXCLUDED_LAST_STATUSES = getSpecialCaseExcludedStatuses_();
 
   const idxBP = headerIndexRaw[h.businessPartner];
   const idxOwner = headerIndexRaw['customer_name'];
@@ -1187,6 +1190,8 @@ function processEVBike_(ss, rawValues, headerIndexRaw, pic) { // `pic` kept for 
       const info = submissionCandidates[key];
       const claim = key;
       if (!claim) continue;
+      if (seenClaims.has(claim)) continue;
+      seenClaims.add(claim);
 
       // Ensure in-sheet row exists (append if missing)
       let pos = (claimColIdx != null) ? existingMap[claim] : null;
