@@ -194,6 +194,9 @@ function _validateConfig_() {
   if (!CONFIG.SOURCE_SHEETS || !CONFIG.SOURCE_SHEETS.length) {
     throw new Error("Invalid CONFIG: SOURCE_SHEETS must not be empty.");
   }
+  if (!CONFIG.ROUTE_RULES || !CONFIG.ROUTE_RULES.length) {
+    throw new Error("Invalid CONFIG: ROUTE_RULES must not be empty.");
+  }
 }
 
 /* =========================

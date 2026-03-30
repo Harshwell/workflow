@@ -706,6 +706,7 @@ var TaskProcessor = {
     var regionMap = StoreRegionRepo.loadPartnerToRegionMap_(log);
 
     var stagingRows = [];
+    var skippedNoDestination = 0;
     for (var i = 0; i < values.length; i++) {
       var row = values[i];
 
@@ -717,6 +718,10 @@ var TaskProcessor = {
       var serviceCenter = String(plan.getFirst_(row, 'Service Center') || '').trim();
 
       var destSheet = Router.route_(partnerName, regionMap);
+      if (!destSheet) {
+        skippedNoDestination++;
+        continue;
+      }
       var pic = PicResolver.resolve_(rawStatus, serviceCenter);
       var translatedStatus = StatusTranslator.translate_(rawStatus);
 
@@ -738,6 +743,11 @@ var TaskProcessor = {
       log.info('Appended to staging', { rows: stagingRows.length });
     } else {
       log.info('No rows appended (empty / filtered)', null);
+    }
+
+    if (skippedNoDestination > 0) {
+      log.warn('Rows skipped due to unresolved destination routing', { skippedNoDestination: skippedNoDestination });
+      Audit.append_(log, { event: 'SKIPPED_NO_DESTINATION', skipped: skippedNoDestination, sourceSheet: task.sourceSheet });
     }
   }
 };

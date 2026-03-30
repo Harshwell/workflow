@@ -144,6 +144,7 @@ var SALVAGE_TARGET_HEADER_ALIASES = typeof SALVAGE_TARGET_HEADER_ALIASES !== 'un
 const SALVAGE_RUNTIME = {
   props: PropertiesService.getScriptProperties(),
   dedupeThreadKey: 'SALVAGE_LAST_PROCESSED_THREAD_ID',
+  dedupeMessageKey: 'SALVAGE_LAST_PROCESSED_MESSAGE_ID',
   dedupeAtKey: 'SALVAGE_LAST_PROCESSED_AT_ISO',
 };
 
@@ -165,9 +166,12 @@ function validateSalvageConfig_() {
   }
 }
 
-function wasThreadProcessedRecently_(threadId) {
+function wasThreadProcessedRecently_(threadId, messageId) {
   const prevThreadId = SALVAGE_RUNTIME.props.getProperty(SALVAGE_RUNTIME.dedupeThreadKey);
   if (!prevThreadId || prevThreadId !== String(threadId || '')) return false;
+
+  const prevMessageId = SALVAGE_RUNTIME.props.getProperty(SALVAGE_RUNTIME.dedupeMessageKey);
+  if (!prevMessageId || prevMessageId !== String(messageId || '')) return false;
 
   const prevAtIso = SALVAGE_RUNTIME.props.getProperty(SALVAGE_RUNTIME.dedupeAtKey);
   const prevAt = prevAtIso ? new Date(prevAtIso) : null;
@@ -178,12 +182,12 @@ function wasThreadProcessedRecently_(threadId) {
 
   const cutoffMs = Date.now() - (windowHours * 60 * 60 * 1000);
   return prevAt.getTime() >= cutoffMs;
-  return !!(prevAt && !Number.isNaN(prevAt.getTime()));
 }
 
-function rememberProcessedThread_(threadId) {
+function rememberProcessedThread_(threadId, messageId) {
   SALVAGE_RUNTIME.props.setProperties({
     SALVAGE_LAST_PROCESSED_THREAD_ID: String(threadId || ''),
+    SALVAGE_LAST_PROCESSED_MESSAGE_ID: String(messageId || ''),
     SALVAGE_LAST_PROCESSED_AT_ISO: new Date().toISOString(),
   });
 }
@@ -279,11 +283,12 @@ function runQueuedSalvage() {
     ctx.emailFrom = mailBundle.message.getFrom();
     ctx.emailSubject = mailBundle.message.getSubject();
     ctx.threadId = mailBundle.thread.getId();
+    ctx.messageId = mailBundle.message.getId();
     ctx.attachmentName = mailBundle.attachment.getName();
     ctx.attachmentSize = mailBundle.attachment.getSize();
     ctx.attachmentType = mailBundle.attachment.getContentType();
 
-    if (wasThreadProcessedRecently_(ctx.threadId)) {
+    if (wasThreadProcessedRecently_(ctx.threadId, ctx.messageId)) {
       updateProgress_(100, 'Skipped duplicate thread');
       logStage_(ctx, {
         stage: 'EMAIL',
@@ -449,7 +454,7 @@ function runQueuedSalvage() {
     updateProgress_(95, 'Trashing processed email');
     const emailCleanupStart = Date.now();
     processedThread.moveToTrash();
-    rememberProcessedThread_(ctx.threadId);
+    rememberProcessedThread_(ctx.threadId, ctx.messageId);
     logStage_(ctx, {
       stage: 'CLEANUP',
       segment: 'trash_email_thread',
