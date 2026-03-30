@@ -1,0 +1,1870 @@
+/**
+ * Salvage automation for Google Apps Script.
+ *
+ * What it does:
+ * 1) Picks the newest Gmail message inside label QUEUED_SALVAGE that matches:
+ *    - subject: "5. Replacement Claim Monitoring"
+ *    - from: data-reporting@qoala.id
+ *    - attachment name contains: "Replace Claim List"
+ *    - attachment extension: .xlsx
+ * 2) Converts the XLSX attachment into a temporary Google Spreadsheet.
+ * 3) Stops immediately if duplicate Claim Number is found in the target sheet, writes a short failure notice in B1, and logs details.
+ * 4) Upserts data into sheet "Salvage" on workbook "Overview Claim" based on Claim Number only.
+ * 5) Marks Claim Number cells pink + adds note when an existing target claim is missing from source.
+ * 6) Clears the mark/note automatically once the claim reappears in source.
+ * 7) Supports a dry-run diff preview that shows what would update/insert/missing-restore before any write.
+ * 8) Writes progress and detailed logs into "Log Salvage" sheet.
+ * 9) Trashes the temporary spreadsheet and the processed email thread after a successful run.
+ *
+ * IMPORTANT SETUP:
+ * - Enable Advanced Google services: Drive API, Gmail API
+ * - In Apps Script project settings, set timezone to Asia/Jakarta
+ * - Run setupSalvageAutomation() once manually
+ *
+ * BOOKMARKED NEXT IMPROVEMENTS:
+ * 1) Dedicated audit columns (currently skipped by request to avoid adding more columns for now).
+ * 2) Stronger source schema/structure validation so the job is more resilient if the upstream report layout changes.
+ * 3) Rollback/staging write model so partial writes can be recovered more safely if a failure happens mid-write.
+ */
+
+var SALVAGE_CONFIG = typeof SALVAGE_CONFIG !== 'undefined'
+  ? SALVAGE_CONFIG
+  : Object.freeze({
+  flowName: 'Salvage Gmail > Temp Sheet > Overview Claim',
+  scriptTimeZone: 'Asia/Jakarta',
+  gmail: {
+    labelName: 'QUEUED_SALVAGE',
+    from: 'data-reporting@qoala.id',
+    subject: '5. Replacement Claim Monitoring',
+    attachmentKeyword: 'Replace Claim List',
+    attachmentExtension: '.xlsx',
+    scanLimitThreads: 100,
+    strictFromMatch: true,
+    managedFilterEnabled: true,
+    backfillLabelOnEveryRun: true,
+    backfillSearchLimitThreads: 100,
+  },
+  target: {
+    spreadsheetId: '1zRlYrSRssv9LVcPKEq90CmmvTRsZoN_TqfIg2pNufbc',
+    sheetName: 'Salvage',
+    fixedHeaderRow: 2,
+    headerSearchRows: 10,
+    dataStartFallbackHeaderRow: 2,
+    activeRangeMode: 'sparse_claim_column',
+    claimMissingNote: 'Data klaim ini tidak ditemukan pada source salvage terbaru.',
+    claimMissingColor: '#f4cccc',
+    defaultCellColor: '#ffffff',
+    sampleSize: 5,
+  },
+  log: {
+    spreadsheetId: '1TC9YjDo6qxWq17zPYEBqIryhaYbUMqGtaSH0F-G8IwE',
+    sheetName: 'Log Salvage',
+    progressBarCell: 'B3',
+    progressPctCell: 'C3',
+    currentStepCell: 'D3',
+    updatedAtCell: 'E3',
+    headerRow: 5,
+    headerStartColumn: 2,
+    detailHeaders: [
+      'No',
+      'Timestamp',
+      'Flow',
+      'Run ID',
+      'Stage',
+      'Time Segment',
+      'Duration(ms)/(s)',
+      'Email From',
+      'Email Subject',
+      'Thread ID',
+      'Attachment Name',
+      'Attachment Size',
+      'Attachment Type',
+      'Raw Rows',
+      'Ops Updated',
+      'Sub Inserted',
+      'Status',
+      'Error',
+      'Metrics',
+      'Notes',
+      'Severity',
+    ],
+  },
+  temp: {
+    filePrefix: 'TMP_SALVAGE_',
+  },
+  verify: {
+    postSyncSampleSize: 5,
+  },
+  progress: {
+    blocks: 20,
+  },
+});
+
+var SALVAGE_TARGET_TO_SOURCE_ALIASES = typeof SALVAGE_TARGET_TO_SOURCE_ALIASES !== 'undefined'
+  ? SALVAGE_TARGET_TO_SOURCE_ALIASES
+  : Object.freeze({
+  'Claim Number': ['claim_number'],
+  'Approval Date': [
+    'ins_approve_datetime',
+    'mart_gadget__fact_claim_tracker - claim_number -> ins_approve_datetime',
+    'mart_gadget__fact_claim_tracker - claim_number → ins_approve_datetime',
+  ],
+  'Service Center': ['sc_name'],
+  'Month - Week': ['Month - Week'],
+  'Insurance': ['insurance_partner_code'],
+  'Device Brand': ['device_brand'],
+  'Device Type': ['device_type'],
+  'IMEI/SN': ['imei_number'],
+  'Last Status': ['last_status'],
+  'Last Status Update': ['last_update'],
+  'Branch': ['branch'],
+  'Partner Name': ['business_partner_name'],
+});
+
+var SALVAGE_TARGET_HEADER_ALIASES = typeof SALVAGE_TARGET_HEADER_ALIASES !== 'undefined'
+  ? SALVAGE_TARGET_HEADER_ALIASES
+  : Object.freeze({
+  'Claim Number': ['claim number'],
+  'Approval Date': ['approval date'],
+  'Month - Week': ['month - week'],
+  'Service Center': ['service center'],
+  'Insurance': ['insurance'],
+  'Device Brand': ['device brand'],
+  'Device Type': ['device type'],
+  'IMEI/SN': ['imei/sn', 'imei sn'],
+  'Last Status': ['last status'],
+  'Last Status Update': ['last status update'],
+  'Branch': ['branch'],
+  'Partner Name': ['partner name'],
+});
+
+/**
+ * Run once manually after pasting the script.
+ * Creates/recreates the daily trigger and prepares the log sheet layout.
+ */
+function setupSalvageAutomation() {
+  const lock = LockService.getScriptLock();
+  lock.waitLock(30000);
+  try {
+    ensureLogSheetLayout_();
+    ensureQueuedSalvageLabelAndFilter_();
+    deleteTriggersByHandler_('runQueuedSalvage');
+
+    ScriptApp.newTrigger('runQueuedSalvage')
+      .timeBased()
+      .everyDays(1)
+      .atHour(9)
+      .create();
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+/**
+ * Optional helper to remove the installed daily trigger.
+ */
+function removeSalvageAutomationTrigger() {
+  deleteTriggersByHandler_('runQueuedSalvage');
+}
+
+/**
+ * Main production job.
+ */
+function runQueuedSalvage() {
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(30000)) {
+    throw new Error('Another salvage job is currently running. Please retry later.');
+  }
+
+  const ctx = createRunContext_();
+  let tempFileId = null;
+  let processedThread = null;
+
+  try {
+    ensureLogSheetLayout_();
+    resetLogDetails_();
+    updateProgress_(0, 'Initializing');
+
+    logStage_(ctx, {
+      stage: 'INIT',
+      segment: 'start',
+      status: 'RUNNING',
+      severity: 'INFO',
+      notes: 'Salvage job started.',
+    });
+
+    const validationStart = Date.now();
+    const env = validateEnvironment_();
+    logStage_(ctx, {
+      stage: 'INIT',
+      segment: 'validate_environment',
+      durationMs: Date.now() - validationStart,
+      status: 'OK',
+      severity: 'INFO',
+      metrics: safeJson_(env),
+      notes: 'Environment validated.',
+    });
+
+    updateProgress_(10, 'Searching queued email');
+    const emailStart = Date.now();
+    const mailBundle = findLatestEligibleEmail_();
+    if (!mailBundle) {
+      updateProgress_(100, 'No eligible email found');
+      logStage_(ctx, {
+        stage: 'EMAIL',
+        segment: 'find_latest',
+        durationMs: Date.now() - emailStart,
+        status: 'NO_DATA',
+        severity: 'WARN',
+        notes: 'No eligible email found inside the QUEUED_SALVAGE label.',
+      });
+      writeTargetRunTimestamp_();
+      return;
+    }
+
+    processedThread = mailBundle.thread;
+    ctx.emailFrom = mailBundle.message.getFrom();
+    ctx.emailSubject = mailBundle.message.getSubject();
+    ctx.threadId = mailBundle.thread.getId();
+    ctx.attachmentName = mailBundle.attachment.getName();
+    ctx.attachmentSize = mailBundle.attachment.getSize();
+    ctx.attachmentType = mailBundle.attachment.getContentType();
+
+    logStage_(ctx, {
+      stage: 'EMAIL',
+      segment: 'find_latest',
+      durationMs: Date.now() - emailStart,
+      status: 'OK',
+      severity: 'INFO',
+      notes: 'Eligible email and attachment selected.',
+      metrics: safeJson_({
+        threadDate: mailBundle.message.getDate(),
+        threadCountScanned: mailBundle.meta.threadCountScanned,
+        matchedCount: mailBundle.meta.matchedCount,
+      }),
+    });
+
+    updateProgress_(25, 'Converting XLSX into temp sheet');
+    const convertStart = Date.now();
+    tempFileId = convertAttachmentToTempSpreadsheet_(mailBundle.attachment);
+    logStage_(ctx, {
+      stage: 'TEMP_FILE',
+      segment: 'convert_attachment',
+      durationMs: Date.now() - convertStart,
+      status: 'OK',
+      severity: 'INFO',
+      notes: 'Attachment converted to temporary spreadsheet.',
+      metrics: safeJson_({ tempFileId: tempFileId }),
+    });
+
+    updateProgress_(40, 'Reading source data');
+    const sourceStart = Date.now();
+    const sourceSnapshot = readSourceSnapshot_(tempFileId);
+    ctx.rawRows = sourceSnapshot.rawRows;
+    logStage_(ctx, {
+      stage: 'SOURCE',
+      segment: 'read_snapshot',
+      durationMs: Date.now() - sourceStart,
+      rawRows: sourceSnapshot.rawRows,
+      status: 'OK',
+      severity: sourceSnapshot.duplicateClaimNumbers.length ? 'WARN' : 'INFO',
+      notes: sourceSnapshot.duplicateClaimNumbers.length
+        ? 'Source loaded with duplicate Claim Number(s); last occurrence wins.'
+        : 'Source loaded successfully.',
+      metrics: safeJson_({
+        availableSheets: sourceSnapshot.availableSheets,
+        selectedSheetName: sourceSnapshot.sheetName,
+        sourceHeaderRow: sourceSnapshot.headerRow,
+        sourceHeaders: sourceSnapshot.headers,
+        resolvedSourceColumns: sourceSnapshot.resolvedColumnMap,
+        sampleClaims: sourceSnapshot.sampleClaims,
+        duplicateClaimNumbers: sourceSnapshot.duplicateClaimNumbers.slice(0, 20),
+      }),
+    });
+
+    if (sourceSnapshot.rawRows === 0) {
+      throw new Error('Source spreadsheet is empty; target sheet was not updated to avoid false missing-claim markings.');
+    }
+
+    updateProgress_(55, 'Inspecting source/target bindings');
+    const inspectStart = Date.now();
+    const targetSnapshot = inspectTargetSnapshot_();
+    logStage_(ctx, {
+      stage: 'PRECHECK',
+      segment: 'inspect_bindings',
+      durationMs: Date.now() - inspectStart,
+      rawRows: sourceSnapshot.rawRows,
+      status: 'OK',
+      severity: targetSnapshot.blankGapCount > 0 ? 'WARN' : 'INFO',
+      notes: targetSnapshot.blankGapCount > 0
+        ? 'Bindings verified. Target sheet contains blank gaps that were preserved without reordering rows.'
+        : 'Bindings verified for source and target sheets.',
+      metrics: safeJson_({
+        sourceSheetName: sourceSnapshot.sheetName,
+        sourceHeaderRow: sourceSnapshot.headerRow,
+        sourceHeaders: sourceSnapshot.headers,
+        resolvedSourceColumns: sourceSnapshot.resolvedColumnMap,
+        sourceSampleClaims: sourceSnapshot.sampleClaims,
+        targetSheetName: targetSnapshot.sheetName,
+        targetHeaderRow: targetSnapshot.headerRow,
+        targetHeaders: targetSnapshot.headers,
+        resolvedTargetColumns: targetSnapshot.columnMap,
+        targetClaimRows: targetSnapshot.claimRowCount,
+        blankGapCount: targetSnapshot.blankGapCount,
+        blankGapSamples: targetSnapshot.blankGapSamples,
+        duplicateClaimCount: targetSnapshot.duplicateClaimCount,
+        duplicateClaimSamples: targetSnapshot.duplicateClaimSamples,
+        targetSampleClaims: targetSnapshot.sampleClaims,
+      }),
+    });
+
+    if (targetSnapshot.duplicateClaimCount > 0) {
+      throwDuplicateTargetError_(targetSnapshot);
+    }
+
+    updateProgress_(65, 'Upserting into target sheet');
+    const syncStart = Date.now();
+    const syncResult = syncTargetSheet_(sourceSnapshot, targetSnapshot);
+    ctx.opsUpdated = syncResult.updatedCount;
+    ctx.subInserted = syncResult.insertedCount;
+    logStage_(ctx, {
+      stage: 'TARGET',
+      segment: 'upsert_salvage',
+      durationMs: Date.now() - syncStart,
+      rawRows: sourceSnapshot.rawRows,
+      opsUpdated: syncResult.updatedCount,
+      subInserted: syncResult.insertedCount,
+      status: 'OK',
+      severity: (syncResult.missingExistingCount > 0 || syncResult.blankGapCount > 0) ? 'WARN' : 'INFO',
+      notes: 'Target sheet synchronized.',
+      metrics: safeJson_({
+        missingExistingCount: syncResult.missingExistingCount,
+        restoredCount: syncResult.restoredCount,
+        targetHeaderRow: syncResult.targetHeaderRow,
+        targetSheetName: syncResult.targetSheetName,
+        existingClaimRowsBeforeRun: syncResult.existingClaimRowsBeforeRun,
+        blankGapCount: syncResult.blankGapCount,
+        blankGapSamples: syncResult.blankGapSamples,
+        duplicateTargetClaimCount: syncResult.duplicateTargetClaimCount,
+        duplicateTargetClaimSamples: syncResult.duplicateTargetClaimSamples,
+        finalRowCount: syncResult.finalRowCount,
+      }),
+    });
+
+    updateProgress_(78, 'Verifying target write');
+    const verifyStart = Date.now();
+    const verifyResult = verifyPostSync_(sourceSnapshot, targetSnapshot);
+    logStage_(ctx, {
+      stage: 'POSTCHECK',
+      segment: 'verify_write',
+      durationMs: Date.now() - verifyStart,
+      rawRows: sourceSnapshot.rawRows,
+      opsUpdated: syncResult.updatedCount,
+      subInserted: syncResult.insertedCount,
+      status: 'OK',
+      severity: verifyResult.blankGapCount > 0 ? 'WARN' : 'INFO',
+      notes: 'Post-sync verification passed.',
+      metrics: safeJson_(verifyResult),
+    });
+
+    updateProgress_(88, 'Cleaning temporary file');
+    const cleanupStart = Date.now();
+    trashTempFile_(tempFileId);
+    tempFileId = null;
+    logStage_(ctx, {
+      stage: 'CLEANUP',
+      segment: 'trash_temp_file',
+      durationMs: Date.now() - cleanupStart,
+      status: 'OK',
+      severity: 'INFO',
+      notes: 'Temporary spreadsheet moved to trash.',
+    });
+
+    updateProgress_(95, 'Trashing processed email');
+    const emailCleanupStart = Date.now();
+    processedThread.moveToTrash();
+    logStage_(ctx, {
+      stage: 'CLEANUP',
+      segment: 'trash_email_thread',
+      durationMs: Date.now() - emailCleanupStart,
+      status: 'OK',
+      severity: 'INFO',
+      notes: 'Processed email thread moved to trash.',
+    });
+
+    writeTargetRunTimestamp_();
+    updateProgress_(100, 'Completed');
+    logStage_(ctx, {
+      stage: 'DONE',
+      segment: 'finish',
+      durationMs: Date.now() - ctx.runStartedMs,
+      rawRows: sourceSnapshot.rawRows,
+      opsUpdated: syncResult.updatedCount,
+      subInserted: syncResult.insertedCount,
+      status: 'SUCCESS',
+      severity: 'INFO',
+      notes: 'Salvage job finished successfully.',
+      metrics: safeJson_({
+        runId: ctx.runId,
+        totalDurationMs: Date.now() - ctx.runStartedMs,
+      }),
+    });
+  } catch (error) {
+    updateProgress_(100, 'Failed');
+    logStage_(ctx, {
+      stage: 'ERROR',
+      segment: 'exception',
+      durationMs: Date.now() - ctx.runStartedMs,
+      rawRows: ctx.rawRows,
+      opsUpdated: ctx.opsUpdated,
+      subInserted: ctx.subInserted,
+      status: 'FAILED',
+      severity: 'ERROR',
+      error: stringifyError_(error),
+      notes: tempFileId
+        ? 'Temp file intentionally kept for debugging because the run failed.'
+        : 'Run failed before or after temp-file cleanup.',
+      metrics: safeJson_({
+        runId: ctx.runId,
+        tempFileId: tempFileId,
+      }),
+    });
+    try {
+      writeTargetRunFailureNotice_(error);
+    } catch (timestampError) {
+      Logger.log('Failed to write Salvage failure notice after error: ' + stringifyError_(timestampError));
+    }
+    throw error;
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+/**
+ * Manual shortcut for testing from Apps Script editor.
+ */
+function manualRunQueuedSalvage() {
+  runQueuedSalvage();
+}
+
+function diagnoseQueuedSalvage() {
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(30000)) {
+    throw new Error('Another salvage job is currently running. Please retry later.');
+  }
+
+  const ctx = createRunContext_();
+  let tempFileId = null;
+  try {
+    ensureLogSheetLayout_();
+    resetLogDetails_();
+    updateProgress_(0, 'Diagnosing');
+
+    logStage_(ctx, {
+      stage: 'DIAG',
+      segment: 'start',
+      status: 'RUNNING',
+      severity: 'INFO',
+      notes: 'Diagnostic run started. No target write, no email trash.',
+    });
+
+    const env = validateEnvironment_();
+    logStage_(ctx, {
+      stage: 'DIAG',
+      segment: 'validate_environment',
+      status: 'OK',
+      severity: 'INFO',
+      metrics: safeJson_(env),
+      notes: 'Environment validated.',
+    });
+
+    const mailBundle = findLatestEligibleEmail_();
+    if (!mailBundle) {
+      updateProgress_(100, 'No eligible email found');
+      logStage_(ctx, {
+        stage: 'DIAG',
+        segment: 'find_latest',
+        status: 'NO_DATA',
+        severity: 'WARN',
+        notes: 'No eligible email found inside the QUEUED_SALVAGE label.',
+      });
+      return;
+    }
+
+    ctx.emailFrom = mailBundle.message.getFrom();
+    ctx.emailSubject = mailBundle.message.getSubject();
+    ctx.threadId = mailBundle.thread.getId();
+    ctx.attachmentName = mailBundle.attachment.getName();
+    ctx.attachmentSize = mailBundle.attachment.getSize();
+    ctx.attachmentType = mailBundle.attachment.getContentType();
+
+    logStage_(ctx, {
+      stage: 'DIAG',
+      segment: 'find_latest',
+      status: 'OK',
+      severity: 'INFO',
+      notes: 'Eligible email and attachment selected.',
+      metrics: safeJson_({
+        threadDate: mailBundle.message.getDate(),
+        threadCountScanned: mailBundle.meta.threadCountScanned,
+        matchedCount: mailBundle.meta.matchedCount,
+        selectedAttachmentName: ctx.attachmentName,
+      }),
+    });
+
+    tempFileId = convertAttachmentToTempSpreadsheet_(mailBundle.attachment);
+    logStage_(ctx, {
+      stage: 'DIAG',
+      segment: 'convert_attachment',
+      status: 'OK',
+      severity: 'INFO',
+      notes: 'Attachment converted to temporary spreadsheet.',
+      metrics: safeJson_({ tempFileId: tempFileId }),
+    });
+
+    const sourceSnapshot = readSourceSnapshot_(tempFileId);
+    const targetSnapshot = inspectTargetSnapshot_();
+
+    logStage_(ctx, {
+      stage: 'DIAG',
+      segment: 'inspect_bindings',
+      rawRows: sourceSnapshot.rawRows,
+      status: 'OK',
+      severity: targetSnapshot.blankGapCount > 0 ? 'WARN' : 'INFO',
+      notes: 'Diagnostic binding snapshot generated.',
+      metrics: safeJson_({
+        sourceSpreadsheetId: tempFileId,
+        sourceSheetName: sourceSnapshot.sheetName,
+        sourceHeaderRow: sourceSnapshot.headerRow,
+        sourceHeaders: sourceSnapshot.headers,
+        resolvedSourceColumns: sourceSnapshot.resolvedColumnMap,
+        sourceSampleClaims: sourceSnapshot.sampleClaims,
+        duplicateClaimNumbers: sourceSnapshot.duplicateClaimNumbers.slice(0, 20),
+        targetSpreadsheetId: targetSnapshot.spreadsheetId,
+        targetSpreadsheetName: targetSnapshot.spreadsheetName,
+        targetSheetName: targetSnapshot.sheetName,
+        targetHeaderRow: targetSnapshot.headerRow,
+        targetHeaders: targetSnapshot.headers,
+        resolvedTargetColumns: targetSnapshot.columnMap,
+        targetClaimRows: targetSnapshot.claimRowCount,
+        blankGapCount: targetSnapshot.blankGapCount,
+        blankGapSamples: targetSnapshot.blankGapSamples,
+        duplicateClaimCount: targetSnapshot.duplicateClaimCount,
+        duplicateClaimSamples: targetSnapshot.duplicateClaimSamples,
+        targetSampleClaims: targetSnapshot.sampleClaims,
+      }),
+    });
+
+    updateProgress_(100, 'Diagnostic completed');
+    if (targetSnapshot.duplicateClaimCount > 0) {
+      throwDuplicateTargetError_(targetSnapshot);
+    }
+
+    updateProgress_(100, 'Diagnostic completed');
+    logStage_(ctx, {
+      stage: 'DIAG',
+      segment: 'finish',
+      rawRows: sourceSnapshot.rawRows,
+      status: 'SUCCESS',
+      severity: 'INFO',
+      notes: 'Diagnostic run completed. No target write, no email trash.',
+    });
+  } catch (error) {
+    updateProgress_(100, 'Diagnostic failed');
+    logStage_(ctx, {
+      stage: 'DIAG',
+      segment: 'exception',
+      status: 'FAILED',
+      severity: 'ERROR',
+      error: stringifyError_(error),
+      notes: tempFileId
+        ? 'Diagnostic failed. Temp file intentionally kept for debugging.'
+        : 'Diagnostic failed before temp file creation or after cleanup.',
+      metrics: safeJson_({ tempFileId: tempFileId, runId: ctx.runId }),
+    });
+    throw error;
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+
+function previewQueuedSalvageDiff() {
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(30000)) {
+    throw new Error('Another salvage job is currently running. Please retry later.');
+  }
+
+  const ctx = createRunContext_();
+  let tempFileId = null;
+  try {
+    ensureLogSheetLayout_();
+    resetLogDetails_();
+    updateProgress_(0, 'Previewing diff');
+
+    logStage_(ctx, {
+      stage: 'PREVIEW',
+      segment: 'start',
+      status: 'RUNNING',
+      severity: 'INFO',
+      notes: 'Dry-run diff preview started. No target write, no email trash.',
+    });
+
+    const env = validateEnvironment_();
+    logStage_(ctx, {
+      stage: 'PREVIEW',
+      segment: 'validate_environment',
+      status: 'OK',
+      severity: 'INFO',
+      metrics: safeJson_(env),
+      notes: 'Environment validated.',
+    });
+
+    const mailBundle = findLatestEligibleEmail_();
+    if (!mailBundle) {
+      updateProgress_(100, 'No eligible email found');
+      logStage_(ctx, {
+        stage: 'PREVIEW',
+        segment: 'find_latest',
+        status: 'NO_DATA',
+        severity: 'WARN',
+        notes: 'No eligible email found inside the QUEUED_SALVAGE label.',
+      });
+      return {
+        status: 'NO_DATA',
+        message: 'No eligible email found inside the QUEUED_SALVAGE label.',
+      };
+    }
+
+    ctx.emailFrom = mailBundle.message.getFrom();
+    ctx.emailSubject = mailBundle.message.getSubject();
+    ctx.threadId = mailBundle.thread.getId();
+    ctx.attachmentName = mailBundle.attachment.getName();
+    ctx.attachmentSize = mailBundle.attachment.getSize();
+    ctx.attachmentType = mailBundle.attachment.getContentType();
+
+    tempFileId = convertAttachmentToTempSpreadsheet_(mailBundle.attachment);
+    const sourceSnapshot = readSourceSnapshot_(tempFileId);
+    const targetSnapshot = inspectTargetSnapshot_();
+
+    logStage_(ctx, {
+      stage: 'PREVIEW',
+      segment: 'inspect_bindings',
+      rawRows: sourceSnapshot.rawRows,
+      status: 'OK',
+      severity: targetSnapshot.blankGapCount > 0 ? 'WARN' : 'INFO',
+      notes: 'Preview binding snapshot generated.',
+      metrics: safeJson_({
+        sourceSheetName: sourceSnapshot.sheetName,
+        sourceHeaderRow: sourceSnapshot.headerRow,
+        targetSheetName: targetSnapshot.sheetName,
+        targetHeaderRow: targetSnapshot.headerRow,
+        blankGapCount: targetSnapshot.blankGapCount,
+        blankGapSamples: targetSnapshot.blankGapSamples,
+        duplicateClaimCount: targetSnapshot.duplicateClaimCount,
+        duplicateClaimSamples: targetSnapshot.duplicateClaimSamples,
+      }),
+    });
+
+    if (targetSnapshot.duplicateClaimCount > 0) {
+      throw new Error('Duplicate Claim Number ditemukan di target sheet. Preview dihentikan.');
+    }
+
+    const diffPreview = buildSyncDiffPreview_(sourceSnapshot, targetSnapshot);
+
+    updateProgress_(100, 'Preview completed');
+    logStage_(ctx, {
+      stage: 'PREVIEW',
+      segment: 'diff_summary',
+      rawRows: sourceSnapshot.rawRows,
+      status: 'SUCCESS',
+      severity: (diffPreview.missingExistingCount > 0 || diffPreview.restoreCount > 0 || diffPreview.insertCount > 0) ? 'WARN' : 'INFO',
+      notes: 'Dry-run diff preview completed. No target write, no email trash.',
+      metrics: safeJson_(diffPreview),
+    });
+
+    return diffPreview;
+  } catch (error) {
+    updateProgress_(100, 'Preview failed');
+    logStage_(ctx, {
+      stage: 'PREVIEW',
+      segment: 'exception',
+      status: 'FAILED',
+      severity: 'ERROR',
+      error: stringifyError_(error),
+      notes: tempFileId
+        ? 'Preview failed. Temp file intentionally kept for debugging.'
+        : 'Preview failed before temp file creation or after cleanup.',
+      metrics: safeJson_({ tempFileId: tempFileId, runId: ctx.runId }),
+    });
+    throw error;
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function createRunContext_() {
+  const now = new Date();
+  return {
+    flow: SALVAGE_CONFIG.flowName,
+    runStartedMs: Date.now(),
+    runId: Utilities.formatDate(now, SALVAGE_CONFIG.scriptTimeZone, "yyyyMMdd'T'HHmmss") + '_' + Utilities.getUuid().slice(0, 8),
+    emailFrom: '',
+    emailSubject: '',
+    threadId: '',
+    attachmentName: '',
+    attachmentSize: '',
+    attachmentType: '',
+    rawRows: '',
+    opsUpdated: '',
+    subInserted: '',
+  };
+}
+
+function validateEnvironment_() {
+  const gmailRouting = ensureQueuedSalvageLabelAndFilter_();
+  const label = gmailRouting.label;
+
+  const targetSs = SpreadsheetApp.openById(SALVAGE_CONFIG.target.spreadsheetId);
+  const targetSheet = targetSs.getSheetByName(SALVAGE_CONFIG.target.sheetName);
+  if (!targetSheet) {
+    throw new Error('Target sheet not found: ' + SALVAGE_CONFIG.target.sheetName);
+  }
+
+  const logSs = SpreadsheetApp.openById(SALVAGE_CONFIG.log.spreadsheetId);
+  const logSheet = logSs.getSheetByName(SALVAGE_CONFIG.log.sheetName);
+  if (!logSheet) {
+    throw new Error('Log sheet not found: ' + SALVAGE_CONFIG.log.sheetName);
+  }
+
+  return {
+    labelName: label.getName(),
+    labelId: gmailRouting.labelId || '',
+    managedFilterAction: gmailRouting.filterAction || '',
+    managedFilterId: gmailRouting.filterId || '',
+    managedFilterError: gmailRouting.filterError || '',
+    relabeledThreadCount: gmailRouting.relabeledThreadCount || 0,
+    targetSpreadsheetName: targetSs.getName(),
+    logSpreadsheetName: logSs.getName(),
+    timeZone: SALVAGE_CONFIG.scriptTimeZone,
+  };
+}
+
+function ensureQueuedSalvageLabelAndFilter_() {
+  const label = ensureGmailLabel_(SALVAGE_CONFIG.gmail.labelName);
+  const labelId = label.getId();
+  const desiredFilter = buildManagedGmailFilterDefinition_(labelId);
+  let filterAction = 'disabled';
+  let filterId = '';
+  let filterError = '';
+
+  if (SALVAGE_CONFIG.gmail.managedFilterEnabled) {
+    try {
+      const managedFilters = listManagedQueuedSalvageFilters_(labelId);
+      const exactMatch = managedFilters.find(function(filter) {
+        return areFiltersEquivalent_(filter, desiredFilter);
+      });
+
+      if (exactMatch) {
+        filterId = exactMatch.id || '';
+        filterAction = 'kept_existing';
+        managedFilters.forEach(function(filter) {
+          if (!filter.id || filter.id === filterId) return;
+          gmailFilterRemove_(filter.id);
+        });
+      } else {
+        managedFilters.forEach(function(filter) {
+          if (!filter.id) return;
+          gmailFilterRemove_(filter.id);
+        });
+        const created = gmailFilterCreate_(desiredFilter);
+        filterId = created && created.id ? created.id : '';
+        filterAction = 'created_or_replaced';
+      }
+    } catch (err) {
+      filterAction = 'skipped_rest_error';
+      filterError = String(err && err.message ? err.message : err);
+    }
+  }
+
+  const relabeledThreadCount = SALVAGE_CONFIG.gmail.backfillLabelOnEveryRun
+    ? backfillQueuedSalvageLabel_(label)
+    : 0;
+
+  return {
+    label: label,
+    labelId: labelId,
+    filterId: filterId,
+    filterAction: filterAction,
+    filterError: filterError,
+    relabeledThreadCount: relabeledThreadCount,
+  };
+}
+
+function ensureGmailLabel_(labelName) {
+  let label = GmailApp.getUserLabelByName(labelName);
+  if (!label) {
+    label = GmailApp.createLabel(labelName);
+  }
+  return label;
+}
+
+function buildEligibleGmailSearchQuery_() {
+  return [
+    'from:' + quoteGmailSearchValue_(SALVAGE_CONFIG.gmail.from),
+    'subject:' + quoteGmailSearchValue_(SALVAGE_CONFIG.gmail.subject),
+    'has:attachment',
+    'filename:' + SALVAGE_CONFIG.gmail.attachmentExtension.replace(/^\./, ''),
+    quoteGmailSearchValue_(SALVAGE_CONFIG.gmail.attachmentKeyword),
+    '-in:trash',
+  ].join(' ');
+}
+
+function buildManagedGmailFilterDefinition_(labelId) {
+  return {
+    criteria: {
+      from: SALVAGE_CONFIG.gmail.from,
+      subject: SALVAGE_CONFIG.gmail.subject,
+      hasAttachment: true,
+      query: 'filename:' + SALVAGE_CONFIG.gmail.attachmentExtension.replace(/^\./, '') + ' ' + quoteGmailSearchValue_(SALVAGE_CONFIG.gmail.attachmentKeyword),
+    },
+    action: {
+      addLabelIds: [labelId],
+    },
+  };
+}
+
+function listManagedQueuedSalvageFilters_(labelId) {
+  const listResponse = gmailFilterList_();
+  const filters = listResponse && listResponse.filter ? listResponse.filter : [];
+  return filters.filter(function(filter) {
+    const criteria = filter.criteria || {};
+    const action = filter.action || {};
+    const addLabelIds = action.addLabelIds || [];
+    return addLabelIds.indexOf(labelId) !== -1 &&
+      String(criteria.from || '').toLowerCase() === SALVAGE_CONFIG.gmail.from.toLowerCase() &&
+      String(criteria.subject || '') === SALVAGE_CONFIG.gmail.subject;
+  });
+}
+
+function areFiltersEquivalent_(left, right) {
+  const leftCriteria = left && left.criteria ? left.criteria : {};
+  const rightCriteria = right && right.criteria ? right.criteria : {};
+  const leftAction = left && left.action ? left.action : {};
+  const rightAction = right && right.action ? right.action : {};
+  const leftLabelIds = (leftAction.addLabelIds || []).slice().sort().join(',');
+  const rightLabelIds = (rightAction.addLabelIds || []).slice().sort().join(',');
+  return String(leftCriteria.from || '').toLowerCase() === String(rightCriteria.from || '').toLowerCase() &&
+    String(leftCriteria.subject || '') === String(rightCriteria.subject || '') &&
+    !!leftCriteria.hasAttachment === !!rightCriteria.hasAttachment &&
+    normalizeWhitespace_(leftCriteria.query || '') === normalizeWhitespace_(rightCriteria.query || '') &&
+    leftLabelIds === rightLabelIds;
+}
+
+function backfillQueuedSalvageLabel_(label) {
+  const query = buildEligibleGmailSearchQuery_();
+  const threads = GmailApp.search(query, 0, SALVAGE_CONFIG.gmail.backfillSearchLimitThreads);
+  if (!threads.length) return 0;
+  label.addToThreads(threads);
+  return threads.length;
+}
+
+function quoteGmailSearchValue_(value) {
+  return '"' + String(value || '').replace(/"/g, '\"') + '"';
+}
+
+function normalizeWhitespace_(value) {
+  return String(value || '').replace(/\s+/g, ' ').trim();
+}
+
+function truncateForLog_(value, maxLen) {
+  const str = String(value || '');
+  const limit = Math.max(Number(maxLen) || 0, 0);
+  if (!limit || str.length <= limit) return str;
+  return str.slice(0, Math.max(limit - 3, 0)) + '...';
+}
+
+function gmailFilterList_() {
+  return gmailSettingsRequest_('get', '/gmail/v1/users/me/settings/filters');
+}
+
+function gmailFilterCreate_(payload) {
+  return gmailSettingsRequest_('post', '/gmail/v1/users/me/settings/filters', payload);
+}
+
+function gmailFilterRemove_(filterId) {
+  gmailSettingsRequest_('delete', '/gmail/v1/users/me/settings/filters/' + encodeURIComponent(filterId));
+}
+
+function gmailSettingsRequest_(method, path, payload) {
+  const response = UrlFetchApp.fetch('https://gmail.googleapis.com' + path, {
+    method: String(method || 'get').toLowerCase(),
+    muteHttpExceptions: true,
+    headers: {
+      Authorization: 'Bearer ' + ScriptApp.getOAuthToken(),
+    },
+    contentType: 'application/json',
+    payload: payload ? JSON.stringify(payload) : undefined,
+  });
+
+  const status = response.getResponseCode();
+  const bodyText = response.getContentText() || '';
+
+  if (status >= 200 && status < 300) {
+    return bodyText ? JSON.parse(bodyText) : {};
+  }
+
+  throw new Error('Gmail settings request failed (' + status + '): ' + truncateForLog_(bodyText, 250));
+}
+
+function findLatestEligibleEmail_() {
+  const label = GmailApp.getUserLabelByName(SALVAGE_CONFIG.gmail.labelName);
+  if (!label) {
+    throw new Error('Gmail label not found: ' + SALVAGE_CONFIG.gmail.labelName);
+  }
+
+  const query = buildEligibleGmailSearchQuery_();
+  let threads = label.getThreads(0, SALVAGE_CONFIG.gmail.scanLimitThreads);
+  let sourceMode = 'label';
+
+  if (!threads.length) {
+    threads = GmailApp.search(query, 0, SALVAGE_CONFIG.gmail.scanLimitThreads);
+    if (threads.length) {
+      sourceMode = 'search_fallback';
+      label.addToThreads(threads);
+    }
+  }
+
+  let best = null;
+  let matchedCount = 0;
+
+  threads.forEach(function(thread) {
+    const messages = thread.getMessages();
+    messages.forEach(function(message) {
+      const fromRaw = String(message.getFrom() || '');
+      const fromEmail = extractEmailAddress_(fromRaw);
+      const subject = String(message.getSubject() || '').trim();
+
+      if (SALVAGE_CONFIG.gmail.strictFromMatch) {
+        if (fromEmail !== SALVAGE_CONFIG.gmail.from.toLowerCase()) return;
+      } else {
+        if (fromRaw.toLowerCase().indexOf(SALVAGE_CONFIG.gmail.from.toLowerCase()) === -1) return;
+      }
+      if (subject !== SALVAGE_CONFIG.gmail.subject) return;
+
+      const attachments = message.getAttachments({ includeInlineImages: false, includeAttachments: true });
+      const matchedAttachments = attachments.filter(function(att) {
+        const name = String(att.getName() || '');
+        return (
+          name.toLowerCase().indexOf(SALVAGE_CONFIG.gmail.attachmentKeyword.toLowerCase()) !== -1 &&
+          name.toLowerCase().endsWith(SALVAGE_CONFIG.gmail.attachmentExtension)
+        );
+      });
+
+      if (!matchedAttachments.length) return;
+      matchedCount += matchedAttachments.length;
+
+      matchedAttachments.forEach(function(matchedAttachment) {
+        const candidateDate = message.getDate().getTime();
+        const candidateName = String(matchedAttachment.getName() || '');
+        if (!best || candidateDate > best.message.getDate().getTime() || (
+          candidateDate === best.message.getDate().getTime() && candidateName > String(best.attachment.getName() || '')
+        )) {
+          best = {
+            thread: thread,
+            message: message,
+            attachment: matchedAttachment,
+            meta: {
+              threadCountScanned: threads.length,
+              matchedCount: matchedCount,
+              sourceMode: sourceMode,
+              searchQuery: query,
+            },
+          };
+        }
+      });
+    });
+  });
+
+  if (best) {
+    best.meta.matchedCount = matchedCount;
+  }
+
+  return best;
+}
+
+function convertAttachmentToTempSpreadsheet_(attachment) {
+  const blob = attachment.copyBlob().setName(attachment.getName());
+  const tempName = SALVAGE_CONFIG.temp.filePrefix + attachment.getName().replace(/\.[^.]+$/, '');
+
+  const fileMetadata = {
+    name: tempName,
+    mimeType: 'application/vnd.google-apps.spreadsheet',
+  };
+
+  const created = Drive.Files.create(fileMetadata, blob, { fields: 'id,name,mimeType' });
+
+  if (!created || !created.id) {
+    throw new Error('Failed to convert attachment into temporary Google Spreadsheet.');
+  }
+
+  return created.id;
+}
+
+function readSourceSnapshot_(tempSpreadsheetId) {
+  const ss = SpreadsheetApp.openById(tempSpreadsheetId);
+  const sheets = ss.getSheets();
+  if (!sheets.length) {
+    throw new Error('Temporary spreadsheet has no sheets.');
+  }
+
+  const requiredGroups = Object.keys(SALVAGE_TARGET_TO_SOURCE_ALIASES).map(function(key) {
+    return SALVAGE_TARGET_TO_SOURCE_ALIASES[key];
+  });
+
+  let bestCandidate = null;
+  sheets.forEach(function(sheet) {
+    const detection = detectHeaderRow_(sheet, requiredGroups, SALVAGE_CONFIG.target.headerSearchRows);
+    if (!detection) return;
+    const dataRows = Math.max(sheet.getLastRow() - detection.headerRow, 0);
+    if (!bestCandidate || detection.score > bestCandidate.score || (
+      detection.score === bestCandidate.score && dataRows > bestCandidate.dataRows
+    )) {
+      bestCandidate = {
+        sheet: sheet,
+        headerRow: detection.headerRow,
+        score: detection.score,
+        dataRows: dataRows,
+      };
+    }
+  });
+
+  if (!bestCandidate) {
+    throw new Error('Could not detect source header row in the temporary spreadsheet.');
+  }
+
+  const headerMap = buildHeaderMap_(bestCandidate.sheet, bestCandidate.headerRow);
+  const sourceColumnMap = resolveAliasMap_(headerMap, SALVAGE_TARGET_TO_SOURCE_ALIASES, 'source');
+
+  const lastRow = bestCandidate.sheet.getLastRow();
+  const lastCol = bestCandidate.sheet.getLastColumn();
+  const headers = bestCandidate.sheet.getRange(bestCandidate.headerRow, 1, 1, lastCol).getDisplayValues()[0];
+
+  if (lastRow <= bestCandidate.headerRow) {
+    return {
+      availableSheets: sheets.map(function(s) { return s.getName(); }),
+      sheetName: bestCandidate.sheet.getName(),
+      headerRow: bestCandidate.headerRow,
+      headers: headers,
+      resolvedColumnMap: sourceColumnMap,
+      rawRows: 0,
+      sampleClaims: [],
+      sourceByClaim: {},
+      duplicateClaimNumbers: [],
+    };
+  }
+
+  const values = bestCandidate.sheet
+    .getRange(bestCandidate.headerRow + 1, 1, lastRow - bestCandidate.headerRow, lastCol)
+    .getValues();
+
+  const sourceByClaim = {};
+  const duplicates = [];
+  let rawRows = 0;
+
+  values.forEach(function(row) {
+    const claimNumber = normalizeKey_(row[sourceColumnMap['Claim Number'] - 1]);
+    if (!claimNumber) return;
+
+    rawRows += 1;
+
+    if (sourceByClaim[claimNumber]) {
+      duplicates.push(claimNumber);
+    }
+
+    const record = {};
+    Object.keys(SALVAGE_TARGET_TO_SOURCE_ALIASES).forEach(function(targetHeader) {
+      const colIndex = sourceColumnMap[targetHeader];
+      record[targetHeader] = colIndex ? row[colIndex - 1] : '';
+    });
+    sourceByClaim[claimNumber] = record;
+  });
+
+  return {
+    availableSheets: sheets.map(function(s) { return s.getName(); }),
+    sheetName: bestCandidate.sheet.getName(),
+    headerRow: bestCandidate.headerRow,
+    headers: headers,
+    resolvedColumnMap: sourceColumnMap,
+    rawRows: rawRows,
+    sampleClaims: Object.keys(sourceByClaim).slice(0, SALVAGE_CONFIG.target.sampleSize),
+    sourceByClaim: sourceByClaim,
+    duplicateClaimNumbers: Array.from(new Set(duplicates)),
+  };
+}
+
+
+function buildSyncDiffPreview_(sourceSnapshot, precheckedTargetSnapshot) {
+  const ss = SpreadsheetApp.openById(SALVAGE_CONFIG.target.spreadsheetId);
+  const sheet = ss.getSheetByName(SALVAGE_CONFIG.target.sheetName);
+  if (!sheet) {
+    throw new Error('Target sheet not found: ' + SALVAGE_CONFIG.target.sheetName);
+  }
+
+  const targetSnapshot = precheckedTargetSnapshot || inspectTargetSnapshot_();
+  if (targetSnapshot.duplicateClaimCount > 0) {
+    throw new Error('Duplicate Claim Number ditemukan di target sheet. Preview dihentikan.');
+  }
+
+  const headerRow = targetSnapshot.headerRow;
+  const targetColumnMap = targetSnapshot.columnMap;
+  const dataStartRow = headerRow + 1;
+  const existingRangeRowCount = Math.max(targetSnapshot.lastRow - headerRow, 0);
+  const claimCol = targetColumnMap['Claim Number'];
+
+  let values = [];
+  let claimNotes = [];
+  if (existingRangeRowCount > 0) {
+    values = sheet.getRange(dataStartRow, 1, existingRangeRowCount, targetSnapshot.lastCol).getValues();
+    claimNotes = sheet.getRange(dataStartRow, claimCol, existingRangeRowCount, 1).getNotes();
+  }
+
+  const claimRowIndex = {};
+  values.forEach(function(row, idx) {
+    const claim = normalizeKey_(row[claimCol - 1]);
+    if (!claim) return;
+    if (claimRowIndex[claim] !== undefined) return;
+    claimRowIndex[claim] = idx;
+  });
+
+  const sourceClaims = Object.keys(sourceSnapshot.sourceByClaim || {});
+  const updateSamples = [];
+  const insertSamples = [];
+  const restoreSamples = [];
+  const missingSamples = [];
+  let updateCount = 0;
+  let insertCount = 0;
+  let restoreCount = 0;
+
+  sourceClaims.forEach(function(claim) {
+    const rowIndex = claimRowIndex[claim];
+    if (rowIndex === undefined) {
+      insertCount += 1;
+      if (insertSamples.length < SALVAGE_CONFIG.target.sampleSize) {
+        insertSamples.push(claim);
+      }
+      return;
+    }
+
+    updateCount += 1;
+    if (updateSamples.length < SALVAGE_CONFIG.target.sampleSize) {
+      updateSamples.push(claim);
+    }
+
+    const existingNote = String(claimNotes[rowIndex] && claimNotes[rowIndex][0] || '');
+    if (existingNote === SALVAGE_CONFIG.target.claimMissingNote) {
+      restoreCount += 1;
+      if (restoreSamples.length < SALVAGE_CONFIG.target.sampleSize) {
+        restoreSamples.push(claim);
+      }
+    }
+  });
+
+  let missingExistingCount = 0;
+  Object.keys(claimRowIndex).forEach(function(claim) {
+    if (sourceSnapshot.sourceByClaim[claim]) return;
+    missingExistingCount += 1;
+    if (missingSamples.length < SALVAGE_CONFIG.target.sampleSize) {
+      missingSamples.push(claim);
+    }
+  });
+
+  return {
+    status: 'PREVIEW_ONLY',
+    targetSheetName: targetSnapshot.sheetName,
+    targetHeaderRow: headerRow,
+    sourceSheetName: sourceSnapshot.sheetName,
+    sourceHeaderRow: sourceSnapshot.headerRow,
+    sourceUniqueClaims: sourceClaims.length,
+    targetExistingClaimRows: targetSnapshot.claimRowCount,
+    updateCount: updateCount,
+    insertCount: insertCount,
+    missingExistingCount: missingExistingCount,
+    restoreCount: restoreCount,
+    blankGapCount: targetSnapshot.blankGapCount,
+    blankGapSamples: targetSnapshot.blankGapSamples,
+    updateSamples: updateSamples,
+    insertSamples: insertSamples,
+    missingSamples: missingSamples,
+    restoreSamples: restoreSamples,
+  };
+}
+
+function syncTargetSheet_(sourceSnapshot, precheckedTargetSnapshot) {
+  const ss = SpreadsheetApp.openById(SALVAGE_CONFIG.target.spreadsheetId);
+  const sheet = ss.getSheetByName(SALVAGE_CONFIG.target.sheetName);
+  if (!sheet) {
+    throw new Error('Target sheet not found: ' + SALVAGE_CONFIG.target.sheetName);
+  }
+
+  const targetSnapshot = precheckedTargetSnapshot || inspectTargetSnapshot_();
+  const headerRow = targetSnapshot.headerRow;
+  const targetColumnMap = targetSnapshot.columnMap;
+  const lastCol = targetSnapshot.lastCol;
+  const dataStartRow = headerRow + 1;
+  const existingRangeRowCount = Math.max(targetSnapshot.lastRow - headerRow, 0);
+  const claimCol = targetColumnMap['Claim Number'];
+
+  let values = [];
+  let claimBackgrounds = [];
+  let claimNotes = [];
+
+  if (existingRangeRowCount > 0) {
+    values = sheet.getRange(dataStartRow, 1, existingRangeRowCount, lastCol).getValues();
+    claimBackgrounds = sheet.getRange(dataStartRow, claimCol, existingRangeRowCount, 1).getBackgrounds();
+    claimNotes = sheet.getRange(dataStartRow, claimCol, existingRangeRowCount, 1).getNotes();
+  }
+
+  if (targetSnapshot.duplicateClaimCount > 0) {
+    throwDuplicateTargetError_(targetSnapshot);
+  }
+
+  const claimRowIndex = {};
+  values.forEach(function(row, idx) {
+    const claim = normalizeKey_(row[claimCol - 1]);
+    if (!claim) return;
+    if (claimRowIndex[claim] !== undefined) {
+      return;
+    }
+    claimRowIndex[claim] = idx;
+  });
+
+  const sourceClaims = Object.keys(sourceSnapshot.sourceByClaim);
+  let updatedCount = 0;
+  let insertedCount = 0;
+  let restoredCount = 0;
+
+  sourceClaims.forEach(function(claim) {
+    const record = sourceSnapshot.sourceByClaim[claim];
+    let rowIndex = claimRowIndex[claim];
+    const isInsert = rowIndex === undefined;
+
+    if (isInsert) {
+      const newRow = createEmptyRow_(lastCol);
+      values.push(newRow);
+      claimBackgrounds.push([SALVAGE_CONFIG.target.defaultCellColor]);
+      claimNotes.push(['']);
+      rowIndex = values.length - 1;
+      claimRowIndex[claim] = rowIndex;
+      insertedCount += 1;
+    } else {
+      updatedCount += 1;
+    }
+
+    Object.keys(SALVAGE_TARGET_TO_SOURCE_ALIASES).forEach(function(targetHeader) {
+      const targetCol = targetColumnMap[targetHeader];
+      values[rowIndex][targetCol - 1] = record[targetHeader];
+    });
+
+    const existingNote = String(claimNotes[rowIndex] && claimNotes[rowIndex][0] || '');
+    if (existingNote === SALVAGE_CONFIG.target.claimMissingNote) {
+      restoredCount += 1;
+    }
+    claimBackgrounds[rowIndex][0] = SALVAGE_CONFIG.target.defaultCellColor;
+    claimNotes[rowIndex][0] = '';
+  });
+
+  let missingExistingCount = 0;
+  Object.keys(claimRowIndex).forEach(function(claim) {
+    if (sourceSnapshot.sourceByClaim[claim]) return;
+    const rowIndex = claimRowIndex[claim];
+    missingExistingCount += 1;
+    claimBackgrounds[rowIndex][0] = SALVAGE_CONFIG.target.claimMissingColor;
+    claimNotes[rowIndex][0] = SALVAGE_CONFIG.target.claimMissingNote;
+  });
+
+  const finalRowCount = values.length;
+  if (finalRowCount > 0) {
+    ensureSheetHasRows_(sheet, headerRow + finalRowCount);
+
+    Object.keys(SALVAGE_TARGET_TO_SOURCE_ALIASES).forEach(function(targetHeader) {
+      const targetCol = targetColumnMap[targetHeader];
+      const columnValues = values.map(function(row) {
+        return [row[targetCol - 1]];
+      });
+      sheet.getRange(dataStartRow, targetCol, finalRowCount, 1).setValues(columnValues);
+    });
+
+    sheet.getRange(dataStartRow, claimCol, finalRowCount, 1).setBackgrounds(claimBackgrounds);
+    sheet.getRange(dataStartRow, claimCol, finalRowCount, 1).setNotes(claimNotes);
+  }
+
+  SpreadsheetApp.flush();
+
+  return {
+    updatedCount: updatedCount,
+    insertedCount: insertedCount,
+    missingExistingCount: missingExistingCount,
+    restoredCount: restoredCount,
+    targetHeaderRow: headerRow,
+    targetSheetName: targetSnapshot.sheetName,
+    existingClaimRowsBeforeRun: targetSnapshot.claimRowCount,
+    blankGapCount: targetSnapshot.blankGapCount,
+    blankGapSamples: targetSnapshot.blankGapSamples,
+    duplicateTargetClaimCount: targetSnapshot.duplicateClaimCount,
+    duplicateTargetClaimSamples: targetSnapshot.duplicateClaimSamples,
+    finalRowCount: finalRowCount,
+  };
+}
+
+
+function throwDuplicateTargetError_(targetSnapshot) {
+  const samples = (targetSnapshot && targetSnapshot.duplicateClaimSamples || []).slice(0, 3).join(' | ');
+  const message = 'Duplicate Claim Number ditemukan di target sheet. Sync dihentikan.' + (samples ? ' Contoh: ' + samples : '');
+  throw new Error(message);
+}
+
+function inspectTargetSnapshot_() {
+  const ss = SpreadsheetApp.openById(SALVAGE_CONFIG.target.spreadsheetId);
+  const sheet = ss.getSheetByName(SALVAGE_CONFIG.target.sheetName);
+  if (!sheet) {
+    throw new Error('Target sheet not found: ' + SALVAGE_CONFIG.target.sheetName);
+  }
+
+  const headerRow = resolveTargetHeaderRow_(sheet);
+  const targetHeaderMap = buildHeaderMap_(sheet, headerRow);
+  const targetColumnMap = resolveAliasMap_(targetHeaderMap, SALVAGE_TARGET_HEADER_ALIASES, 'target');
+  const lastCol = Math.max(sheet.getLastColumn(), Math.max.apply(null, Object.keys(targetColumnMap).map(function(k) {
+    return targetColumnMap[k];
+  })));
+  const headers = sheet.getRange(headerRow, 1, 1, lastCol).getDisplayValues()[0];
+  const claimCol = targetColumnMap['Claim Number'];
+  const claimScan = getClaimColumnScan_(sheet, headerRow, claimCol);
+
+  return {
+    spreadsheetId: ss.getId(),
+    spreadsheetName: ss.getName(),
+    sheetName: sheet.getName(),
+    headerRow: headerRow,
+    columnMap: targetColumnMap,
+    headers: headers,
+    lastRow: sheet.getLastRow(),
+    lastCol: lastCol,
+    claimRowCount: claimScan.claimRowCount,
+    blankGapCount: claimScan.blankGapCount,
+    blankGapSamples: claimScan.blankGapSamples,
+    duplicateClaimCount: claimScan.duplicateClaimCount,
+    duplicateClaimSamples: claimScan.duplicateClaimSamples,
+    lastClaimRow: claimScan.lastClaimRow,
+    sampleClaims: claimScan.sampleClaims,
+  };
+}
+
+function resolveTargetHeaderRow_(sheet) {
+  if (SALVAGE_CONFIG.target.fixedHeaderRow) {
+    return SALVAGE_CONFIG.target.fixedHeaderRow;
+  }
+
+  const requiredGroups = Object.keys(SALVAGE_TARGET_HEADER_ALIASES).map(function(key) {
+    return SALVAGE_TARGET_HEADER_ALIASES[key];
+  });
+  const headerDetection = detectHeaderRow_(sheet, requiredGroups, SALVAGE_CONFIG.target.headerSearchRows) || {
+    headerRow: SALVAGE_CONFIG.target.dataStartFallbackHeaderRow,
+  };
+  return headerDetection.headerRow;
+}
+
+function getClaimColumnScan_(sheet, headerRow, claimCol) {
+  const dataStartRow = headerRow + 1;
+  const lastRow = Math.max(sheet.getLastRow(), headerRow);
+  const rowCount = Math.max(lastRow - headerRow, 0);
+  if (rowCount === 0) {
+    return {
+      claimRowCount: 0,
+      blankGapCount: 0,
+      blankGapSamples: [],
+      duplicateClaimCount: 0,
+      duplicateClaimSamples: [],
+      lastClaimRow: headerRow,
+      sampleClaims: [],
+    };
+  }
+
+  const claimValues = sheet.getRange(dataStartRow, claimCol, rowCount, 1).getDisplayValues().map(function(r) {
+    return String(r[0] || '');
+  });
+
+  const sampleClaims = [];
+  const blankGapSamples = [];
+  const duplicateClaimSamples = [];
+  const seenRowsByClaim = {};
+  let claimRowCount = 0;
+  let blankGapCount = 0;
+  let duplicateClaimCount = 0;
+  let lastClaimOffset = -1;
+
+  claimValues.forEach(function(value, idx) {
+    const normalized = normalizeKey_(value);
+    if (!normalized) return;
+
+    claimRowCount += 1;
+    lastClaimOffset = idx;
+    if (sampleClaims.length < SALVAGE_CONFIG.target.sampleSize) {
+      sampleClaims.push(value);
+    }
+
+    if (Object.prototype.hasOwnProperty.call(seenRowsByClaim, normalized)) {
+      duplicateClaimCount += 1;
+      if (duplicateClaimSamples.length < SALVAGE_CONFIG.target.sampleSize) {
+        duplicateClaimSamples.push(value + ' @ row ' + (dataStartRow + idx) + ' (first seen at row ' + seenRowsByClaim[normalized] + ')');
+      }
+      return;
+    }
+
+    seenRowsByClaim[normalized] = dataStartRow + idx;
+  });
+
+  if (lastClaimOffset >= 0) {
+    for (var i = 0; i <= lastClaimOffset; i += 1) {
+      if (!normalizeKey_(claimValues[i])) {
+        blankGapCount += 1;
+        if (blankGapSamples.length < SALVAGE_CONFIG.target.sampleSize) {
+          blankGapSamples.push('row ' + (dataStartRow + i));
+        }
+      }
+    }
+  }
+
+  return {
+    claimRowCount: claimRowCount,
+    blankGapCount: blankGapCount,
+    blankGapSamples: blankGapSamples,
+    duplicateClaimCount: duplicateClaimCount,
+    duplicateClaimSamples: duplicateClaimSamples,
+    lastClaimRow: lastClaimOffset >= 0 ? dataStartRow + lastClaimOffset : headerRow,
+    sampleClaims: sampleClaims,
+  };
+}
+
+
+
+function verifyPostSync_(sourceSnapshot, targetSnapshot) {
+  const post = inspectTargetSnapshot_();
+  const sourceClaims = Object.keys(sourceSnapshot.sourceByClaim || {});
+  const ss = SpreadsheetApp.openById(SALVAGE_CONFIG.target.spreadsheetId);
+  const sheet = ss.getSheetByName(SALVAGE_CONFIG.target.sheetName);
+  const claimCol = post.columnMap['Claim Number'];
+  const totalRows = Math.max(post.lastRow - post.headerRow, 0);
+  const targetClaims = totalRows > 0
+    ? sheet.getRange(post.headerRow + 1, claimCol, totalRows, 1).getDisplayValues().map(function(r) {
+        return normalizeKey_(r[0]);
+      })
+    : [];
+
+  const targetClaimSet = {};
+  targetClaims.forEach(function(claim) {
+    if (claim) targetClaimSet[claim] = true;
+  });
+
+  const missingClaims = sourceClaims.filter(function(claim) {
+    return !targetClaimSet[claim];
+  });
+
+  if (post.duplicateClaimCount > 0) {
+    throw new Error('Post-sync verification failed: duplicate Claim Number ditemukan di target sheet.');
+  }
+
+  if (sourceClaims.length > 0 && post.claimRowCount === 0) {
+    throw new Error('Post-sync verification failed: target sheet still has 0 claim rows after sync.');
+  }
+
+  if (missingClaims.length > 0) {
+    throw new Error('Post-sync verification failed: source Claim Number(s) not found in target after sync: ' + missingClaims.slice(0, 20).join(', '));
+  }
+
+  return {
+    targetSheetName: post.sheetName,
+    targetHeaderRow: post.headerRow,
+    claimRowCount: post.claimRowCount,
+    blankGapCount: post.blankGapCount,
+    blankGapSamples: post.blankGapSamples,
+    duplicateClaimCount: post.duplicateClaimCount,
+    duplicateClaimSamples: post.duplicateClaimSamples,
+    sourceUniqueClaims: sourceClaims.length,
+    previousClaimRows: targetSnapshot ? targetSnapshot.claimRowCount : '',
+    verifiedAllSourceClaims: true,
+  };
+}
+
+function writeTargetRunTimestamp_() {
+  const ss = SpreadsheetApp.openById(SALVAGE_CONFIG.target.spreadsheetId);
+  const sheet = ss.getSheetByName(SALVAGE_CONFIG.target.sheetName);
+  if (!sheet) {
+    throw new Error('Target sheet not found: ' + SALVAGE_CONFIG.target.sheetName);
+  }
+
+  const timestampText = formatTargetRunTimestamp_(new Date());
+  sheet.getRange('B1').setValue(timestampText);
+}
+
+function writeTargetRunFailureNotice_(error) {
+  const ss = SpreadsheetApp.openById(SALVAGE_CONFIG.target.spreadsheetId);
+  const sheet = ss.getSheetByName(SALVAGE_CONFIG.target.sheetName);
+  if (!sheet) {
+    throw new Error('Target sheet not found: ' + SALVAGE_CONFIG.target.sheetName);
+  }
+
+  const failureText = formatTargetRunFailureNotice_(error);
+  sheet.getRange('B1').setValue(failureText);
+}
+
+function formatTargetRunFailureNotice_(error) {
+  const raw = stringifyError_(error) || 'Run gagal.';
+  const compact = String(raw)
+    .replace(/\s+/g, ' ')
+    .replace(/\.$/, '')
+    .trim();
+
+  if (/duplicate claim number/i.test(compact)) {
+    return 'Gagal: duplicate Claim Number di target.';
+  }
+  if (/no eligible email found/i.test(compact)) {
+    return 'Info: tidak ada email salvage yang eligible.';
+  }
+  if (/source spreadsheet is empty/i.test(compact)) {
+    return 'Gagal: source salvage kosong.';
+  }
+  if (/post-sync verification failed/i.test(compact)) {
+    return 'Gagal: verifikasi hasil sync tidak lolos.';
+  }
+
+  return 'Gagal: ' + compact.slice(0, 110);
+}
+
+function formatTargetRunTimestamp_(date) {
+  const tz = SALVAGE_CONFIG.scriptTimeZone || Session.getScriptTimeZone() || 'Asia/Jakarta';
+  const monthNames = [
+    'January', 'February', 'March', 'April', 'May', 'June',
+    'July', 'August', 'September', 'October', 'November', 'December'
+  ];
+  const monthIndex = Math.max(Number(Utilities.formatDate(date, tz, 'M')) - 1, 0);
+  const day = Utilities.formatDate(date, tz, 'd');
+  const year = Utilities.formatDate(date, tz, 'yy');
+  const time = Utilities.formatDate(date, tz, 'HH:mm');
+  return day + ' ' + monthNames[monthIndex] + ' ' + year + ', ' + time;
+}
+
+function extractEmailAddress_(value) {
+  const raw = String(value || '').trim().toLowerCase();
+  const angled = raw.match(/<([^>]+)>/);
+  if (angled && angled[1]) return angled[1].trim();
+  return raw;
+}
+
+function safeJson_(value) {
+  try {
+    return JSON.stringify(value);
+  } catch (error) {
+    return String(value);
+  }
+}
+
+function trashTempFile_(fileId) {
+  if (!fileId) return;
+  DriveApp.getFileById(fileId).setTrashed(true);
+}
+
+function ensureLogSheetLayout_() {
+  const ss = SpreadsheetApp.openById(SALVAGE_CONFIG.log.spreadsheetId);
+  const sheet = ss.getSheetByName(SALVAGE_CONFIG.log.sheetName);
+  if (!sheet) {
+    throw new Error('Log sheet not found: ' + SALVAGE_CONFIG.log.sheetName);
+  }
+
+  ensureSheetHasRows_(sheet, SALVAGE_CONFIG.log.headerRow);
+  ensureSheetHasColumns_(sheet, SALVAGE_CONFIG.log.headerStartColumn + SALVAGE_CONFIG.log.detailHeaders.length - 1);
+
+  const headerRange = sheet.getRange(
+    SALVAGE_CONFIG.log.headerRow,
+    SALVAGE_CONFIG.log.headerStartColumn,
+    1,
+    SALVAGE_CONFIG.log.detailHeaders.length
+  );
+  headerRange.setValues([SALVAGE_CONFIG.log.detailHeaders]);
+  headerRange.setFontWeight('bold');
+
+  sheet.getRange(SALVAGE_CONFIG.log.progressPctCell).setNumberFormat('0%');
+  SpreadsheetApp.flush();
+}
+
+function resetLogDetails_() {
+  const sheet = getLogSheet_();
+  ensureSheetHasRows_(sheet, SALVAGE_CONFIG.log.headerRow);
+  ensureSheetHasColumns_(sheet, SALVAGE_CONFIG.log.headerStartColumn + SALVAGE_CONFIG.log.detailHeaders.length - 1);
+
+  const maxRows = sheet.getMaxRows();
+
+  if (maxRows > SALVAGE_CONFIG.log.headerRow) {
+    sheet.getRange(
+      SALVAGE_CONFIG.log.headerRow + 1,
+      SALVAGE_CONFIG.log.headerStartColumn,
+      maxRows - SALVAGE_CONFIG.log.headerRow,
+      SALVAGE_CONFIG.log.detailHeaders.length
+    ).clearContent().clearNote().clearFormat();
+  }
+
+  sheet.getRange(SALVAGE_CONFIG.log.progressBarCell).setValue(buildProgressBar_(0));
+  sheet.getRange(SALVAGE_CONFIG.log.progressPctCell).setValue(0);
+  sheet.getRange(SALVAGE_CONFIG.log.currentStepCell).setValue('Waiting');
+  sheet.getRange(SALVAGE_CONFIG.log.updatedAtCell).setValue(new Date());
+
+  sheet.getRange(SALVAGE_CONFIG.log.headerRow, SALVAGE_CONFIG.log.headerStartColumn, 1, SALVAGE_CONFIG.log.detailHeaders.length)
+    .setValues([SALVAGE_CONFIG.log.detailHeaders])
+    .setFontWeight('bold');
+
+  SpreadsheetApp.flush();
+}
+
+function updateProgress_(percent, stepText) {
+  const clamped = Math.max(0, Math.min(100, percent));
+  const sheet = getLogSheet_();
+  sheet.getRange(SALVAGE_CONFIG.log.progressBarCell).setValue(buildProgressBar_(clamped));
+  sheet.getRange(SALVAGE_CONFIG.log.progressPctCell).setValue(clamped / 100);
+  sheet.getRange(SALVAGE_CONFIG.log.currentStepCell).setValue(stepText);
+  sheet.getRange(SALVAGE_CONFIG.log.updatedAtCell).setValue(new Date());
+  SpreadsheetApp.flush();
+}
+
+function logStage_(ctx, payload) {
+  const sheet = getLogSheet_();
+  const rowNumber = Math.max(sheet.getLastRow() + 1, SALVAGE_CONFIG.log.headerRow + 1);
+
+  const logIndex = rowNumber - SALVAGE_CONFIG.log.headerRow - 0;
+  const ts = new Date();
+  const durationMs = payload.durationMs === undefined || payload.durationMs === null ? '' : payload.durationMs;
+  const durationReadable = durationMs === '' ? '' : (durationMs + ' ms / ' + (durationMs / 1000).toFixed(3) + ' s');
+
+  const row = [
+    logIndex,
+    ts,
+    ctx.flow || SALVAGE_CONFIG.flowName,
+    ctx.runId || '',
+    payload.stage || '',
+    payload.segment || '',
+    durationReadable,
+    ctx.emailFrom || '',
+    ctx.emailSubject || '',
+    ctx.threadId || '',
+    ctx.attachmentName || '',
+    ctx.attachmentSize || '',
+    ctx.attachmentType || '',
+    valueOrBlank_(payload.rawRows),
+    valueOrBlank_(payload.opsUpdated),
+    valueOrBlank_(payload.subInserted),
+    payload.status || '',
+    payload.error || '',
+    payload.metrics || '',
+    payload.notes || '',
+    payload.severity || '',
+  ];
+
+  sheet.getRange(rowNumber, SALVAGE_CONFIG.log.headerStartColumn, 1, row.length).setValues([row]);
+  sheet.getRange(SALVAGE_CONFIG.log.updatedAtCell).setValue(ts);
+  SpreadsheetApp.flush();
+}
+
+function listTargetDuplicateClaims_() {
+  const targetSnapshot = inspectTargetSnapshot_();
+  if (!targetSnapshot.duplicateClaimCount) {
+    return [];
+  }
+
+  const ss = SpreadsheetApp.openById(SALVAGE_CONFIG.target.spreadsheetId);
+  const sheet = ss.getSheetByName(SALVAGE_CONFIG.target.sheetName);
+  const claimCol = targetSnapshot.columnMap['Claim Number'];
+  const dataStartRow = targetSnapshot.headerRow + 1;
+  const totalRows = Math.max(targetSnapshot.lastRow - targetSnapshot.headerRow, 0);
+  const claimValues = totalRows > 0
+    ? sheet.getRange(dataStartRow, claimCol, totalRows, 1).getDisplayValues().map(function(r) { return String(r[0] || ''); })
+    : [];
+
+  const seen = {};
+  const duplicates = [];
+  claimValues.forEach(function(value, idx) {
+    const normalized = normalizeKey_(value);
+    if (!normalized) return;
+    const rowNumber = dataStartRow + idx;
+    if (Object.prototype.hasOwnProperty.call(seen, normalized)) {
+      duplicates.push({
+        claimNumber: value,
+        firstRow: seen[normalized],
+        duplicateRow: rowNumber,
+      });
+      return;
+    }
+    seen[normalized] = rowNumber;
+  });
+
+  return duplicates;
+}
+
+function diagnoseTargetDuplicateClaims() {
+  const duplicates = listTargetDuplicateClaims_();
+  Logger.log(JSON.stringify(duplicates.slice(0, 50), null, 2));
+  return duplicates;
+}
+
+function getLogSheet_() {
+  const ss = SpreadsheetApp.openById(SALVAGE_CONFIG.log.spreadsheetId);
+  const sheet = ss.getSheetByName(SALVAGE_CONFIG.log.sheetName);
+  if (!sheet) {
+    throw new Error('Log sheet not found: ' + SALVAGE_CONFIG.log.sheetName);
+  }
+  return sheet;
+}
+
+function buildProgressBar_(percent) {
+  const total = SALVAGE_CONFIG.progress.blocks;
+  const filled = Math.round((Math.max(0, Math.min(100, percent)) / 100) * total);
+  return repeatChar_('█', filled) + repeatChar_('░', total - filled);
+}
+
+function deleteTriggersByHandler_(functionName) {
+  ScriptApp.getProjectTriggers().forEach(function(trigger) {
+    if (trigger.getHandlerFunction() === functionName) {
+      ScriptApp.deleteTrigger(trigger);
+    }
+  });
+}
+
+function detectHeaderRow_(sheet, aliasGroups, maxRowsToScan) {
+  const rowsToScan = Math.min(Math.max(sheet.getLastRow(), 1), maxRowsToScan || 10);
+  const colsToScan = Math.max(sheet.getLastColumn(), 1);
+  const scanValues = sheet.getRange(1, 1, rowsToScan, colsToScan).getDisplayValues();
+
+  let best = null;
+  for (let r = 0; r < scanValues.length; r += 1) {
+    const normalizedCells = scanValues[r].map(normalizeHeader_).filter(Boolean);
+    const cellSet = {};
+    normalizedCells.forEach(function(value) {
+      cellSet[value] = true;
+    });
+
+    let score = 0;
+    aliasGroups.forEach(function(group) {
+      const found = group.some(function(alias) {
+        return !!cellSet[normalizeHeader_(alias)];
+      });
+      if (found) score += 1;
+    });
+
+    if (!best || score > best.score) {
+      best = { headerRow: r + 1, score: score };
+    }
+  }
+
+  if (!best || best.score === 0) {
+    return null;
+  }
+  return best;
+}
+
+function buildHeaderMap_(sheet, headerRow) {
+  const lastCol = Math.max(sheet.getLastColumn(), 1);
+  const headers = sheet.getRange(headerRow, 1, 1, lastCol).getDisplayValues()[0];
+  const map = {};
+
+  headers.forEach(function(header, idx) {
+    const normalized = normalizeHeader_(header);
+    if (normalized && !map[normalized]) {
+      map[normalized] = idx + 1;
+    }
+  });
+
+  return map;
+}
+
+function resolveAliasMap_(headerMap, aliasMap, mapName) {
+  const resolved = {};
+  const missing = [];
+
+  Object.keys(aliasMap).forEach(function(logicalName) {
+    const aliases = aliasMap[logicalName];
+    const matchedAlias = aliases.find(function(alias) {
+      return !!headerMap[normalizeHeader_(alias)];
+    });
+
+    if (!matchedAlias) {
+      missing.push(logicalName + ' => [' + aliases.join(' | ') + ']');
+      return;
+    }
+
+    resolved[logicalName] = headerMap[normalizeHeader_(matchedAlias)];
+  });
+
+  if (missing.length) {
+    throw new Error(
+      'Missing ' + mapName + ' header(s): ' + missing.join('; ')
+    );
+  }
+
+  return resolved;
+}
+
+function normalizeHeader_(value) {
+  return String(value || '')
+    .replace(/[\r\n]+/g, ' ')
+    .replace(/[→➜➝⟶]/g, '->')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase();
+}
+
+function normalizeKey_(value) {
+  return String(value === null || value === undefined ? '' : value)
+    .replace(/\s+/g, '')
+    .trim()
+    .toLowerCase();
+}
+
+function ensureSheetHasRows_(sheet, requiredLastRow) {
+  const currentMax = sheet.getMaxRows();
+  if (currentMax < requiredLastRow) {
+    sheet.insertRowsAfter(currentMax, requiredLastRow - currentMax);
+  }
+}
+
+function ensureSheetHasColumns_(sheet, requiredLastCol) {
+  const currentMax = sheet.getMaxColumns();
+  if (currentMax < requiredLastCol) {
+    sheet.insertColumnsAfter(currentMax, requiredLastCol - currentMax);
+  }
+}
+
+function createEmptyRow_(width) {
+  const row = [];
+  for (let i = 0; i < width; i += 1) {
+    row.push('');
+  }
+  return row;
+}
+
+function stringifyError_(error) {
+  if (!error) return '';
+  if (typeof error === 'string') return error;
+  const message = error.message || String(error);
+  const stack = error.stack ? (' | ' + error.stack) : '';
+  return message + stack;
+}
+
+function valueOrBlank_(value) {
+  return value === undefined || value === null ? '' : value;
+}
+
+function repeatChar_(char, times) {
+  let output = '';
+  for (let i = 0; i < times; i += 1) {
+    output += char;
+  }
+  return output;
+}
