@@ -898,6 +898,7 @@ function runEmailIngest(maxThreads) {
 
       let tmpFileId = null;
       try {
+        // single conversion per run
         setProgress_(0.15, 'Converting XLSX...');
         const conv = convertXlsxBlobToTempSpreadsheet_(att.copyBlob(), att.getName());
         tmpFileId = conv.fileId;
