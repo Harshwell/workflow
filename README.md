@@ -219,6 +219,7 @@ Putaran hardening terbaru sudah menutup beberapa sumber masalah yang paling berb
 
 - konstruksi `CONFIG` tidak lagi memicu load-time crash karena referensi konstanta yang belum siap
 - bootstrap patch maintenance tidak lagi men-shadow helper utama
+- bootstrap patch di `06d_IntegratedMaintenance.gs` tidak lagi men-shadow helper utama
 - self-check sekarang membaca simbol global `const` / `let` dengan benar
 - parsing datetime dan sort-under-filter diperketat di area operasional yang paling rawan drift
 - repo sekarang punya `appsscript.json` eksplisit dan `tools/static_smoke_check.js` untuk smoke-check lokal
@@ -256,6 +257,9 @@ Perubahan lanjutan yang sudah diterapkan setelah patch critical sebelumnya:
 
 - Fungsi maintenance/self-check, helper SUB, dan runtime preflight dikonsolidasikan ke `06c_PostProcessAndUtils.gs`.
 - Modul script kini disederhanakan menjadi `00` sampai `06c` untuk mengurangi fragmentasi load-order dan biaya maintenance.
+- Implementasi helper SUB untuk append ke `Submission` dan sort operational dipindahkan ke `06e_SubHelpers.gs`.
+- `06a_EntryPoints.gs` tetap mempertahankan nama fungsi existing sebagai delegator supaya caller lama tidak pecah.
+- Ditambahkan runtime preflight non-fatal (`06f_RuntimeAssertions.gs`) di flow MAIN/SUB untuk deteksi dini missing symbol tanpa memutus run.
 
 ### Yang sudah bagus
 

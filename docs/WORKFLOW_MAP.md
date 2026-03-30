@@ -49,6 +49,8 @@ flowchart LR
     A --> D[04_ParseAndAging]
     A --> E[05* Pipeline Stages]
     A --> F[06* Entry / Post Process]
+    F --> G[06e_SubHelpers.gs (SUB internals)]
+    F --> H[06f_RuntimeAssertions.gs (preflight checks)]
 
     B --> D
     B --> E
