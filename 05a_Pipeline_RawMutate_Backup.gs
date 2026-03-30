@@ -44,7 +44,8 @@ function __normalizeHeaderText05a_(v) {
 function __findHeaderIndex05a_(headerRow, name) {
   try {
     if (typeof findHeaderIndexByCandidates_ === 'function') {
-      return findHeaderIndexByCandidates_(headerRow, [name]);
+      const idx = findHeaderIndexByCandidates_(headerRow, [name]);
+      return (typeof idx === 'number' && idx >= 0) ? idx : -1;
     }
   } catch (e) {}
   const want = __normalizeHeaderText05a_(name).toLowerCase();
