@@ -1,0 +1,245 @@
+/***************************************************************
+ * 06e_SubHelpers.gs
+ * Extracted SUB helper implementations from 06a_EntryPoints.
+ ***************************************************************/
+'use strict';
+
+function __appendSubmissionFromRawIfMissing06e_(ss, rawMap, rawHdrIdx, dbTag) {
+  const sh = ss.getSheetByName('Submission');
+  if (!sh) {
+    try { logLine_('SUB_WARN', 'Submission sheet not found (skip append)', '', '', 'WARN'); } catch (e1) {}
+    return { appended: 0, skipped: true };
+  }
+
+  const lastCol = sh.getLastColumn();
+  const lastRow = sh.getLastRow();
+  if (lastCol < 1) return { appended: 0, skipped: true };
+
+  const header = sh.getRange(1, 1, 1, lastCol).getValues()[0].map(h => String(h || '').trim());
+  const norm = header.map(h => h.toLowerCase());
+
+  function idxOf(name) {
+    const i = norm.indexOf(String(name || '').toLowerCase());
+    return i >= 0 ? i : -1;
+  }
+
+  const idxClaim = idxOf('claim number');
+  if (idxClaim < 0) {
+    try { logLine_('SUB_WARN', 'Submission missing Claim Number header (skip append)', '', '', 'WARN'); } catch (e2) {}
+    return { appended: 0, skipped: true };
+  }
+
+  // Existing claim set
+  const existing = new Set();
+  if (lastRow >= 2) {
+    const colVals = sh.getRange(2, idxClaim + 1, lastRow - 1, 1).getValues();
+    for (let i = 0; i < colVals.length; i++) {
+      const cn = String(colVals[i][0] || '').trim();
+      if (cn) existing.add(cn);
+    }
+  }
+
+  const idxSubDate = idxOf('submission date');
+  const idxDbLink = idxOf('db link');
+  const idxDb = idxOf('db');
+  const idxPartner = idxOf('partner name');
+  const idxIns = idxOf('insurance');
+  const idxDeviceType = idxOf('device type');
+  const idxImei = idxOf('imei/sn');
+  const idxLast = idxOf('last status');
+  const idxSc = idxOf('service center');
+  const idxLSA = idxOf('last status aging');
+  const idxALA = idxOf('activity log aging');
+
+  const flow = (typeof CONFIG === 'object' && CONFIG && CONFIG.subFlow) ? CONFIG.subFlow : null;
+  let dbValue = String(dbTag || '').trim().toUpperCase();
+  let wantStatus = (dbValue === 'OLD') ? 'SUBMITTED' : 'CLAIM_INITIATE';
+
+  // Prefer configured DB tag + trigger status mapping when available.
+  try {
+    if (flow && flow.SUBMISSION_RULES) {
+      if (dbValue === 'OLD' && flow.SUBMISSION_RULES.OLD) {
+        if (flow.SUBMISSION_RULES.OLD.DB_VALUE) {
+          dbValue = String(flow.SUBMISSION_RULES.OLD.DB_VALUE || '').trim().toUpperCase();
+        }
+        if (flow.SUBMISSION_RULES.OLD.TRIGGER_RAW_LAST_STATUS) {
+          wantStatus = String(flow.SUBMISSION_RULES.OLD.TRIGGER_RAW_LAST_STATUS || '').trim().toUpperCase();
+        }
+      } else if (dbValue === 'NEW' && flow.SUBMISSION_RULES.NEW) {
+        if (flow.SUBMISSION_RULES.NEW.DB_VALUE) {
+          dbValue = String(flow.SUBMISSION_RULES.NEW.DB_VALUE || '').trim().toUpperCase();
+        }
+        if (flow.SUBMISSION_RULES.NEW.TRIGGER_RAW_LAST_STATUS) {
+          wantStatus = String(flow.SUBMISSION_RULES.NEW.TRIGGER_RAW_LAST_STATUS || '').trim().toUpperCase();
+        }
+      }
+    }
+  } catch (e0) {}
+
+  const rowsToAppend = [];
+  const richLinks = []; // { rowOffset, url }
+
+  rawMap.forEach(rec => {
+    const cn = String(rec.claim_number || '').trim();
+    if (!cn) return;
+
+    const st = String(rec.last_status || '').trim().toUpperCase();
+    if (st !== wantStatus) return;
+    if (existing.has(cn)) return;
+
+    const row = new Array(lastCol).fill('');
+
+    if (idxSubDate >= 0) row[idxSubDate] = rec.claim_submitted_datetime || '';
+    row[idxClaim] = cn;
+
+    if (idxDbLink >= 0) {
+      row[idxDbLink] = 'LINK';
+      const url = String(rec.dashboard_link || '').trim();
+      if (url) richLinks.push({ rowOffset: rowsToAppend.length, url: url });
+    }
+    if (idxDb >= 0) row[idxDb] = dbValue;
+
+    if (idxPartner >= 0) row[idxPartner] = rec.partner_name || '';
+    if (idxIns >= 0) row[idxIns] = rec.insurance || '';
+    if (idxDeviceType >= 0) row[idxDeviceType] = rec.device_type || '';
+    if (idxImei >= 0) row[idxImei] = rec.device_imei || '';
+    if (idxLast >= 0) row[idxLast] = rec.last_status || '';
+    if (idxSc >= 0) row[idxSc] = rec.sc_name || '';
+    if (idxLSA >= 0) row[idxLSA] = rec.last_status_aging || '';
+    if (idxALA >= 0) row[idxALA] = rec.activity_log_aging || '';
+
+    rowsToAppend.push(row);
+    existing.add(cn);
+  });
+
+  if (!rowsToAppend.length) {
+    try { logLine_('SUB_APP', 'No new Submission rows to append', dbTag, '', 'INFO'); } catch (e3) {}
+    return { appended: 0 };
+  }
+
+  const startRow = sh.getLastRow() + 1;
+  const rng = sh.getRange(startRow, 1, rowsToAppend.length, lastCol);
+  if (typeof safeSetValues_ === 'function') safeSetValues_(rng, rowsToAppend);
+  else rng.setValues(rowsToAppend);
+
+  // Apply RichText hyperlink to DB Link column if possible.
+  if (idxDbLink >= 0 && richLinks.length) {
+    try {
+      const rich = [];
+      for (let i = 0; i < rowsToAppend.length; i++) rich.push([SpreadsheetApp.newRichTextValue().setText('LINK').build()]);
+
+      for (let i = 0; i < richLinks.length; i++) {
+        const r = richLinks[i].rowOffset;
+        const url = richLinks[i].url;
+        rich[r][0] = SpreadsheetApp.newRichTextValue().setText('LINK').setLinkUrl(url).build();
+      }
+
+      const linkRange = sh.getRange(startRow, idxDbLink + 1, rowsToAppend.length, 1);
+      if (typeof safeSetRichTextValues_ === 'function') safeSetRichTextValues_(linkRange, rich);
+      else linkRange.setRichTextValues(rich);
+    } catch (e4) {
+      try { logLine_('SUB_WARN', 'Failed to apply RichText hyperlinks for DB Link', String(e4), '', 'WARN'); } catch (e5) {}
+    }
+  }
+
+  try { logLine_('SUB_APP', 'Appended rows to Submission', dbTag, 'count=' + rowsToAppend.length, 'INFO'); } catch (e6) {}
+
+  return { appended: rowsToAppend.length };
+}
+
+function __sortOperationalSheetsSub06e_(ss, sheetNames, sortSpecs) {
+  const names = Array.isArray(sheetNames) ? sheetNames : [];
+  const out = { sheets: {}, sortedSheets: 0, skippedSheets: 0 };
+
+  // Default SUB sort order:
+  // 1) Submission Date (A->Z)
+  // 2) Last Status Date (A->Z)
+  // 3) Last Status (A->Z)
+  const defaultSpecs = [
+    { headerCandidates: ['Submission Date', 'claim_submission_date', 'claim submitted datetime'], ascending: true },
+    { headerCandidates: ['Last Status Date', 'claim_last_updated_datetime', 'claim last updated datetime'], ascending: true },
+    { headerCandidates: ['Last Status', 'last_status', 'last status'], ascending: true }
+  ];
+
+  const normalizedSpecs = (Array.isArray(sortSpecs) && sortSpecs.length)
+    ? sortSpecs.map(s => ({
+        headerCandidates: Array.isArray(s && s.headerCandidates)
+          ? s.headerCandidates
+          : (s && s.header ? [s.header] : []),
+        ascending: (s && typeof s.ascending === 'boolean') ? s.ascending : true
+      }))
+    : defaultSpecs;
+
+  // SUB sort is enforced by requirement; ignore legacy default unless explicitly configured.
+  const enforcedSpecs = [
+        { headerCandidates: ['Last Status Date', 'claim_last_updated_datetime', 'claim last updated datetime'], ascending: true },
+    { headerCandidates: ['Last Status', 'last_status', 'last status'], ascending: true }
+  ];
+
+  for (let i = 0; i < names.length; i++) {
+    const name = String(names[i] || '').trim();
+    if (!name) continue;
+
+    const sh = ss.getSheetByName(name);
+    if (!sh) { out.sheets[name] = { skipped: 'not found' }; out.skippedSheets++; continue; }
+
+    const lastRow = sh.getLastRow();
+    const lastCol = sh.getLastColumn();
+    if (lastRow < 3 || lastCol < 2) { out.sheets[name] = { skipped: 'too few rows' }; out.skippedSheets++; continue; }
+
+    try {
+      const hdr = sh.getRange(1, 1, 1, lastCol).getValues()[0].map(h => String(h || '').trim());
+      const norm = hdr.map(h => h.toLowerCase());
+
+      function idxByCandidates(cands) {
+        for (let k = 0; k < cands.length; k++) {
+          const key = String(cands[k] || '').toLowerCase();
+          const j = norm.indexOf(key);
+          if (j >= 0) return j;
+        }
+        return -1;
+      }
+
+      const sortCriteria = [];
+      normalizedSpecs.forEach(s => {
+      enforcedSpecs.forEach(s => {
+        const idx = idxByCandidates(s.headerCandidates);
+        if (idx >= 0) sortCriteria.push({ column: idx + 1, ascending: !!s.ascending });
+      });
+
+      if (!sortCriteria.length) {
+        out.sheets[name] = { skipped: 'missing headers for sort' };
+        out.skippedSheets++;
+        continue;
+      }
+
+      // Preserve filter: sort only the data body, not the header.
+      const filter = sh.getFilter ? sh.getFilter() : null;
+      if (filter && filter.getRange) {
+        const fr = filter.getRange();
+        const sr = fr.getRow();
+        const sc = fr.getColumn();
+        const nr = fr.getNumRows();
+        const nc = fr.getNumColumns();
+
+        if (nr <= 1) { out.sheets[name] = { skipped: 'filter range too small' }; out.skippedSheets++; continue; }
+
+        const body = sh.getRange(sr + 1, sc, nr - 1, nc);
+        if (!isDryRun_()) body.sort(sortCriteria);
+      } else {
+        const body = sh.getRange(2, 1, lastRow - 1, lastCol);
+        if (!isDryRun_()) body.sort(sortCriteria);
+      }
+
+      out.sheets[name] = { sorted: true, criteria: sortCriteria.length };
+      out.sortedSheets++;
+    } catch (e0) {
+      out.sheets[name] = { error: String(e0 && e0.message ? e0.message : e0) };
+      out.skippedSheets++;
+      try { logLine_('SUB_WARN', 'Sort failed', name, String(e0), 'WARN'); } catch (e1) {}
+    }
+  }
+
+  return out;
+}
+

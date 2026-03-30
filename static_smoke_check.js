@@ -23,11 +23,16 @@ const SOURCE_FILES = [
   '05b_Pipeline_RoutingOperational',
   '05c_Pipeline_OptionalSheets',
   '06a_EntryPoints.gs',
+  '06a_EntryPoints',
   '06b_PipelineAndEnrichment',
   '06c_PostProcessAndUtils',
   '06d_IntegratedMaintenance',
   '06e_SubHelpers.gs',
   '06f_RuntimeAssertions.gs'
+  '06e_SubHelpers',
+  '06f_RuntimeAssertions'
+  '06e_SubHelpers'
+  '06d_IntegratedMaintenance'
 ];
 
 function createContext() {

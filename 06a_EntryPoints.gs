@@ -395,6 +395,7 @@ function onFormSubmit(e) {
     } catch (e2) {}
 
     try { setProgressForFlow_(flowLabel, 0, 'Starting...', { runId: runId, prefixFlowInStep: true }); } catch (e3) {}
+    try { setProgressForFlow_(flowLabel, 0, 'Starting…', { runId: runId, prefixFlowInStep: true }); } catch (e3) {}
     try { logLine_('FORM', 'Trigger received', 'flow=' + flowLabel + ' runId=' + runId, 'files=' + (req.allFileIds ? req.allFileIds.length : 0), 'INFO'); } catch (e4) {}
 
     const seg = startSegment_(flowLabel + '_FORM', 'Pipeline run (onFormSubmit)');
@@ -599,6 +600,7 @@ function __runSubCore06a_(masterSs, oldBlob, newBlob, opt) {
 
   const startedAt = new Date();
   try { setProgressForFlow_('SUB', 0.05, 'Snapshot PREV...', { prefixFlowInStep: true }); } catch (e0) {}
+  try { setProgressForFlow_('SUB', 0.05, 'Snapshot PREV…', { prefixFlowInStep: true }); } catch (e0) {}
 
   // WebApp snapshots (best effort)
   try {
@@ -610,6 +612,7 @@ function __runSubCore06a_(masterSs, oldBlob, newBlob, opt) {
   }
 
   try { setProgressForFlow_('SUB', 0.20, 'Process OLD...', { prefixFlowInStep: true }); } catch (e1) {}
+  try { setProgressForFlow_('SUB', 0.20, 'Process OLD…', { prefixFlowInStep: true }); } catch (e1) {}
 
   const rOld = __processSubAttachment06a_(masterSs, oldBlob, {
     dbTag: 'OLD',
@@ -622,6 +625,7 @@ function __runSubCore06a_(masterSs, oldBlob, newBlob, opt) {
   }
 
   try { setProgressForFlow_('SUB', 0.55, 'Process NEW...', { prefixFlowInStep: true }); } catch (e3) {}
+  try { setProgressForFlow_('SUB', 0.55, 'Process NEW…', { prefixFlowInStep: true }); } catch (e3) {}
 
   const rNew = __processSubAttachment06a_(masterSs, newBlob, {
     dbTag: 'NEW',
@@ -634,6 +638,7 @@ function __runSubCore06a_(masterSs, oldBlob, newBlob, opt) {
   }
 
   try { setProgressForFlow_('SUB', 0.78, 'Relocate + sort...', { prefixFlowInStep: true }); } catch (e5) {}
+  try { setProgressForFlow_('SUB', 0.78, 'Relocate + sort…', { prefixFlowInStep: true }); } catch (e5) {}
 
   const relocateRes = __relocateOperationalRowsByLastStatusSub06a_(masterSs, opSheets);
   const sortRes = __sortOperationalSheetsSub06a_(masterSs, opSheets, sortSpecs);
@@ -766,6 +771,7 @@ function ensureRawTailColumns06_(rawSheet) {
 
 /** =========================
  * Email ingest flow (Dashboard -> Raw Data)
+ * Email ingest flow (Dashboard → Raw Data)
  * ========================= */
 function buildDashboardEmailQuery_(policy) {
   // MAIN (daily 08:00) must be QUEUE-based and deterministic.
@@ -834,6 +840,7 @@ function runEmailIngest(maxThreads) {
       const limit = 1;
 
       setProgress_(0, 'Searching queued email...');
+      setProgress_(0, 'Searching queued email…');
       logLine_('MAIL', 'MAIN ingest started', 'query=' + query, 'limit=' + limit, 'INFO');
 
       const threads = GmailApp.search(query, 0, limit);
@@ -896,6 +903,11 @@ function runEmailIngest(maxThreads) {
         tmpFileId = conv.fileId;
 
         setProgress_(0.35, 'Processing pipeline...');
+        setProgress_(0.15, 'Converting XLSX…');
+        const conv = convertXlsxBlobToTempSpreadsheet_(att.copyBlob(), att.getName());
+        tmpFileId = conv.fileId;
+
+        setProgress_(0.35, 'Processing pipeline…');
         const res = runPipeline_('Master', [tmpFileId], { flow: 'main', source: 'EMAIL_MAIN', subject: msg.getSubject() });
 
         // Determine success strictly: no exception + not severity ERROR
@@ -910,6 +922,7 @@ function runEmailIngest(maxThreads) {
 
         // Cleanup success (per spec)
         setProgress_(0.85, 'Cleaning up email...');
+        setProgress_(0.85, 'Cleaning up email…');
         try { msg.markRead(); } catch (e1) {}
         try { thread.markRead(); } catch (e2) {}
         try { if (queuedLabel) thread.removeLabel(queuedLabel); } catch (e3) {}
@@ -2442,6 +2455,7 @@ function runManual(picOrFileIdsCsv, fileIdsCsvMaybe) {
     try { ssTiming = __logOverviewStart06_(key, startedAt); } catch (e) {}
 
     setProgress_(0, 'Starting (manual)...');
+    setProgress_(0, 'Starting (manual)…');
     logLine_('BOOT', 'Manual run started', 'version=' + APP_VERSION, 'profile=' + key, 'INFO');
 
     const ids = String(fileIdsCsv || '')
