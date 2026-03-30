@@ -60,6 +60,10 @@ const LOGV2_LAYOUT = Object.freeze({
   START_COL: 10, // J
   COLS: 21
 });
+// Compaction mode:
+// - true  => write stage lines only to LOG v2 table (compact, non-duplicate)
+// - false => keep writing legacy B:H lines + mirror to v2
+const LOG_COMPACTION_USE_V2_ONLY = true;
 const LOGV2_HEADER = Object.freeze([
   'No',
   'Timestamp',
@@ -414,16 +418,18 @@ function ensureLogLayout_(sh) {
       safeSetValues_(headerRange, [expected]);
       try { headerRange.setFontWeight('bold'); } catch (e0) {}
     }
-    const detailHdrRange = sh.getRange(LOG_LAYOUT.DETAIL_HEADER_ROW, LOG_COLUMNS.NUMBER, 1, 7);
-    const dHdr = detailHdrRange.getValues()[0];
-    const dExp = ['No','Time','Segment','Duration (s)','Metrics','Notes','Severity'];
-    let needsHdr = false;
-    for (let i = 0; i < dExp.length; i++) {
-      if (String(dHdr[i] || '').trim() !== dExp[i]) { needsHdr = true; break; }
-    }
-    if (needsHdr) {
-      safeSetValues_(detailHdrRange, [dExp]);
-      try { detailHdrRange.setFontWeight('bold'); } catch (e1) {}
+    if (!LOG_COMPACTION_USE_V2_ONLY) {
+      const detailHdrRange = sh.getRange(LOG_LAYOUT.DETAIL_HEADER_ROW, LOG_COLUMNS.NUMBER, 1, 7);
+      const dHdr = detailHdrRange.getValues()[0];
+      const dExp = ['No','Time','Segment','Duration (s)','Metrics','Notes','Severity'];
+      let needsHdr = false;
+      for (let i = 0; i < dExp.length; i++) {
+        if (String(dHdr[i] || '').trim() !== dExp[i]) { needsHdr = true; break; }
+      }
+      if (needsHdr) {
+        safeSetValues_(detailHdrRange, [dExp]);
+        try { detailHdrRange.setFontWeight('bold'); } catch (e1) {}
+      }
     }
   } catch (e) {}
   // v2 structured log table (non-breaking, placed at col J)
@@ -634,22 +640,24 @@ function startSegment_(id, name) {
 function pushLogRow_(segId, segName, durationSec, metrics, notes, severity) {
   const sev = severity || 'INFO';
   CACHE.log.segNo++;
-  const sh = getLogSheet_();
-  const timeStr = nowStr_('HH:mm:ss');
-  const row = [[
-    CACHE.log.segNo,
-    timeStr,
-    (segId || '') + ' – ' + (segName || ''),
-    (durationSec != null && durationSec !== '') ? durationSec : '',
-    metrics || '',
-    notes || '',
-    sev
-  ]];
-  const r = CACHE.log.nextRow;
-  safeSetValues_(sh.getRange(r, LOG_COLUMNS.NUMBER, 1, 7), row);
-  safeSetNumberFormat_(sh.getRange(r, LOG_COLUMNS.DURATION, 1, 1), '0.00');
-  CACHE.log.nextRow = r + 1;
-  CACHE.log.didAnyWrite = true;
+  if (!LOG_COMPACTION_USE_V2_ONLY) {
+    const sh = getLogSheet_();
+    const timeStr = nowStr_('HH:mm:ss');
+    const row = [[
+      CACHE.log.segNo,
+      timeStr,
+      (segId || '') + ' – ' + (segName || ''),
+      (durationSec != null && durationSec !== '') ? durationSec : '',
+      metrics || '',
+      notes || '',
+      sev
+    ]];
+    const r = CACHE.log.nextRow;
+    safeSetValues_(sh.getRange(r, LOG_COLUMNS.NUMBER, 1, 7), row);
+    safeSetNumberFormat_(sh.getRange(r, LOG_COLUMNS.DURATION, 1, 1), '0.00');
+    CACHE.log.nextRow = r + 1;
+    CACHE.log.didAnyWrite = true;
+  }
   // Mirror into structured log v2 (best-effort, backward compatible)
   try {
     pushLogV2Row_({

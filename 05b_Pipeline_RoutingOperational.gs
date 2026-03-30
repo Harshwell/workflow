@@ -955,7 +955,7 @@ function buildSheetWriters_(ss, routingMap, headerIndexRaw, pic) {
   const scFarhanName = (opsPolicy && opsPolicy.SHEETS && opsPolicy.SHEETS.SC_FARHAN) ? opsPolicy.SHEETS.SC_FARHAN : 'SC - Farhan';
   const scMeilaniName = (opsPolicy && opsPolicy.SHEETS && opsPolicy.SHEETS.SC_MEILANI) ? opsPolicy.SHEETS.SC_MEILANI : 'SC - Meilani';
 
-  const scIvanName = (opsPolicy && opsPolicy.SHEETS && (opsPolicy.SHEETS.SC_IVAN || opsPolicy.SHEETS.SC_IVAN_NAME)) ? (opsPolicy.SHEETS.SC_IVAN || opsPolicy.SHEETS.SC_IVAN_NAME) : 'SC - Ivan';
+  const scIvanName = (opsPolicy && opsPolicy.SHEETS && (opsPolicy.SHEETS.SC_IVAN || opsPolicy.SHEETS.SC_IVAN_NAME)) ? (opsPolicy.SHEETS.SC_IVAN || opsPolicy.SHEETS.SC_IVAN_NAME) : 'SC - Meindar';
 
   // Precompute Type lookup for SC sheets (write only if header has "Type").
 // Mapping lives in OPS_ROUTING_POLICY.TYPE_BY_LAST_STATUS (00.gs) and is matched by Last Status.
@@ -1089,7 +1089,14 @@ function buildSheetWriters_(ss, routingMap, headerIndexRaw, pic) {
 
         // Dates (submission)
         if (idxH['Submission Date'] != null) {
-          const d = coerceDate_(getRaw(rawRow, h.claimSubmissionDate));
+          const d = coerceDate_(getRawAny(rawRow, [
+            h.claimSubmissionDate,
+            'claim_submission_date',
+            h.claimSubmittedDatetime,
+            'claim_submitted_datetime',
+            'submission_date',
+            'submission date'
+          ]));
           set('Submission Date', d ? d : '');
         }
         if (idxH['Submission Datetime'] != null) {
@@ -1287,14 +1294,14 @@ function routeRawToOperationalSheetsInMemory_(ss, rawValues, headerIndexRaw, pic
   const scFarhanName = (opsPolicy && opsPolicy.SHEETS && opsPolicy.SHEETS.SC_FARHAN) ? opsPolicy.SHEETS.SC_FARHAN : 'SC - Farhan';
   const scMeilaniName = (opsPolicy && opsPolicy.SHEETS && opsPolicy.SHEETS.SC_MEILANI) ? opsPolicy.SHEETS.SC_MEILANI : 'SC - Meilani';
 
-  const scIvanName = (opsPolicy && opsPolicy.SHEETS && (opsPolicy.SHEETS.SC_IVAN || opsPolicy.SHEETS.SC_IVAN_NAME)) ? (opsPolicy.SHEETS.SC_IVAN || opsPolicy.SHEETS.SC_IVAN_NAME) : 'SC - Ivan';
+  const scIvanName = (opsPolicy && opsPolicy.SHEETS && (opsPolicy.SHEETS.SC_IVAN || opsPolicy.SHEETS.SC_IVAN_NAME)) ? (opsPolicy.SHEETS.SC_IVAN || opsPolicy.SHEETS.SC_IVAN_NAME) : 'SC - Meindar';
 
   const scFallbackName = 'SC - Unmapped';
 
   const scKeywords = (opsPolicy && opsPolicy.SC_NAME_KEYWORDS) ? opsPolicy.SC_NAME_KEYWORDS : {};
   const kwFarhan = scKeywords[scFarhanName] || scKeywords['SC - Farhan'] || [];
   const kwMeilani = scKeywords[scMeilaniName] || scKeywords['SC - Meilani'] || [];
-  const kwIvan = scKeywords[scIvanName] || scKeywords['SC - Ivan'] || [];
+  const kwIvan = scKeywords[scIvanName] || scKeywords['SC - Meindar'] || [];
 
   const idxClaim = headerIndexRaw[h.claimNumber];
   const idxLastStatus = headerIndexRaw[h.lastStatus];

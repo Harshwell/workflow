@@ -147,8 +147,21 @@ function runSmoke() {
     throw new Error(`runSelfCheck_ reported failure:\n${payload}`);
   }
 
+  // Regression guard:
+  // 05a helper must normalize missing header to -1
+  // because downstream code relies on -1 sentinel checks.
+  const guard = vm.runInContext(`(function () {
+    if (typeof __findHeaderIndex05a_ !== 'function') return { ok: false, reason: '__findHeaderIndex05a_ missing' };
+    const miss = __findHeaderIndex05a_(['A', 'B'], 'C');
+    const hit = __findHeaderIndex05a_(['A', 'B'], 'B');
+    return { ok: miss === -1 && hit === 1, miss: miss, hit: hit };
+  })()`, ctx);
+  if (!guard || guard.ok !== true) {
+    throw new Error('05a header-index regression guard failed: ' + JSON.stringify(guard || {}));
+  }
+
   console.log('✅ static_smoke_check: PASS');
-  console.log(JSON.stringify({ ok: report.ok, warnings: report.warnings || [], summary: report.summary || {} }, null, 2));
+  console.log(JSON.stringify({ ok: report.ok, warnings: report.warnings || [], summary: report.summary || {}, guard: guard }, null, 2));
 }
 
 try {
