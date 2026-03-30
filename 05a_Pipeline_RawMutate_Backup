@@ -1,1083 +1,1147 @@
-/***************************************************************
- * 04_ParseAndAging.gs
- * Enterprise Edition — Upload context, file parsing, aging join helpers (Split-05 compatible)
- * Refactor focus: fewer Drive calls, typed coercion entrypoints
- ***************************************************************/
+/***************************************
+ * 05a_Pipeline_RawMutate_Backup.gs
+ * Split from: 05_Pipeline_Routing_Optional.gs
+ * Scope:
+ *  - Safe fallbacks (FORMATS / OPTIONAL flags / SPECIAL flags)
+ *  - RAW write helpers
+ *  - Typed date/OR helpers
+ *  - Associate mapping + Raw in-memory mutation (aging + QL/ML/MQ + Associate + OR defaulting)
+ *  - Backup operational columns -> Raw (in-memory)
+ *  - Raw minimal column writeback
+ ***************************************/
+
+/** REVISION NOTE (2026-01-26)
+ * - Added 'SC - Ivan' to the last-resort operational sheet list in getOperationalSheetsForBackup_(),
+ *   aligned with 3-way SC routing (Farhan/Meilani/Ivan).
+ */
+
+/***************************************
+ * 05_Pipeline_Routing_Optional.gs
+ * Enterprise refactor:
+ * - Typed date/datetime/timestamp writes (no mixed string dates)
+ * - Avoid validation violations (Associate unknown => blank)
+ * - Admin skips optional sheets (B2B / Special Case / EV-Bike)
+ * - Special Case rules per request (year>=MIN_SUBMISSION_YEAR, Q-L 0/1, exclude done statuses, numeric money)
+ * - OR standardized:
+ *    - OR        = checkbox (TRUE/FALSE) for operational sheets
+ *    - OR Amount = claim_own_risk_amount (numeric) for money usage (Special Case, or any sheet with "OR Amount")
+ * - Consistent column formatting & alignment (minimal calls)
+ ***************************************/
 'use strict';
 
-/** ---------- Safe global accessors ---------- */
-function pipelineFlag_(key, fallback) {
-  try {
-    if (typeof PIPELINE_FLAGS !== 'undefined' && PIPELINE_FLAGS && Object.prototype.hasOwnProperty.call(PIPELINE_FLAGS, key)) {
-      return !!PIPELINE_FLAGS[key];
-    }
-  } catch (e) {}
-  return !!fallback;
-}
-function isDryRunLocal_() {
-  try {
-    if (typeof isDryRun_ === 'function') return !!isDryRun_();
-    if (typeof DRY_RUN !== 'undefined') return !!DRY_RUN;
-  } catch (e) {}
-  return false;
-}
 
-
-/** ---------- Segment wrappers (04) ---------- */
-function startSeg04_(label, detail) {
-  try {
-    if (typeof startSegment_ === 'function') return startSegment_(label, detail);
-  } catch (e) {}
-  return { label: String(label || ''), detail: String(detail || ''), t0: Date.now() };
-}
-
-function endSeg04_(seg, meta, msg, level) {
-  try {
-    if (typeof endSegment_ === 'function') return endSegment_(seg, meta, msg, level);
-  } catch (e) {}
-
-  // Fallback logging (keeps runs debuggable even if the segment framework isn't loaded).
-  try {
-    var dur = (seg && seg.t0) ? (Date.now() - seg.t0) : null;
-    var parts = [];
-    parts.push('[04]');
-    parts.push(level || 'INFO');
-    if (seg && seg.label) parts.push(String(seg.label));
-    if (dur != null) parts.push('(' + dur + 'ms)');
-    if (msg) parts.push(String(msg));
-    if (meta) parts.push('| ' + String(meta));
-    Logger.log(parts.join(' '));
-  } catch (e2) {}
-}
-
-/** ---------- Header normalization ---------- */
-function cleanHeaderCell_(v) {
-  // Remove UTF-8 BOM, normalize whitespace and NBSP; helps prevent header mismatches.
-  const s = String(v == null ? '' : v)
-    .replace(/^\ufeff/, '')
-    .replace(/\u00a0/g, ' ')
-    .replace(/\u200b/g, '')
-    .replace(/\s+/g, ' ')
-    .trim();
-
-  // Optional: canonicalize to snake_case for schema/type registries that expect keys like "claim_number".
-  // Default is OFF to avoid breaking sheets that rely on human-readable headers.
-  if (pipelineFlag_('CANONICALIZE_HEADERS', false)) {
-    return s
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, '_')
-      .replace(/^_+|_+$/g, '')
-      .replace(/_+/g, '_');
-  }
-
-  return s;
-}
-/**
- * cleanHeaderKey04_(v) -> string
- * Canonical comparison key for header matching (NOT for display).
- * Uses cleanHeaderCell_ + extra normalization (zero-width, punctuation).
- */
-function cleanHeaderKey04_(v) {
-  const base = cleanHeaderCell_(v);
-  return String(base == null ? '' : base)
-    .replace(/\u200b/g, '')            // zero-width space
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, ' ')
-    .replace(/\s+/g, ' ')
+/** Normalize header cell text: trim + remove BOM + replace NBSP + collapse whitespace. */
+function __normalizeHeaderText05a_(v) {
+  return String(v == null ? '' : v)
+    .replace(/^\uFEFF/, '')       // BOM
+    .replace(/\u00A0/g, ' ')      // NBSP
+    .replace(/\s+/g, ' ')         // collapse spaces/tabs/newlines
     .trim();
 }
 
 
-
-
-/** ---------- Header/table helpers (04) ---------- */
-function debugLog04_(msg) {
+/** Case-insensitive exact header matcher (backup/restore resilience). */
+function __findHeaderIndex05a_(headerRow, name) {
   try {
-    if (typeof log_ === 'function') return log_(msg);
-  } catch (e) {}
-  try { Logger.log(msg); } catch (e2) {}
-}
-
-function dedupeHeader_(header) {
-  const seen = Object.create(null);
-  const out = new Array(header.length);
-  for (let i = 0; i < header.length; i++) {
-    const base = cleanHeaderCell_(header[i] == null ? '' : header[i]);
-    const key = String(base || '').toLowerCase();
-    if (!key) { out[i] = base; continue; }
-    if (!seen[key]) { seen[key] = 1; out[i] = base; continue; }
-    seen[key] += 1;
-    out[i] = base + '__' + seen[key];
-  }
-  return out;
-}
-
-function trimEmptyColumns_(values, startRow, endRow) {
-  // Determine last column with any non-empty cell between startRow..endRow (inclusive).
-  let lastCol = 0;
-  const sr = Math.max(0, startRow || 0);
-  const er = Math.min(values.length - 1, (endRow == null ? values.length - 1 : endRow));
-  for (let r = sr; r <= er; r++) {
-    const row = values[r] || [];
-    for (let c = row.length - 1; c >= 0; c--) {
-      const v = row[c];
-      if (v !== '' && v != null) { if (c + 1 > lastCol) lastCol = c + 1; break; }
-    }
-  }
-  if (lastCol <= 0) return values;
-  return values.map(r => (r || []).slice(0, lastCol));
-}
-
-function pickHeaderRowIndex_(values) {
-  // Heuristic: only shift header row if row-0 is clearly a title row and a later row has much richer headers.
-  const maxScan = Math.min(20, values.length);
-  const countNonEmpty = row => (row || []).reduce((n, v) => (v !== '' && v != null ? n + 1 : n), 0);
-
-  const c0 = countNonEmpty(values[0] || []);
-  let bestIdx = 0;
-  let best = c0;
-
-  for (let i = 1; i < maxScan; i++) {
-    const c = countNonEmpty(values[i] || []);
-    if (c > best) { best = c; bestIdx = i; }
-  }
-
-  // shift only when clearly better and row0 looks sparse
-  if (bestIdx !== 0 && best >= 5 && (c0 < 5) && (best >= c0 + 2)) return bestIdx;
-  return 0;
-}
-
-function extractTableFromValues04_(values) {
-  if (!values || !values.length) return { header: [], rows: [] };
-
-  const trimmed = trimEmptyColumns_(values, 0, Math.min(values.length - 1, 10));
-  const headerRowIndex = pipelineFlag_('SMART_HEADER_DETECT', true) ? pickHeaderRowIndex_(trimmed) : 0;
-
-  const headerRaw = trimmed[headerRowIndex] || [];
-  let header = headerRaw.map(cleanHeaderCell_);
-
-  if (pipelineFlag_('DEDUP_HEADERS', true)) header = dedupeHeader_(header);
-
-  const rows = trimmed.slice(headerRowIndex + 1);
-  return { header, rows };
-}
-
-
-
-/** ---------- Drive ID extraction ---------- */
-function extractDriveIdFromUrl_(input) {
-  if (!input) return '';
-  const s = String(input).trim();
-  const looksLike_ = (token) => /^[A-Za-z0-9_-]{25,}$/.test(String(token == null ? '' : token).trim());
-
-  if (!s) return '';
-
-  // Prefer explicit URL patterns first (least ambiguous).
-  const patterns = [
-    /\/d\/([A-Za-z0-9_-]{25,})/i,              // .../d/<id>/...
-    /\bid=([A-Za-z0-9_-]{25,})/i,               // ...id=<id>
-    /\/folders\/([A-Za-z0-9_-]{25,})/i,        // .../folders/<id>
-    /\/file\/d\/([A-Za-z0-9_-]{25,})/i        // .../file/d/<id>
-  ];
-  for (let i = 0; i < patterns.length; i++) {
-    const m = s.match(patterns[i]);
-    if (m && m[1]) return m[1];
-  }
-
-  // Fallback: scan for any plausible token.
-  const candidates = s.match(/[A-Za-z0-9_-]{25,}/g) || [];
-  for (let i = 0; i < candidates.length; i++) {
-    const c = candidates[i];
-    if (looksLike_(c)) return c;
-  }
-
-  // Raw id pasted alone.
-  if (looksLike_(s)) return s;
-
-  return '';
-}
-
-
-function extractFileIdsFromArray_(arr) {
-  const ids = [];
-  (arr || []).forEach(v => {
-    if (!v) return;
-    String(v).split(/[,;\n]/).forEach(p => {
-      const id = extractDriveIdFromUrl_(p);
-      if (id) ids.push(id);
-    });
-  });
-  return Array.from(new Set(ids));
-}
-
-/** ---------- Context extraction (Form submit) ---------- */
-/**
- * NOTE:
- * - Legacy "Extract to Spreadsheet" / PIC routing is removed.
- * - Form upload is an optional/manual flow that always targets the single master workbook.
- * - This helper only extracts Drive file IDs from the file upload field (default: "Metabase - Upload Claim Data"),
- *   with robust fallbacks scanning the response row values.
- */
-
-/**
- * @deprecated Legacy PIC detection when multiple target spreadsheets were used.
- * Always returns '' in the single-master pipeline.
- */
-function detectPicFromRowValues_(rowVals) {
-  return '';
-}
-
-function detectFileIdsFromRowValues_(rowVals) {
-  if (!rowVals) return [];
-  return extractFileIdsFromArray_([rowVals.join('\n')]);
-}
-
-/**
- * getSubmissionContext_(e) => { fileIds, targetSpreadsheetId, targetRawSheetName, ... }
- * Keeps extractToSpreadsheet for backward compatibility, but it is unused in the new flow.
- */
-function getSubmissionContext_(e) {
-  const ctx = {
-    extractToSpreadsheet: '', // legacy; unused
-    targetSpreadsheetId: (typeof MASTER_SPREADSHEET_ID !== 'undefined') ? MASTER_SPREADSHEET_ID : '',
-    targetRawSheetName: (typeof MASTER_RAW_SHEET_NAME !== 'undefined') ? MASTER_RAW_SHEET_NAME : '',
-    fileIds: [],
-    sub: { oldFileIds: [], newFileIds: [] },
-    source: 'FORM',
-    // Backward-compat: "flow" is best-effort. Prefer ctx.requestedFlowLabel.
-    flow: 'MANUAL',
-    requestedFlowLabel: ''
-  };
-
-  const cfg = (typeof CONFIG !== 'undefined' && CONFIG) ? CONFIG : {};
-  const formFields = cfg.formFields || {};
-
-  const uploadFieldName = String(formFields.fileUploadFieldName || 'file_upload').toLowerCase().trim();
-  const flowFieldName = String(formFields.flowFieldName || 'flow').toLowerCase().trim();
-  const subOldFieldName = String(formFields.subOldFileUploadFieldName || '').toLowerCase().trim();
-  const subNewFieldName = String(formFields.subNewFileUploadFieldName || '').toLowerCase().trim();
-
-  const parseFlowLabel = (v) => {
-    const s = String(v || '').trim().toUpperCase();
-    if (!s) return '';
-    if (s.indexOf('SUB') > -1) return 'SUB';
-    if (s.indexOf('MAIN') > -1) return 'MAIN';
-    return '';
-  };
-
-  const addIds = (arr, v) => {
-    if (!v) return;
-    const ids = extractFileIdsFromArray_([v]);
-    if (!ids.length) return;
-    for (let i = 0; i < ids.length; i++) arr.push(ids[i]);
-  };
-
-  const keyMatch = (k, fieldNameLower) => {
-    if (!k || !fieldNameLower) return false;
-    return String(k).toLowerCase().indexOf(fieldNameLower) > -1;
-  };
-
-  // 1) Prefer namedValues (fast, reliable)
-  try {
-    const named = e && e.namedValues ? e.namedValues : {};
-    Object.keys(named).forEach(k => {
-      const rawVal = named[k];
-      const arr = Array.isArray(rawVal) ? rawVal : [rawVal];
-      arr.forEach(v => {
-        if (v == null || v === '') return;
-
-        // Flow selector
-        if (flowFieldName && keyMatch(k, flowFieldName) && !ctx.requestedFlowLabel) {
-          const f = parseFlowLabel(v);
-          if (f) ctx.requestedFlowLabel = f;
-          return;
-        }
-
-        // Optional split SUB fields
-        if (subOldFieldName && keyMatch(k, subOldFieldName)) { addIds(ctx.sub.oldFileIds, v); return; }
-        if (subNewFieldName && keyMatch(k, subNewFieldName)) { addIds(ctx.sub.newFileIds, v); return; }
-
-        // Primary: file upload field
-        if (uploadFieldName && keyMatch(k, uploadFieldName)) { addIds(ctx.fileIds, v); return; }
-
-        // Secondary: scan other fields for pasted Drive links/IDs
-        addIds(ctx.fileIds, v);
-      });
-    });
-  } catch (err) {}
-
-  // Normalize + de-dupe
-  ctx.fileIds = Array.from(new Set(ctx.fileIds)).filter(Boolean);
-  ctx.sub.oldFileIds = Array.from(new Set(ctx.sub.oldFileIds)).filter(Boolean);
-  ctx.sub.newFileIds = Array.from(new Set(ctx.sub.newFileIds)).filter(Boolean);
-
-  if (ctx.requestedFlowLabel) ctx.flow = ctx.requestedFlowLabel;
-
-  if (ctx.fileIds.length || ctx.sub.oldFileIds.length || ctx.sub.newFileIds.length) return ctx;
-
-  // 2) Fallback: read response row (single read)
-  try {
-    let sheet, rowIndex, lastCol;
-
-    if (e && e.range && e.range.getSheet) {
-      sheet = e.range.getSheet();
-      rowIndex = e.range.getRow();
-      lastCol = sheet.getLastColumn();
-    } else {
-      const respSs = SpreadsheetApp.openById(RESPONSES_SPREADSHEET_ID);
-      sheet = RESPONSES_SHEET_NAME ? respSs.getSheetByName(RESPONSES_SHEET_NAME) : respSs.getSheets()[0];
-      rowIndex = sheet.getLastRow();
-      lastCol = sheet.getLastColumn();
-    }
-
-    if (sheet && rowIndex && lastCol && lastCol > 0) {
-      const header = sheet.getRange(1, 1, 1, lastCol).getValues()[0].map(cleanHeaderCell_);
-      const headerLower = header.map(v => cleanHeaderKey04_(v));
-      const rowVals = sheet.getRange(rowIndex, 1, 1, lastCol).getValues()[0];
-
-      const findHeaderIdx = (pred) => {
-        for (let c = 0; c < headerLower.length; c++) if (pred(headerLower[c], c)) return c;
-        return -1;
-      };
-
-      const idxFlow = flowFieldName
-        ? findHeaderIdx((h) => h.indexOf(flowFieldName) > -1)
-        : -1;
-      if (idxFlow > -1) {
-        const f = parseFlowLabel(rowVals[idxFlow]);
-        if (f) { ctx.requestedFlowLabel = f; ctx.flow = f; }
-      }
-
-      const idxOld = subOldFieldName
-        ? findHeaderIdx((h) => h.indexOf(subOldFieldName) > -1)
-        : -1;
-      if (idxOld > -1) addIds(ctx.sub.oldFileIds, rowVals[idxOld]);
-
-      const idxNew = subNewFieldName
-        ? findHeaderIdx((h) => h.indexOf(subNewFieldName) > -1)
-        : -1;
-      if (idxNew > -1) addIds(ctx.sub.newFileIds, rowVals[idxNew]);
-
-      // find upload column by header match (backward-compatible heuristics)
-      let idxFile = -1;
-      const fileField = uploadFieldName;
-      idxFile = findHeaderIdx((h) => (
-        (fileField && h.indexOf(fileField) > -1) ||
-        h.indexOf('metabase') > -1 ||
-        h.indexOf('upload') > -1 ||
-        h.indexOf('file') > -1
-      ));
-
-      if (idxFile > -1) addIds(ctx.fileIds, rowVals[idxFile]);
-
-      // brute fallback: scan values
-      if (ctx.fileIds.length === 0 && ctx.sub.oldFileIds.length === 0 && ctx.sub.newFileIds.length === 0) {
-        ctx.fileIds = detectFileIdsFromRowValues_(rowVals);
-      }
-    }
-  } catch (err2) {}
-
-  ctx.fileIds = Array.from(new Set(ctx.fileIds)).filter(Boolean);
-  ctx.sub.oldFileIds = Array.from(new Set(ctx.sub.oldFileIds)).filter(Boolean);
-  ctx.sub.newFileIds = Array.from(new Set(ctx.sub.newFileIds)).filter(Boolean);
-  if (ctx.requestedFlowLabel) ctx.flow = ctx.requestedFlowLabel;
-
-  return ctx;
-}
-
-
-/** ---------- File metadata cache (reduces Drive I/O) ---------- */
-const _FILE_META_CACHE = Object.create(null);
-
-/**
- * getFileMetaCached_(id) => { id, nameLower, name, updatedMs, mimeType } | null
- */
-function getFileMetaCached_(id) {
-  if (!id) return null;
-  if (_FILE_META_CACHE[id] !== undefined) return _FILE_META_CACHE[id];
-
-  try {
-    const f = DriveApp.getFileById(id);
-    const name = f.getName();
-    const meta = {
-      id,
-      name,
-      nameLower: String(name || '').toLowerCase(),
-      updatedMs: f.getLastUpdated().getTime(),
-      mimeType: (function() { try { return f.getMimeType(); } catch (e) { return ''; } })()
-    };
-    _FILE_META_CACHE[id] = meta;
-    return meta;
-  } catch (e) {
-    _FILE_META_CACHE[id] = null;
-    return null;
-  }
-}
-
-/** ---------- Trash control (deferred support) ---------- */
-/**
- * By default, this pipeline may trash uploaded source files (if PIPELINE_FLAGS.TRASH_UPLOADED_FILES=true).
- * To avoid losing inputs when downstream steps fail, callers can set:
- *   RUNTIME.deferTrashUploadedFiles = true
- * Then this module will queue fileIds into RUNTIME.filesToTrash, and the orchestrator can flush later
- * using flushTrashQueueBestEffort_().
- */
-function shouldDeferTrashUploads_() {
-  try {
-    if (typeof RUNTIME !== 'undefined' && RUNTIME && RUNTIME.deferTrashUploadedFiles === true) return true;
-  } catch (e) {}
-  return false;
-}
-
-function enqueueTrashFileId_(fileOrId) {
-  if (!fileOrId) return;
-  if (isDryRunLocal_()) return;
-  if (!pipelineFlag_('TRASH_UPLOADED_FILES', false)) return;
-
-  try {
-    if (typeof RUNTIME === 'undefined' || !RUNTIME) return;
-    const id = (typeof fileOrId === 'string')
-      ? String(fileOrId)
-      : (fileOrId.getId ? String(fileOrId.getId()) : '');
-    if (!id) return;
-
-    if (!Array.isArray(RUNTIME.filesToTrash)) RUNTIME.filesToTrash = [];
-    if (RUNTIME.filesToTrash.indexOf(id) === -1) RUNTIME.filesToTrash.push(id);
-  } catch (e) {
-    // best effort only
-  }
-}
-
-/** Trash queued uploads at end of a successful run (best effort). */
-function flushTrashQueueBestEffort_(segLabel) {
-  if (isDryRunLocal_()) return;
-  if (!pipelineFlag_('TRASH_UPLOADED_FILES', false)) return;
-
-  let ids = [];
-  try {
-    if (typeof RUNTIME !== 'undefined' && RUNTIME && Array.isArray(RUNTIME.filesToTrash)) {
-      ids = RUNTIME.filesToTrash.slice();
-      RUNTIME.filesToTrash = [];
+    if (typeof findHeaderIndexByCandidates_ === 'function') {
+      return findHeaderIndexByCandidates_(headerRow, [name]);
     }
   } catch (e) {}
-
-  if (!ids.length) return;
-
-  const seg = startSeg04_(segLabel || 'Trash uploads', 'Trash queued uploads');
-  let trashed = 0;
-
-  for (let i = 0; i < ids.length; i++) {
-    try {
-      DriveApp.getFileById(ids[i]).setTrashed(true);
-      trashed++;
-    } catch (e) {
-      // ignore
-    }
+  const want = __normalizeHeaderText05a_(name).toLowerCase();
+  if (!want) return -1;
+  const h = Array.isArray(headerRow) ? headerRow : [];
+  for (let i = 0; i < h.length; i++) {
+    const v = __normalizeHeaderText05a_(h[i]).toLowerCase();
+    if (v === want) return i;
   }
-
-  endSeg04_(seg, 'count=' + ids.length + ' | trashed=' + trashed, 'Trash queued uploads', 'INFO');
+  return -1;
 }
 
-function trashFileBestEffort_(fileOrId) {
-  if (!fileOrId) return;
-  if (isDryRunLocal_()) return;
-  if (!pipelineFlag_('TRASH_UPLOADED_FILES', false)) return;
+
+/** Best-effort resolver for the Raw sheet (used to persist manual fields like Remarks). */
+function __resolveRawSheet05a_(ss) {
+  if (!ss) return null;
+
+  // Prefer CONFIG if provided
   try {
-    if (typeof fileOrId === 'string') DriveApp.getFileById(fileOrId).setTrashed(true);
-    else fileOrId.setTrashed(true);
-  } catch (e) {}
-}
-
-function maybeTrashOrQueueFile_(fileOrId) {
-  if (!fileOrId) return;
-  if (shouldDeferTrashUploads_()) enqueueTrashFileId_(fileOrId);
-  else trashFileBestEffort_(fileOrId);
-}
-
-/** ---------- Parse uploaded file ---------- */
-
-function parseUploadedFile_(fileId, segLabel) {
-  const seg = startSeg04_(segLabel, 'Parse file ' + fileId);
-
-  try {
-    const file = DriveApp.getFileById(fileId);
-    const name = file.getName();
-    const mime = (function() { try { return file.getMimeType(); } catch (e) { return ''; } })();
-    const ext = (function() {
-      const parts = String(name || '').split('.');
-      return (parts.length > 1) ? String(parts.pop() || '').toLowerCase() : '';
-    })();
-
-    let result = null;
-
-    // 1) Google Sheets file (no conversion needed)
-    if (mime === MimeType.GOOGLE_SHEETS || mime === 'application/vnd.google-apps.spreadsheet') {
-      result = parseGoogleSheetFile_(fileId);
-    } else {
-      // 2) Blob-based parsing
-      const blob = file.getBlob();
-
-      if (ext === 'xlsx' || ext === 'xls' || ext === 'xlsm' || ext === 'xltx' || ext === 'xltm') result = parseXlsx_(blob, name);
-      else if (mime === 'application/vnd.ms-excel' || mime === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet') result = parseXlsx_(blob, name);
-      else if (ext === 'csv' || mime === 'text/csv') result = parseCsv_(blob);
-      else if (ext === 'json' || mime === 'application/json') result = parseJson_(blob);
-      else {
-        // Some exports come as .txt but CSV content
-        if (ext === 'txt') result = parseCsv_(blob);
-        else {
-          endSeg04_(seg, 'ext=' + (ext || '(none)') + ' | mime=' + mime, 'Unsupported file; skipped', 'WARN');
-          return null;
+    if (typeof CONFIG !== 'undefined' && CONFIG && CONFIG.sheets) {
+      const candidates = []
+        .concat(CONFIG.sheets.rawData || [])
+        .concat(CONFIG.sheets.raw || [])
+        .concat(CONFIG.sheets.raw_sheet || [])
+        .concat(CONFIG.sheets.rawSheet || []);
+      for (let i = 0; i < candidates.length; i++) {
+        const name = candidates[i];
+        if (name && typeof name === 'string') {
+          const sh = ss.getSheetByName(name);
+          if (sh) return sh;
         }
       }
     }
+  } catch (e) {}
 
-    // trash original upload (or queue for end-of-run)
-    maybeTrashOrQueueFile_(file);
-
-    endSeg04_(
-      seg,
-      'rows=' + (result.rows ? result.rows.length : 0) + ' | cols=' + (result.header ? result.header.length : 0),
-      name,
-      'INFO'
-    );
-
-    return { header: result.header, rows: result.rows, name, ext, mimeType: mime, fileId };
-  } catch (err) {
-    endSeg04_(seg, '', 'Error parsing file: ' + err, 'ERROR');
-    throw err;
+  // Common defaults
+  const names = ['Raw Data', 'RawData', 'RAW DATA', 'Raw', 'RAW'];
+  for (let i = 0; i < names.length; i++) {
+    const sh = ss.getSheetByName(names[i]);
+    if (sh) return sh;
   }
-}
-
-/** ---------- Parse Google Sheets file (already converted) ---------- */
-function parseGoogleSheetFile_(spreadsheetId) {
-  const ss = SpreadsheetApp.openById(spreadsheetId);
-  const sh = ss.getSheets()[0];
-  const lr = sh.getLastRow(), lc = sh.getLastColumn();
-  const values = (lr > 0 && lc > 0) ? sh.getRange(1, 1, lr, lc).getValues() : [[]];
-
-  // Support title rows above the real header (common in XLSX->Sheets conversions).
-  return extractTableFromValues04_(values);
-}
-
-
-/** ---------- XLSX parsing (convert to temp sheet) ---------- */
-function parseXlsx_(blob, name) {
-  let tempFile = null;
-  try {
-    // Requires Advanced Drive Service enabled: Drive API (v2)
-    if (typeof Drive === 'undefined' || !Drive.Files || !Drive.Files.insert) {
-      throw new Error('Advanced Drive Service not enabled (Drive API v2).');
-    }
-
-    // Convert XLSX -> Google Sheets
-    const resource = { title: 'TMP_' + name, mimeType: MimeType.GOOGLE_SHEETS };
-    tempFile = Drive.Files.insert(resource, blob, { convert: true });
-
-    const tempSs = SpreadsheetApp.openById(tempFile.id);
-    const sh = tempSs.getSheets()[0];
-
-    const lr = sh.getLastRow(), lc = sh.getLastColumn();
-    const values = (lr > 0 && lc > 0) ? sh.getRange(1, 1, lr, lc).getValues() : [[]];
-
-    return extractTableFromValues04_(values);
-  } catch (e) {
-    throw new Error('XLSX parse failed. Enable Advanced Drive Service "Drive API (v2)". Detail: ' + e);
-  } finally {
-    try {
-      if (tempFile && tempFile.id && !isDryRunLocal_()) DriveApp.getFileById(tempFile.id).setTrashed(true);
-    } catch (e2) {}
-  }
-}
-
-/** ---------- CSV parsing (delimiter auto-detect) ---------- */
-function guessCsvDelimiter_(text) {
-  // sample first ~5 lines
-  const sample = String(text || '').split(/\r?\n/).slice(0, 5).join('\n');
-
-  const score = d => (sample.split(d).length - 1);
-  const sComma = score(',');
-  const sSemi  = score(';');
-  const sTab   = score('\t');
-
-  // choose max
-  if (sTab >= sSemi && sTab >= sComma && sTab > 0) return '\t';
-  if (sSemi >= sComma && sSemi > 0) return ';';
-  return ','; // default
-}
-
-function parseCsv_(blob) {
-  const text = blob.getDataAsString();
-  if (!text) return { header: [], rows: [] };
-
-  const delim = guessCsvDelimiter_(text);
-  const allRows = Utilities.parseCsv(text, delim);
-
-  if (!allRows.length) return { header: [], rows: [] };
-  return extractTableFromValues04_(allRows);
-}
-
-/** ---------- JSON parsing ---------- */
-function parseJson_(blob) {
-  const text = blob.getDataAsString();
-  if (!text) return { header: [], rows: [] };
-
-  const data = JSON.parse(text);
-  if (!Array.isArray(data) || !data.length) return { header: [], rows: [] };
-
-  const rawKeys = Object.keys(data[0]);
-  const header = rawKeys.map(cleanHeaderCell_);
-  const rows = data.map(o => rawKeys.map(k => o[k]));
-  return { header, rows };
-}
-
-/** ---------- File classification (single-pass, cached meta) ---------- */
-function classifyFiles_(fileIds) {
-  const uniqIds = Array.from(new Set(fileIds || [])).filter(Boolean);
-
-  const cfg = (typeof CONFIG !== 'undefined' && CONFIG) ? CONFIG : {};
-  const pref = cfg.filePrefixes || {};
-
-  const pAgingStd = String(pref.agingStd || '').toLowerCase().trim();
-  const pAging    = String(pref.aging || '').toLowerCase().trim();
-  const pMain     = String(pref.main || '').toLowerCase().trim();
-
-  const bucket = { main: [], aging: [], agingStd: [], unknown: [] };
-
-  // Heuristic classifiers (only used when prefix-based match fails).
-  // Keeps behavior backward-compatible while making email ingestion more resilient to filename variations.
-  const heur = {
-    agingStd: [/aging\s*std/i, /aging\s*standard/i, /standard\s*aging/i, /aging[_\- ]?standard/i, /aging[_\- ]?std/i],
-    aging:    [/\baging\b/i, /\btat\b/i, /\bala\b/i, /\blsa\b/i, /\bsla\b/i,
-              /activity\s*log\s*aging/i, /activity[_\- ]?log[_\- ]?aging/i,
-              /last\s*status\s*aging/i, /last[_\- ]?status[_\- ]?aging/i],
-    main:     [/claim\s*daily\s*monitoring/i, /daily\s*claim\s*monitoring/i, /daily\s*monitoring/i, /claim\s*monitoring/i, /\bdashboard\b/i]
-  };
-
-  const classifyByHeur = nameLower => {
-    const n = String(nameLower || '');
-    for (let i = 0; i < heur.agingStd.length; i++) if (heur.agingStd[i].test(n)) return 'agingStd';
-    for (let i = 0; i < heur.aging.length; i++) if (heur.aging[i].test(n)) return 'aging';
-    for (let i = 0; i < heur.main.length; i++) if (heur.main[i].test(n)) return 'main';
-    return null;
-  };
-
-  (uniqIds || []).forEach(id => {
-    const meta = getFileMetaCached_(id);
-    if (!meta) { bucket.unknown.push(id); return; }
-
-    const name = meta.nameLower || '';
-
-    // 1) Prefix-based classification (preferred)
-    if (pAgingStd && name.indexOf(pAgingStd) > -1) bucket.agingStd.push(meta);
-    else if (pAging && name.indexOf(pAging) > -1) bucket.aging.push(meta);
-    else if (pMain && name.indexOf(pMain) > -1) bucket.main.push(meta);
-    else {
-      // 2) Heuristic classification
-      const t = classifyByHeur(name);
-      if (t === 'agingStd') bucket.agingStd.push(meta);
-      else if (t === 'aging') bucket.aging.push(meta);
-      else if (t === 'main') bucket.main.push(meta);
-      else bucket.unknown.push(id);
-    }
-  });
-
-  // Backward-compatible fallback: single unknown treated as main
-  if (bucket.main.length === 0 && bucket.unknown.length === 1) {
-    const onlyId = bucket.unknown[0];
-    const m = getFileMetaCached_(onlyId);
-    if (m) bucket.main.push(m);
-    bucket.unknown = [];
-  }
-
-  const pickNewestMeta = metas => {
-    if (!metas || !metas.length) return null;
-    let best = metas[0];
-    for (let i = 1; i < metas.length; i++) {
-      if ((metas[i].updatedMs || 0) > (best.updatedMs || 0)) best = metas[i];
-    }
-    return best;
-  };
-
-  const mainBest = pickNewestMeta(bucket.main);
-  const agingBest = pickNewestMeta(bucket.aging);
-  const agingStdBest = pickNewestMeta(bucket.agingStd);
-
-  // Debug summary (helps diagnose why Activity Log Aging/TAT might remain blank due to missing aging files).
-  debugLog04_('[04] classifyFiles_: main=' + (mainBest ? mainBest.name : '-') +
-             ', aging=' + (agingBest ? agingBest.name : '-') +
-             ', agingStd=' + (agingStdBest ? agingStdBest.name : '-') +
-             ', unknown=' + (bucket.unknown.length || 0));
-
-  return {
-    main: mainBest ? [mainBest.id] : [],
-    aging: agingBest ? [agingBest.id] : [],
-    agingStd: agingStdBest ? [agingStdBest.id] : [],
-    unknown: bucket.unknown
-  };
-}
-
-
-/** Backward-compatible helper retained (some callers may still call it) */
-function pickNewestFileId_(ids) {
-  if (!ids || !ids.length) return null;
-  const metas = ids.map(id => getFileMetaCached_(id)).filter(Boolean);
-  if (!metas.length) return ids[0] || null;
-  let best = metas[0];
-  for (let i = 1; i < metas.length; i++) {
-    if ((metas[i].updatedMs || 0) > (best.updatedMs || 0)) best = metas[i];
-  }
-  return best.id;
-}
-
-/** ---------- Aging map ---------- */
-function buildAgingMap_(agingData, claimHeaderName) {
-  if (!agingData || !agingData.header || !agingData.rows) return null;
-
-  // Normalize headers to reduce mismatch risk across XLSX/CSV variants.
-  const header = (agingData.header || []).map(cleanHeaderCell_);
-  const hMap = buildHeaderIndex_(header);
-
-  let idxClaim = hMap[claimHeaderName];
-
-  // Fallback: case/whitespace-insensitive match (when claimHeaderName is human-readable).
-  if (idxClaim == null) {
-    const want = cleanHeaderKey04_(claimHeaderName || '');
-    for (let i = 0; i < header.length; i++) {
-      if (cleanHeaderKey04_(header[i] || '') === want) { idxClaim = i; break; }
-    }
-  }
-
-  if (idxClaim == null) return null;
-
-  const map = Object.create(null);
-  for (let i = 0; i < agingData.rows.length; i++) {
-    const r = agingData.rows[i];
-    const key = String(r[idxClaim] || '').trim().toUpperCase();
-    if (key) map[key] = r;
-  }
-  return { header, headerIndex: hMap, map };
-}
-
-
-/** ---------- Typed coercion hook (used by later parts of 04/05) ---------- */
-/**
- * Normalize RAW type registry to support header renames (LSA/ALA -> Last Status Aging / Activity Log Aging).
- * This keeps coercion stable even when the upstream file uses the newer header labels.
- */
-function normalizeTypeRegistryAliases04_(typeRegistry) {
-  if (!typeRegistry) return typeRegistry;
-  const reg = {};
-  // shallow copy
-  Object.keys(typeRegistry).forEach(k => { reg[k] = typeRegistry[k]; });
-
-  // Forward aliases
-  if (reg['LSA'] && !reg['Last Status Aging']) reg['Last Status Aging'] = reg['LSA'];
-  if (reg['LSA'] && !reg['last_status_aging']) reg['last_status_aging'] = reg['LSA'];
-
-  if (reg['ALA'] && !reg['Activity Log Aging']) reg['Activity Log Aging'] = reg['ALA'];
-  if (reg['ALA'] && !reg['activity_log_aging']) reg['activity_log_aging'] = reg['ALA'];
-
-  // Reverse aliases (if config updated but older files still use LSA/ALA)
-  if (reg['Last Status Aging'] && !reg['LSA']) reg['LSA'] = reg['Last Status Aging'];
-  if (reg['Activity Log Aging'] && !reg['ALA']) reg['ALA'] = reg['Activity Log Aging'];
-
-  return reg;
-}
-
-/**
- * Coerce parsed dataset using RAW schema types if available.
- * - Only touches columns that match known RAW headers.
- * - Prevents "money becomes date" by coercing MONEY0 as Number and DATE as Date.
- */
-function coerceDatasetToRawSchema_(dataset) {
-  if (!dataset || !dataset.header || !dataset.rows) return dataset;
-
-  // prefer your global registry (00_Config)
-  const typeRegistry0 = (typeof COLUMN_TYPES !== 'undefined' && COLUMN_TYPES && COLUMN_TYPES.RAW) ? COLUMN_TYPES.RAW : null;
-  if (!typeRegistry0) return dataset;
-  const typeRegistry = normalizeTypeRegistryAliases04_(typeRegistry0);
-
-  const header = dataset.header.map(cleanHeaderCell_);
-  const coercedRows = new Array(dataset.rows.length);
-
-  for (let r = 0; r < dataset.rows.length; r++) {
-    coercedRows[r] = coerceRowByTypes_(header, dataset.rows[r], typeRegistry);
-  }
-
-  const out = { header, rows: coercedRows, name: dataset.name, ext: dataset.ext, mimeType: dataset.mimeType, fileId: dataset.fileId };
-  return coerceKnownDatetimeColumns04_(out);
-}
-
-/** ---------- SUB dashboard attachment helpers (NEW/OLD) ---------- */
-/**
- * SUB flow attachment typing rule (case-insensitive):
- * - NEW: filename contains "(Standardization)" (or just "standardization")
- * - OLD: filename contains "List of Claims with Aging" and does NOT contain "standardization"
- * Returns: 'NEW' | 'OLD' | null
- */
-function detectSubDashboardAttachmentType04_(filename) {
-  const n = String(filename || '').toLowerCase();
-  if (!n) return null;
-
-  // NEW first (priority)
-  if (n.indexOf('standardization') > -1) return 'NEW';
-
-  // OLD only if it's the classic "List of Claims with Aging" export
-  if (n.indexOf('list of claims with aging') > -1) return 'OLD';
-
   return null;
 }
 
-/**
- * Pick the best attachment for SUB run.
- * Input: array of Gmail attachments (Blob) or meta objects with .getName()/.name
- * Output: { type: 'NEW'|'OLD', attachment: <original> } | null
- */
-function pickSubDashboardAttachment04_(attachments) {
-  const list = Array.isArray(attachments) ? attachments : [];
-  if (!list.length) return null;
 
-  const scored = [];
-  for (let i = 0; i < list.length; i++) {
-    const a = list[i];
-    const name = (a && typeof a.getName === 'function') ? a.getName() : (a && a.name ? String(a.name) : '');
-    const type = detectSubDashboardAttachmentType04_(name);
-    if (!type) continue;
-    const pri = (type === 'NEW') ? 0 : 1;
-    scored.push({ pri, type, name: String(name || ''), attachment: a });
-  }
 
-  if (!scored.length) return null;
+// ---- Safe fallbacks (avoid ReferenceError) ----
 
-  scored.sort((x, y) => {
-    if (x.pri !== y.pri) return x.pri - y.pri;
-    // deterministic tie-breaker: lexicographic by filename
-    return x.name.localeCompare(y.name);
+
+// ---- Safe fallbacks (avoid ReferenceError / TDZ across files) ----
+var __FORMATS = (function () {
+  try { if (typeof FORMATS !== 'undefined' && FORMATS) return FORMATS; } catch (e) {}
+  try { if (typeof _FORMATS !== 'undefined' && _FORMATS) return _FORMATS; } catch (e) {}
+  return Object.freeze({
+    DATE: 'd mmm yy',
+    DATETIME: 'd mmm yy, HH:mm',
+    DATETIME_LONG: 'MMMM d, yyyy, h:mm AM/PM',
+    TIMESTAMP: 'd mmm, HH:mm',
+    INT: '0',
+    MONEY0: '#,##0'
   });
+})();
 
-  return { type: scored[0].type, attachment: scored[0].attachment };
-}
+var __OPTIONAL_FLAGS = (function () {
+  try { if (typeof OPTIONAL_SHEETS_FLAGS !== 'undefined' && OPTIONAL_SHEETS_FLAGS) return OPTIONAL_SHEETS_FLAGS; } catch (e) {}
+  return Object.freeze({});
+})();
 
+var __SPECIAL_FLAGS = (function () {
+  try { if (typeof SPECIAL_CASE_FLAGS !== 'undefined' && SPECIAL_CASE_FLAGS) return SPECIAL_CASE_FLAGS; } catch (e) {}
+  return Object.freeze({ MODE: 'UPSERT', COLORIZE_CLAIM_CELL: false });
+})();
 
-/** ---------- Known datetime coercion (SUB support) ---------- */
-/**
- * Some Metabase exports provide datetime fields as English month strings, e.g.:
- *   "January 24, 2025, 6:06 PM"
- * Downstream flows require these to be true Date objects so the sheet can format:
- * - SUB: dd MMM yy, HH:mm
- * - MAIN/FORM: dd MMM yy
- *
- * This module does NOT assume Raw OLD/Raw NEW are snapshots; it only normalizes types.
- */
+var __SPECIAL_RULES = (function () {
+  try { if (typeof SPECIAL_CASE_RULES !== 'undefined' && SPECIAL_CASE_RULES) return SPECIAL_CASE_RULES; } catch (e) {}
+  return Object.freeze({});
+})();
 
-function parseEnglishMonthDatetime04_(v) {
-  if (v == null || v === '') return null;
-  if (Object.prototype.toString.call(v) === '[object Date]' && !isNaN(v.getTime())) return v;
-
-  const s = String(v).trim();
-  if (!s) return null;
-
-  const months = {
-    jan: 0, january: 0,
-    feb: 1, february: 1,
-    mar: 2, march: 2,
-    apr: 3, april: 3,
-    may: 4,
-    jun: 5, june: 5,
-    jul: 6, july: 6,
-    aug: 7, august: 7,
-    sep: 8, sept: 8, september: 8,
-    oct: 9, october: 9,
-    nov: 10, november: 10,
-    dec: 11, december: 11
-  };
-
-  // Examples handled:
-  // - January 24, 2025, 6:06 PM
-  // - Jan 24, 2025 6:06 PM
-  // - January 24 2025, 18:06
-  const re = /^\s*([A-Za-z]+)\s+(\d{1,2})(?:st|nd|rd|th)?\s*,?\s*(\d{4})(?:\s*,?\s*(\d{1,2})\s*:\s*(\d{2})(?:\s*:\s*(\d{2}))?\s*(AM|PM)?)?\s*$/i;
-  const m = s.match(re);
-  if (!m) return null;
-
-  const monKey = String(m[1] || '').toLowerCase();
-  const monthIdx = (months.hasOwnProperty(monKey) ? months[monKey] : null);
-  if (monthIdx == null) return null;
-
-  const day = Number(m[2]);
-  const year = Number(m[3]);
-
-  let hh = (m[4] != null && m[4] !== '') ? Number(m[4]) : 0;
-  const mm = (m[5] != null && m[5] !== '') ? Number(m[5]) : 0;
-  const ss = (m[6] != null && m[6] !== '') ? Number(m[6]) : 0;
-  const ampm = String(m[7] || '').toUpperCase().trim();
-
-  if (ampm === 'PM' && hh < 12) hh += 12;
-  if (ampm === 'AM' && hh === 12) hh = 0;
-
-  const d = new Date(year, monthIdx, day, hh, mm, ss);
-  if (isNaN(d.getTime())) return null;
-  return d;
-}
-
-function parseYmdDatetime04_(v) {
-  if (v == null || v === '') return null;
-  if (Object.prototype.toString.call(v) === '[object Date]' && !isNaN(v.getTime())) return v;
-
-  const s = String(v).trim();
-  if (!s) return null;
-
-  // 2025-01-24 18:06(:ss)? or 2025/01/24 18:06
-  const re = /^\s*(\d{4})[-\/](\d{1,2})[-\/](\d{1,2})(?:[ T](\d{1,2}):(\d{2})(?::(\d{2}))?)?\s*$/;
-  const m = s.match(re);
-  if (!m) return null;
-
-  const y = Number(m[1]);
-  const mo = Number(m[2]) - 1;
-  const da = Number(m[3]);
-  const hh = (m[4] != null) ? Number(m[4]) : 0;
-  const mi = (m[5] != null) ? Number(m[5]) : 0;
-  const se = (m[6] != null) ? Number(m[6]) : 0;
-
-  const d = new Date(y, mo, da, hh, mi, se);
-  if (isNaN(d.getTime())) return null;
-  return d;
-}
-
-function coerceDateValue04_(v) {
-  if (v == null || v === '') return v;
-
-  // Date already
-  if (Object.prototype.toString.call(v) === '[object Date]' && !isNaN(v.getTime())) return v;
-
-  // Excel/Sheets serial (best effort)
-  if (typeof v === 'number' && isFinite(v)) {
-    // Excel epoch: 1899-12-30 (Google Sheets compatible)
-    if (v > 20000 && v < 80000) {
-      const ms = Math.round((v - 25569) * 86400 * 1000);
-      const d = new Date(ms);
-      if (!isNaN(d.getTime())) return d;
+function __getExcludedLastStatuses05a_() {
+  try {
+    if (typeof RUNTIME !== 'undefined' && RUNTIME && RUNTIME.__excludedLastStatuses05a) {
+      return RUNTIME.__excludedLastStatuses05a;
     }
-    return v;
+  } catch (e0) {}
+
+  let out = null;
+
+  // Prefer per-run builder from 00_Config if available.
+  try { if (typeof getExcludedLastStatusesSet_ === 'function') out = getExcludedLastStatusesSet_(); } catch (e) {}
+  if (!out) {
+    try { if (typeof buildExcludedLastStatusesSet_ === 'function') out = buildExcludedLastStatusesSet_(); } catch (e2) {}
   }
 
-  const s = String(v).trim();
-  if (!s) return v;
-
-  const d1 = parseEnglishMonthDatetime04_(s);
-  if (d1) return d1;
-
-  const d2 = parseYmdDatetime04_(s);
-  if (d2) return d2;
-
-  if (typeof normalizeDate_ === 'function') {
+  // Back-compat: older versions exposed a Set directly.
+  if (!out) {
     try {
-      const d3 = normalizeDate_(s);
-      if (d3 && !isNaN(d3.getTime())) return d3;
+      if (typeof EXCLUDED_LAST_STATUSES !== 'undefined' && EXCLUDED_LAST_STATUSES && EXCLUDED_LAST_STATUSES.has) {
+        out = EXCLUDED_LAST_STATUSES;
+      }
     } catch (e3) {}
   }
-  if (typeof tryNativeParseUnambiguousDate_ === 'function') {
+
+  // Newer versions may expose a base array.
+  if (!out) {
     try {
-      const d4 = tryNativeParseUnambiguousDate_(s);
-      if (d4 && !isNaN(d4.getTime())) return d4;
+      if (typeof EXCLUDED_LAST_STATUSES_BASE !== 'undefined' && Array.isArray(EXCLUDED_LAST_STATUSES_BASE)) {
+        out = new Set(EXCLUDED_LAST_STATUSES_BASE);
+      }
     } catch (e4) {}
   }
 
-  return v;
+  if (!out || !out.has) out = new Set();
+
+  try { if (typeof RUNTIME !== 'undefined' && RUNTIME) RUNTIME.__excludedLastStatuses05a = out; } catch (e5) {}
+  return out;
 }
 
-function coerceKnownDatetimeColumns04_(dataset) {
-  if (!dataset || !dataset.header || !dataset.rows) return dataset;
+/** =========================
+ *  RAW WRITE (Main -> Raw)
+ *  ========================= */
 
-  const header = dataset.header || [];
-  const keys = header.map(cleanHeaderKey04_);
+/** Write main data into Raw (never overwrite validated/manual Status col) */
+function writeMainDataToRaw_(rawSheet, mainHeader, mainRows, headerIndexRaw) {
+  if (!rawSheet || !mainRows || !mainRows.length) return;
 
-  const findAnyIdx = (candidates) => {
-    const want = (candidates || []).map(c => cleanHeaderKey04_(c));
-    for (let i = 0; i < keys.length; i++) {
+  const pairs = [];
+  for (let i = 0; i < (mainHeader || []).length; i++) {
+    const key = String(mainHeader[i] || '').trim();
+    if (!key) continue;
+    const keyLc = key.toLowerCase();
+    if (key === CONFIG.headers.status || key === 'Status' || keyLc === 'remarks' || keyLc === 'remark') continue; // never overwrite validated/manual cols
+
+    const rawIdx = headerIndexRaw[key];
+    if (rawIdx == null) continue;
+    pairs.push({ rawIdx, mainIdx: i });
+  }
+  if (!pairs.length) return;
+  pairs.sort((a, b) => a.rawIdx - b.rawIdx);
+
+  // contiguous runs => fewer setValues
+  const runs = [];
+  let cur = [pairs[0]];
+  for (let k = 1; k < pairs.length; k++) {
+    const p = pairs[k - 1], n = pairs[k];
+    if (n.rawIdx === p.rawIdx + 1) cur.push(n);
+    else { runs.push(cur); cur = [n]; }
+  }
+  runs.push(cur);
+
+  for (let r = 0; r < runs.length; r++) {
+    const run = runs[r];
+    const startCol1 = run[0].rawIdx + 1;
+    const width = run.length;
+
+    const out = new Array(mainRows.length);
+    for (let i = 0; i < mainRows.length; i++) {
+      const src = mainRows[i];
+      const rowOut = new Array(width);
+      for (let j = 0; j < width; j++) rowOut[j] = src[run[j].mainIdx];
+      out[i] = rowOut;
+    }
+    safeSetValues_(rawSheet.getRange(2, startCol1, out.length, width), out);
+  }
+}
+
+/** =========================
+ *  Typed date helpers
+ *  ========================= */
+
+function coerceDate_(v) {
+  const d = normalizeDate_(v);
+  return d ? d : null;
+}
+
+function coerceDateOnly_(v) {
+  const d = coerceDate_(v);
+  if (!d) return null;
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0, 0, 0);
+}
+
+function coerceDateTime_(v) {
+  const d = coerceDate_(v);
+  return d ? d : null;
+}
+
+/** Timestamp format requested: "15 Dec, 15:17" -> FORMATS.TIMESTAMP */
+function coerceTimestamp_(v) {
+  return coerceDateTime_(v);
+}
+
+/** Submission output rule (source picking) */
+function getSubmissionDateForOutput_(rawRow, headerIndexRaw) {
+  const h = CONFIG.headers;
+  const idxDateOnly = headerIndexRaw[h.claimSubmissionDate];
+  const idxDt = headerIndexRaw[h.claimSubmittedDatetime];
+
+  const dateOnlyVal = (idxDateOnly != null) ? rawRow[idxDateOnly] : '';
+  const dtVal = (idxDt != null) ? rawRow[idxDt] : '';
+
+  // Always write DATE-only in destination sheets to avoid mixed formats.
+  if (dateOnlyVal) return { val: dateOnlyVal, mode: 'date' };
+  if (dtVal) return { val: dtVal, mode: 'datetime' };
+  return { val: '', mode: 'date' };
+}
+
+function buildSubmissionDateCell_(rawRow, headerIndexRaw) {
+  const picked = getSubmissionDateForOutput_(rawRow, headerIndexRaw);
+  if (!picked.val) return '';
+  const d = coerceDateOnly_(picked.val);
+  return d ? d : '';
+}
+
+function sanitizeAssociateForWrite_(v) {
+  const s = String(v || '').trim();
+  if (!s) return '';
+  if (s === 'Meilani' || s === 'Farhan' || s === 'Suci' || s === 'Adi') return s;
+  return '';
+}
+
+/** OR checkbox output (operational): prefer Raw OR checkbox; else derive from OR Amount > 0 */
+function getOrCheckboxForOutput_(rawRow, headerIndexRaw) {
+  const h = CONFIG.headers;
+  const idxOr = headerIndexRaw[h.orColumn];
+  const idxOwnRisk = idxAny_(headerIndexRaw, [h.ownRiskAmount, 'Claim Own Risk Amount', 'claim_own_risk_amount', 'Own Risk Amount']);
+
+  // Prefer explicit checkbox value if valid
+  if (idxOr != null) {
+    const cb = normalizeCheckbox_(rawRow[idxOr]);
+    if (cb !== '') return cb; // boolean
+  }
+
+  // Fallback: derive from amount
+  const amt = (idxOwnRisk != null) ? normalizeNumber_(rawRow[idxOwnRisk]) : null;
+  if (amt != null && amt > 0) return true;
+
+  return ''; // keep blank to avoid forcing unchecked on legacy sheets
+}
+
+/** OR Amount output (money): prefer claim_own_risk_amount; fallback legacy numeric in Raw OR if exists */
+function getOrAmountForOutput_(rawRow, headerIndexRaw) {
+  const h = CONFIG.headers;
+  const idxOwnRisk = idxAny_(headerIndexRaw, [h.ownRiskAmount, 'Claim Own Risk Amount', 'claim_own_risk_amount', 'Own Risk Amount']);
+  const idxOr = headerIndexRaw[h.orColumn];
+
+  const ownRisk = (idxOwnRisk != null) ? normalizeNumber_(rawRow[idxOwnRisk]) : null;
+  if (ownRisk != null) return ownRisk;
+
+  // Legacy fallback (only if someone already wrote numeric into Raw OR)
+  const rawOrNum = (idxOr != null) ? normalizeNumber_(rawRow[idxOr]) : null;
+  return (rawOrNum != null) ? rawOrNum : '';
+}
+
+/** =========================
+ *  Associate mapping
+ *  ========================= */
+
+/**
+ * New spec (2026):
+ * - Routing is no longer PIC/Associate-based.
+ * - The mapping sheet "[UPDATED] Mapping Team Claim" is deprecated.
+ * - Associate column in "Raw Data" is treated as a manual/operational field.
+ *
+ * If you *really* need the legacy mapping for some back-compat run, enable it via Script Properties:
+ *   ASSOCIATE_MAPPING_ENABLED = true
+ */
+
+// [Refactor] Removed duplicate definition of isAssociateMappingEnabled_ (source of truth in 01_Utils)
+
+
+/** Convert column letter (e.g. "A", "G", "AA") into 1-based column index. */
+function colA1ToIndex_(colA1) {
+  const s = String(colA1 || '').trim().toUpperCase();
+  if (!s) return null;
+  let n = 0;
+  for (let i = 0; i < s.length; i++) {
+    const c = s.charCodeAt(i);
+    if (c < 65 || c > 90) continue; // skip non A-Z
+    n = n * 26 + (c - 64);
+  }
+  return n || null;
+}
+
+function loadAssociateMapping_() {
+  if (!isAssociateMappingEnabled_()) {
+    return { Meilani: new Set(), Farhan: new Set(), Suci: new Set(), Adi: new Set() };
+  }
+    // Deprecated: Associate mapping is off by default.
+  // If someone enables it, keep the pipeline resilient (no hard-fail if mapping doc/sheet is missing).
+  let ss, sh;
+  try {
+    if (!CONFIG || !CONFIG.mappingSpreadsheetId || !CONFIG.mappingSheetName) {
+      return { Meilani: new Set(), Farhan: new Set(), Suci: new Set(), Adi: new Set() };
+    }
+    ss = SpreadsheetApp.openById(CONFIG.mappingSpreadsheetId);
+    sh = ss.getSheetByName(CONFIG.mappingSheetName);
+    if (!sh) {
+      try { Logger && Logger.log && Logger.log('Associate mapping sheet not found (ignored): ' + CONFIG.mappingSheetName); } catch (e) {}
+      return { Meilani: new Set(), Farhan: new Set(), Suci: new Set(), Adi: new Set() };
+    }
+  } catch (e) {
+    try { Logger && Logger.log && Logger.log('Associate mapping load failed (ignored): ' + e); } catch (e2) {}
+    return { Meilani: new Set(), Farhan: new Set(), Suci: new Set(), Adi: new Set() };
+  }
+
+  // Mapping policy (safe fallback when 00_Config is not loaded / renamed).
+  const startRow = (function () {
+    try {
+      if (typeof MAPPING_TEAM_CLAIM_POLICY !== 'undefined' &&
+          MAPPING_TEAM_CLAIM_POLICY &&
+          MAPPING_TEAM_CLAIM_POLICY.PARTNER_START_ROW) return MAPPING_TEAM_CLAIM_POLICY.PARTNER_START_ROW;
+    } catch (e) {}
+    return 4;
+  })();
+
+  const lastRow = sh.getLastRow();
+  if (lastRow < startRow) return { Meilani: new Set(), Farhan: new Set(), Suci: new Set(), Adi: new Set() };
+
+  // Existing columns (legacy): A=Meilani, C=Farhan, E=Suci
+  const colByAssociate = { Meilani: 1, Farhan: 3, Suci: 5, Adi: 7 }; // Adi default = G
+
+  // Spec: Adi partner list is sourced from "[UPDATED] Mapping Team Claim" starting at G4.
+  try {
+    if (typeof MAPPING_TEAM_CLAIM_POLICY !== 'undefined' &&
+        MAPPING_TEAM_CLAIM_POLICY &&
+        MAPPING_TEAM_CLAIM_POLICY.PARTNER_START_COLUMN_BY_PIC &&
+        MAPPING_TEAM_CLAIM_POLICY.PARTNER_START_COLUMN_BY_PIC.Adi) {
+      const n = colA1ToIndex_(MAPPING_TEAM_CLAIM_POLICY.PARTNER_START_COLUMN_BY_PIC.Adi);
+      if (n) colByAssociate.Adi = n;
+    }
+  } catch (e) {}
+
+  const maxCol = Math.max.apply(null, Object.keys(colByAssociate).map(k => colByAssociate[k]));
+  const data = sh.getRange(startRow, 1, lastRow - startRow + 1, maxCol).getValues();
+
+  const map = { Meilani: new Set(), Farhan: new Set(), Suci: new Set(), Adi: new Set() };
+  for (let i = 0; i < data.length; i++) {
+    Object.keys(colByAssociate).forEach(name => {
+      const col0 = colByAssociate[name] - 1;
+      const v = (col0 >= 0 && col0 < data[i].length) ? String(data[i][col0] || '').trim() : '';
+      if (v) map[name].add(v.toLowerCase());
+    });
+  }
+  return map;
+}
+/**
+ * Single-pass Raw mutation in memory:
+ * - Apply aging merge OR compute LSA/ALA if no aging files
+ * - Compute derived QL/ML/MQ
+ * - Apply Associate mapping (unknown => blank to avoid validation violation)
+ * - OR checkbox defaulting: if Raw OR blank/invalid, set TRUE when claim_own_risk_amount > 0
+ */
+function mutateRawInMemory_(rawValues, headerIndexRaw, agingStdMap, agingMap, assocMap) {
+  const h = CONFIG.headers;
+  const today = new Date();
+  const resolveHdrIdx05a_ = (keys) => {
+    if (typeof idxAny_ === 'function') {
+      const idx = idxAny_(headerIndexRaw, keys, { enableSnakeCase: true });
+      return (idx == null) ? null : idx;
+    }
+    for (let i = 0; i < (keys || []).length; i++) {
       const k = keys[i];
       if (!k) continue;
-      for (let j = 0; j < want.length; j++) if (k === want[j]) return i;
+      const v = headerIndexRaw[k];
+      if (v != null) return v;
     }
-    return -1;
+    return null;
   };
 
-  // Primary datetime fields used by SUB flow
-  const idxClaimLastUpdated = findAnyIdx([
-    'claim_last_updated_datetime',
-    'claim last updated datetime',
-    'claim last updated date time',
-    'claim_last_updated'
-  ]);
 
-  const idxActivityLogDt = findAnyIdx([
-    'activity_log_datetime',
-    'activity log datetime',
-    'activity log date time',
-    'activity_log_date_time',
-    'activity_log_updated_datetime'
-  ]);
+  const idxClaim = resolveHdrIdx05a_([h.claimNumber, 'Claim Number', 'claim_number']);
+  const idxBP = resolveHdrIdx05a_([h.businessPartner, 'Business Partner', 'Partner', 'business_partner']);
+  const idxAssoc = resolveHdrIdx05a_([h.associate, 'Associate', 'associate']);
+  const idxLastStatus = resolveHdrIdx05a_([h.lastStatus, 'Last Status', 'last_status']);
+  const idxSubDate = resolveHdrIdx05a_([h.claimSubmissionDate, 'Claim Submission Date', 'Submission Date', 'claim_submission_date', 'submission_date']);
 
-  const idxLastActivityLogDt = findAnyIdx([
-    'last_activity_log_datetime',
-    'last activity log datetime',
-    'last activity log date time',
-    'last_activity_log_date_time',
-    'last_activity_datetime',
-    'last activity datetime'
-  ]);
+  const idxInsuranceCodeRaw = idxAny_(headerIndexRaw, [h.insuranceCode, 'Insurance Code', 'insurance_code']);
+  const idxLastStatusAgingRaw = idxAny_(headerIndexRaw, ['Last Status Aging', h.lastStatusAging, 'LSA', 'TAT']);
+  const idxActLogAgingRaw = idxAny_(headerIndexRaw, ['Activity Log Aging', h.activityLogAging, 'ALA']);
+  const idxClaimSubmittedRaw = resolveHdrIdx05a_([h.claimSubmittedDatetime, 'Claim Submitted Datetime', 'Submitted Datetime', 'claim_submitted_datetime', 'submitted_datetime']);
 
-  if (idxClaimLastUpdated < 0 && idxActivityLogDt < 0 && idxLastActivityLogDt < 0) return dataset;
+  const idxLastUpdate = resolveHdrIdx05a_([h.lastUpdate, 'Last Update', 'last_update']);
+  const idxLastActDate = idxAny_(headerIndexRaw, [h.lastActivityLogDate, 'Last Activity Log Date', 'Last Activity Date', 'last_activity_log_date']);
 
-  const rows = dataset.rows;
-  for (let r = 0; r < rows.length; r++) {
-    const row = rows[r];
-    if (!row) continue;
+  const idxPolicyStart = resolveHdrIdx05a_([h.policyStartDate, 'Policy Start Date', 'policy_start_date']);
+  const idxPolicyEnd = resolveHdrIdx05a_([h.policyEndDate, 'Policy End Date', 'policy_end_date']);
+  const idxClaimSubDateOnly = idxSubDate;
+  const idxClaimSubDt = idxClaimSubmittedRaw;
 
-    if (idxClaimLastUpdated > -1 && row.length > idxClaimLastUpdated) row[idxClaimLastUpdated] = coerceDateValue04_(row[idxClaimLastUpdated]);
-    if (idxActivityLogDt > -1 && row.length > idxActivityLogDt) row[idxActivityLogDt] = coerceDateValue04_(row[idxActivityLogDt]);
-    if (idxLastActivityLogDt > -1 && row.length > idxLastActivityLogDt) row[idxLastActivityLogDt] = coerceDateValue04_(row[idxLastActivityLogDt]);
+  const idxQL = headerIndexRaw['Q-L (Months)'];
+  const idxML = headerIndexRaw['M-L (Months)'];
+  const idxMQ = headerIndexRaw['M-Q (Months)'];
+
+  const idxRawOR = idxAny_(headerIndexRaw, [h.orColumn, 'OR', 'Or']);
+  const idxOwnRisk = idxAny_(headerIndexRaw, [h.ownRiskAmount, 'Claim Own Risk Amount', 'claim_own_risk_amount', 'Own Risk Amount']);
+
+  const applyAgingFrom_ = (mapObj, row, claim) => {
+    if (!mapObj || !mapObj.map) return false;
+    const src = mapObj.map[claim];
+    if (!src) return false;
+
+    const hA = mapObj.headerIndex;
+    const idxInsCodeA = idxAny_(hA, [h.partnerCodeAging, h.insuranceCode, 'Insurance Code', 'insurance_code', 'Partner Code']);
+    const idxLSA = idxAny_(hA, ['Last Status Aging', h.lastStatusAging, 'LSA', 'TAT']);
+    const idxALA = idxAny_(hA, ['Activity Log Aging', h.activityLogAging, 'ALA']);
+    const idxSubDtA = idxAny_(hA, [h.claimSubmittedDatetime, 'Claim Submitted Datetime', 'Submitted Datetime', 'claim_submitted_datetime']);
+
+    if (idxInsuranceCodeRaw != null && idxInsCodeA != null) row[idxInsuranceCodeRaw] = src[idxInsCodeA];
+    if (idxLastStatusAgingRaw != null && idxLSA != null) row[idxLastStatusAgingRaw] = src[idxLSA];
+    if (idxActLogAgingRaw != null && idxALA != null) row[idxActLogAgingRaw] = src[idxALA];
+    if (idxClaimSubmittedRaw != null && idxSubDtA != null) row[idxClaimSubmittedRaw] = src[idxSubDtA];
+    return true;
+  };
+
+  const unknownRowsAll = [];
+
+  for (let i = 0; i < rawValues.length; i++) {
+    const row = rawValues[i];
+
+    const claimKey = (idxClaim != null) ? String(row[idxClaim] || '').trim() : '';
+    if (claimKey) {
+      if (agingStdMap) applyAgingFrom_(agingStdMap, row, claimKey);
+      if (agingMap) applyAgingFrom_(agingMap, row, claimKey);
+    }
+
+    // Backfill: claim_submitted_datetime from submission_date when missing (helps ALA/TAT computations downstream)
+    if (idxClaimSubmittedRaw != null && (row[idxClaimSubmittedRaw] === '' || row[idxClaimSubmittedRaw] == null) && idxSubDate != null) {
+      const dSub = coerceDateTime_(row[idxSubDate]);
+      if (dSub) row[idxClaimSubmittedRaw] = dSub;
+    }
+
+
+    // If no aging files: compute LSA/ALA from dates
+    if (!RUNTIME.hasAgingFiles && idxLastStatusAgingRaw != null && idxActLogAgingRaw != null) {
+      if (idxLastUpdate != null) {
+        const d = coerceDateTime_(row[idxLastUpdate]);
+        const dd = diffDays_(d, today);
+        if (dd != null && dd >= 0) row[idxLastStatusAgingRaw] = dd;
+      }
+      if (idxLastActDate != null) {
+        const d2 = coerceDateTime_(row[idxLastActDate]);
+        const dd2 = diffDays_(d2, today);
+        if (dd2 != null && dd2 >= 0) row[idxActLogAgingRaw] = dd2;
+      }
+    }
+
+    // Derived QL/ML/MQ (compute independently, don't require all dates)
+    if ((idxClaimSubDateOnly != null || idxClaimSubDt != null)) {
+      const subVal =
+      (idxClaimSubDateOnly != null && row[idxClaimSubDateOnly] !== '' && row[idxClaimSubDateOnly] != null)
+      ? row[idxClaimSubDateOnly]
+      : ((idxClaimSubDt != null) ? row[idxClaimSubDt] : '');
+  const cs = coerceDateOnly_(subVal);
+
+  const ps = (idxPolicyStart != null) ? coerceDateOnly_(row[idxPolicyStart]) : null;
+  const pe = (idxPolicyEnd != null) ? coerceDateOnly_(row[idxPolicyEnd]) : null;
+
+  if (idxQL != null && cs && ps) row[idxQL] = monthDiff_(ps, cs);
+  if (idxML != null && ps && pe) row[idxML] = monthDiff_(ps, pe);
+  if (idxMQ != null && cs && pe) row[idxMQ] = monthDiff_(cs, pe);
+}
+
+    // OR checkbox defaulting: if Raw OR blank/invalid, set TRUE when claim_own_risk_amount > 0
+    if (idxRawOR != null && idxOwnRisk != null) {
+      const cb = normalizeCheckbox_(row[idxRawOR]);
+      if (cb === '') {
+        const amt = normalizeNumber_(row[idxOwnRisk]);
+        if (amt != null && amt > 0) row[idxRawOR] = true;
+      } else {
+        // normalize to strict boolean (avoid "TRUE"/"FALSE" strings lingering)
+        row[idxRawOR] = cb;
+      }
+    }
+// Associate column is manual/operational in the 2026 routing spec: do not auto-map by default.
+// If you need legacy mapping (deprecated), enable Script Properties: ASSOCIATE_MAPPING_ENABLED=true.
+if (isAssociateMappingEnabled_() && idxBP != null && idxAssoc != null && assocMap) {
+  const currentAssoc = String(row[idxAssoc] || '').trim();
+  if (!currentAssoc) {
+    const partnerRaw = String(row[idxBP] || '').trim();
+    const partner = partnerRaw.toLowerCase();
+
+    let assoc = '';
+    if (assocMap.Meilani && assocMap.Meilani.has(partner)) assoc = 'Meilani';
+    else if (assocMap.Farhan && assocMap.Farhan.has(partner)) assoc = 'Farhan';
+    else if (assocMap.Suci && assocMap.Suci.has(partner)) assoc = 'Suci';
+    else if (assocMap.Adi && assocMap.Adi.has(partner)) assoc = 'Adi';
+
+    if (assoc) {
+      row[idxAssoc] = assoc; // fill only when blank
+    } else {
+      unknownRowsAll.push({
+        rowNumber: i + 2,
+        claim: claimKey,
+        partner: partnerRaw,
+        lastStatus: (idxLastStatus != null) ? String(row[idxLastStatus] || '').trim() : '',
+        submissionDateVal: (idxSubDate != null) ? row[idxSubDate] : ''
+      });
+    }
+  }
+}
   }
 
-  return dataset;
+  const unknownRowsForLog = unknownRowsAll.filter(x => !isLegacyBySubmission_(x.submissionDateVal));
+  return { values: rawValues, unknownRowsAll, unknownRowsForLog };
+}
+
+/** =========================
+ *  Ops -> Raw backup
+ *  ========================= */
+
+/**
+ * Operational sheets are no longer PIC-scoped in the 2026 routing spec.
+ * This helper returns the current operational sheet list, with safe fallbacks.
+ */
+function getOperationalSheetsForBackup_(pic) { // pic kept for back-compat (ignored)
+  // Prefer explicit routing policy (new spec)
+  try {
+    if (typeof OPS_ROUTING_POLICY !== 'undefined' &&
+        OPS_ROUTING_POLICY &&
+        Array.isArray(OPS_ROUTING_POLICY.OPERATIONAL_SHEETS)) {
+      return OPS_ROUTING_POLICY.OPERATIONAL_SHEETS.slice();
+    }
+  } catch (e) {}
+
+  // If CONFIG exposes a unified list
+  try {
+    if (typeof CONFIG !== 'undefined' &&
+        CONFIG &&
+        Array.isArray(CONFIG.operationalSheetsUnified)) {
+      return CONFIG.operationalSheetsUnified.slice();
+    }
+  } catch (e) {}
+
+  // Fallback to workbook profile PIC operational list
+  try {
+    if (typeof CONFIG !== 'undefined' &&
+        CONFIG &&
+        CONFIG.workbookProfiles &&
+        CONFIG.workbookProfiles[WORKBOOK_PROFILES.PIC] &&
+        Array.isArray(CONFIG.workbookProfiles[WORKBOOK_PROFILES.PIC].operational)) {
+      return CONFIG.workbookProfiles[WORKBOOK_PROFILES.PIC].operational.slice();
+    }
+  } catch (e) {}
+
+  // Legacy union fallback
+  try {
+    const a = (CONFIG && CONFIG.sheetsByPic && CONFIG.sheetsByPic.picOperational) ? CONFIG.sheetsByPic.picOperational : [];
+    const b = (CONFIG && CONFIG.sheetsByPic && CONFIG.sheetsByPic.adminOperational) ? CONFIG.sheetsByPic.adminOperational : [];
+    const out = Array.from(new Set([].concat(a, b)));
+    if (out.length) return out;
+  } catch (e) {}
+
+  // Last-resort list per 2026 spec
+  return [
+    'Submission',
+    'Ask Detail',
+    'OR - OLD',
+    'Start',
+    'Finish',
+    'SC - Farhan',
+    'SC - Meilani',
+    'SC - Ivan',
+    'PO',
+    'Exclusion'
+  ];
+}
+
+/**
+ * Backup ops -> raw (OR/Update/Timestamp/Status + Asso/Admin tail fields) using in-memory rawValues
+ * IMPORTANT: OR is checkbox (TRUE/FALSE). We only accept checkbox-valid values.
+ */
+function backupOpsToRawInMemory_(ss, rawValues, headerIndexRaw, pic) {
+  const h = CONFIG.headers;
+  const idxRawClaim = headerIndexRaw[h.claimNumber];
+  const idxRawOR = idxAny_(headerIndexRaw, [h.orColumn, 'OR', 'Or']);
+  const idxRawUpdate = headerIndexRaw[h.updateStatus];
+  const idxRawTs = headerIndexRaw[h.timestamp];
+  const idxRawStatus = headerIndexRaw[h.status];
+  const idxRawRemarks = idxAny_(headerIndexRaw, ['Remarks', 'Remark', 'remarks', 'remark']);
+
+  // Additional manual/operational tail fields (snapshot per Claim Number)
+  const idxRawUpdateAsso = headerIndexRaw['Update Status Asso'];
+  const idxRawTsAsso = headerIndexRaw['Timestamp Asso'];
+  const idxRawUpdateAdmin = headerIndexRaw['Update Status Admin'];
+  const idxRawTsAdmin = headerIndexRaw['Timestamp Admin'];
+
+  if (idxRawClaim == null) return { updated: 0, notes: 'Raw claim_number not found' };
+  if (!rawValues || !rawValues.length) return { updated: 0, notes: 'Raw has no rows' };
+
+  const rawMap = {};
+  for (let i = 0; i < rawValues.length; i++) {
+    const key = String(rawValues[i][idxRawClaim] || '').trim().toUpperCase();
+    if (key) rawMap[key] = i;
+  }
+
+  const opsList = getOperationalSheetsForBackup_(pic);
+
+  const fieldSet = {};
+  const ensureObj = claim => (fieldSet[claim] ? fieldSet[claim] : (fieldSet[claim] = {}));
+
+  let scannedRows = 0;
+
+  for (let s = 0; s < opsList.length; s++) {
+    const name = opsList[s];
+    const sh = ss.getSheetByName(name);
+    if (!sh) continue;
+
+    const lr = sh.getLastRow(), lc = sh.getLastColumn();
+    if (lr <= 1 || lc <= 0) continue;
+
+    const header = sh.getRange(1, 1, 1, lc).getValues()[0].map(v => String(v || '').trim());
+    const idxClaimOps = header.indexOf('Claim Number');
+    if (idxClaimOps === -1) continue;
+
+    const idxOR = __findHeaderIndex05a_(header, 'OR');
+    const idxUpdate = __findHeaderIndex05a_(header, 'Update Status');
+    const idxTs = __findHeaderIndex05a_(header, 'Timestamp');
+    const idxStatus = __findHeaderIndex05a_(header, 'Status');
+
+    const idxUpdateAsso = __findHeaderIndex05a_(header, 'Update Status Asso');
+    const idxTsAsso = __findHeaderIndex05a_(header, 'Timestamp Asso');
+    const idxUpdateAdmin = __findHeaderIndex05a_(header, 'Update Status Admin');
+    const idxTsAdmin = __findHeaderIndex05a_(header, 'Timestamp Admin');
+
+    const idxRemarksTmp = __findHeaderIndex05a_(header, 'Remarks');
+    const idxRemarks = (idxRemarksTmp !== -1) ? idxRemarksTmp : __findHeaderIndex05a_(header, 'Remark');
+
+    if (idxOR === -1 && idxUpdate === -1 && idxTs === -1 && idxStatus === -1 &&
+        idxUpdateAsso === -1 && idxTsAsso === -1 && idxUpdateAdmin === -1 && idxTsAdmin === -1 && idxRemarks === -1) continue;
+
+    const values = sh.getRange(2, 1, lr - 1, lc).getValues();
+    scannedRows += values.length;
+
+    for (let r = 0; r < values.length; r++) {
+      const row = values[r];
+      const claim = String(row[idxClaimOps] || '').trim().toUpperCase();
+      if (!claim) continue;
+      const rawIdx = rawMap[claim];
+      if (rawIdx == null) continue;
+
+      const obj = ensureObj(claim);
+
+      if (idxOR !== -1 && obj.or == null) {
+        const cb = normalizeCheckbox_(row[idxOR]);
+        if (cb !== '') obj.or = cb;
+      }
+      if (idxUpdate !== -1 && obj.update == null) {
+        const v = row[idxUpdate];
+        if (v !== '' && v != null) obj.update = v;
+      }
+      if (idxTs !== -1 && obj.ts == null) {
+        const v = row[idxTs];
+        if (v !== '' && v != null) obj.ts = v;
+      }
+      if (idxStatus !== -1 && obj.status == null) {
+        const v = normalizeStatusValue_(row[idxStatus]);
+        if (v !== '') obj.status = v;
+      }
+
+      // Additional manual/ops tail fields (values-only snapshot)
+      if (idxUpdateAsso !== -1 && obj.updateAsso == null) {
+        const v = row[idxUpdateAsso];
+        if (v !== '' && v != null) obj.updateAsso = v;
+      }
+      if (idxTsAsso !== -1 && obj.tsAsso == null) {
+        const v = row[idxTsAsso];
+        if (v !== '' && v != null) obj.tsAsso = v;
+      }
+      if (idxUpdateAdmin !== -1 && obj.updateAdmin == null) {
+        const v = row[idxUpdateAdmin];
+        if (v !== '' && v != null) obj.updateAdmin = v;
+      }
+      if (idxTsAdmin !== -1 && obj.tsAdmin == null) {
+        const v = row[idxTsAdmin];
+        if (v !== '' && v != null) obj.tsAdmin = v;
+      }
+
+      if (idxRemarks !== -1 && obj.remarks == null) {
+        const v = row[idxRemarks];
+        const t = String(v == null ? '' : v).trim();
+        if (t) obj.remarks = t;
+      }
+    }
+  }
+
+  let updated = 0;
+  let remarksTouched = 0;
+  Object.keys(fieldSet).forEach(claim => {
+    const i = rawMap[claim];
+    if (i == null) return;
+    const obj = fieldSet[claim];
+    const row = rawValues[i];
+    let touched = false;
+
+    if (idxRawOR != null && obj.or != null) { row[idxRawOR] = obj.or; touched = true; }
+    if (idxRawUpdate != null && obj.update != null) { row[idxRawUpdate] = obj.update; touched = true; }
+    if (idxRawTs != null && obj.ts != null) { row[idxRawTs] = obj.ts; touched = true; }
+    if (idxRawStatus != null && obj.status != null) { row[idxRawStatus] = obj.status; touched = true; }
+
+    if (idxRawUpdateAsso != null && obj.updateAsso != null) { row[idxRawUpdateAsso] = obj.updateAsso; touched = true; }
+    if (idxRawTsAsso != null && obj.tsAsso != null) { row[idxRawTsAsso] = obj.tsAsso; touched = true; }
+    if (idxRawUpdateAdmin != null && obj.updateAdmin != null) { row[idxRawUpdateAdmin] = obj.updateAdmin; touched = true; }
+    if (idxRawTsAdmin != null && obj.tsAdmin != null) { row[idxRawTsAdmin] = obj.tsAdmin; touched = true; }
+
+    if (idxRawRemarks != null && obj.remarks != null) { row[idxRawRemarks] = obj.remarks; touched = true; }
+
+    if (idxRawRemarks != null && obj.remarks != null) { row[idxRawRemarks] = obj.remarks; touched = true; remarksTouched++; }
+
+    if (touched) updated++;
+  });
+
+  // Best-effort immediate writeback for Remarks, to prevent accidental loss when callers do minimal raw writes.
+  if (idxRawRemarks != null && remarksTouched > 0) {
+    try {
+      const rawSheet = __resolveRawSheet05a_(ss);
+      if (rawSheet) writeRawColumns_(rawSheet, rawValues, [idxRawRemarks]);
+    } catch (e) {}
+  }
+
+  return { updated, notes: 'scannedOpsRows=' + scannedRows + ' | matchedClaims=' + Object.keys(fieldSet).length };
+}
+
+/**
+ * Backup ops -> raw with full column format + data validation + rich text (Update Status).
+ *
+ * Why:
+ * - Requirement: Status (dropdown+format), OR (checkbox), Update Status (rich text) must be preserved (not value-only).
+ * - Claim alignment stays correct even if sheets are sorted differently.
+ *
+ * Performance:
+ * - One values block read per ops sheet + optional rich text column read for Update Status.
+ * - One write per raw column + one rich text write for Update Status.
+ */
+function backupOpsToRawFull_(ss, rawSheet, rawValues, headerIndexRaw, pic) {
+  if (DRY_RUN) return { updated: 0, notes: 'DRY_RUN' };
+  if (!ss || !rawSheet || !headerIndexRaw) return { updated: 0, notes: 'Missing args' };
+
+  const h = CONFIG.headers;
+  const idxRawClaim = headerIndexRaw[h.claimNumber];
+  const idxRawOR = idxAny_(headerIndexRaw, [h.orColumn, 'OR', 'Or']);
+  const idxRawUpdate = headerIndexRaw[h.updateStatus];
+  const idxRawTs = headerIndexRaw[h.timestamp];
+  const idxRawStatus = headerIndexRaw[h.status];
+  const idxRawRemarks = idxAny_(headerIndexRaw, ['Remarks', 'Remark', 'remarks', 'remark']);
+
+  // Additional manual/operational tail fields (snapshot per Claim Number)
+  const idxRawUpdateAsso = headerIndexRaw['Update Status Asso'];
+  const idxRawTsAsso = headerIndexRaw['Timestamp Asso'];
+  const idxRawUpdateAdmin = headerIndexRaw['Update Status Admin'];
+  const idxRawTsAdmin = headerIndexRaw['Timestamp Admin'];
+
+
+  if (idxRawClaim == null) return { updated: 0, notes: 'Raw claim_number not found' };
+
+  // Ensure rawValues are loaded (rows only, no header)
+  const rawRowCount = Math.max(0, rawSheet.getLastRow() - 1);
+  const workingRawValues = (rawValues && rawValues.length === rawRowCount)
+    ? rawValues
+    : (rawRowCount > 0 ? rawSheet.getRange(2, 1, rawRowCount, rawSheet.getLastColumn()).getValues() : []);
+
+  if (!workingRawValues.length) return { updated: 0, notes: 'Raw has no rows' };
+
+  // Build claim -> raw row index map
+  const rawMap = {};
+  for (let i = 0; i < workingRawValues.length; i++) {
+    const key = String(workingRawValues[i][idxRawClaim] || '').trim().toUpperCase();
+    if (key) rawMap[key] = i;
+  }
+
+  const opsList = getOperationalSheetsForBackup_(pic);
+  const fieldSet = {}; // claim -> {or, status, ts, updateRt}
+  const ensureObj = claim => (fieldSet[claim] ? fieldSet[claim] : (fieldSet[claim] = {}));
+
+  let scannedRows = 0;
+  let formatSource = null; // {sh, idxOR, idxUpdate, idxTs, idxStatus}
+
+  for (let s = 0; s < opsList.length; s++) {
+    const name = opsList[s];
+    const sh = ss.getSheetByName(name);
+    if (!sh) continue;
+
+    const lr = sh.getLastRow(), lc = sh.getLastColumn();
+    if (lr <= 1 || lc <= 0) continue;
+
+    const header = sh.getRange(1, 1, 1, lc).getValues()[0].map(v => String(v || '').trim());
+
+    const idxClaimOps = header.indexOf(h.claimNumber) !== -1 ? header.indexOf(h.claimNumber) : header.indexOf('Claim Number');
+    if (idxClaimOps === -1) continue;
+
+    const idxOR = __findHeaderIndex05a_(header, 'OR');
+    const idxUpdate = __findHeaderIndex05a_(header, 'Update Status');
+    const idxTs = __findHeaderIndex05a_(header, 'Timestamp');
+    const idxStatus = __findHeaderIndex05a_(header, 'Status');
+
+    const idxUpdateAsso = __findHeaderIndex05a_(header, 'Update Status Asso');
+    const idxTsAsso = __findHeaderIndex05a_(header, 'Timestamp Asso');
+    const idxUpdateAdmin = __findHeaderIndex05a_(header, 'Update Status Admin');
+    const idxTsAdmin = __findHeaderIndex05a_(header, 'Timestamp Admin');
+
+    const idxRemarksTmp = __findHeaderIndex05a_(header, 'Remarks');
+    const idxRemarks = (idxRemarksTmp !== -1) ? idxRemarksTmp : __findHeaderIndex05a_(header, 'Remark');
+
+    if (idxOR === -1 && idxUpdate === -1 && idxTs === -1 && idxStatus === -1 &&
+        idxUpdateAsso === -1 && idxTsAsso === -1 && idxUpdateAdmin === -1 && idxTsAdmin === -1 && idxRemarks === -1) continue;
+
+    // Prefer using the "Submission" sheet as the formatting/validation source when available.
+    const shName = sh.getName();
+    if (!formatSource || (formatSource && formatSource.sh && formatSource.sh.getName && formatSource.sh.getName() !== 'Submission' && shName === 'Submission')) {
+      formatSource = { sh, idxOR, idxUpdate, idxTs, idxStatus, idxUpdateAsso, idxTsAsso, idxUpdateAdmin, idxTsAdmin, idxRemarks };
+    }
+
+    // Read the smallest contiguous block that covers all needed columns
+    const needed = [idxClaimOps, idxOR, idxUpdate, idxTs, idxStatus, idxUpdateAsso, idxTsAsso, idxUpdateAdmin, idxTsAdmin].filter(x => x !== -1);
+    const minC = Math.min.apply(null, needed);
+    const maxC = Math.max.apply(null, needed);
+    const width = maxC - minC + 1;
+
+    const block = sh.getRange(2, minC + 1, lr - 1, width).getValues();
+    scannedRows += block.length;
+
+    // Rich text only for Update Status (and Asso/Admin variants, if present)
+    let updateRT = null;
+    let updateAssoRT = null;
+    let updateAdminRT = null;
+    if (idxUpdate !== -1) {
+      updateRT = sh.getRange(2, idxUpdate + 1, lr - 1, 1).getRichTextValues(); // 2D
+    }
+    if (idxUpdateAsso !== -1) {
+      updateAssoRT = sh.getRange(2, idxUpdateAsso + 1, lr - 1, 1).getRichTextValues(); // 2D
+    }
+    if (idxUpdateAdmin !== -1) {
+      updateAdminRT = sh.getRange(2, idxUpdateAdmin + 1, lr - 1, 1).getRichTextValues(); // 2D
+    }
+
+    // Rich text for Remarks (preserve hyperlinks/format)
+    let remarksRT = null;
+    if (idxRemarks !== -1) {
+      try { remarksRT = sh.getRange(2, idxRemarks + 1, lr - 1, 1).getRichTextValues(); } catch (e) { remarksRT = null; }
+    }
+
+    for (let r = 0; r < block.length; r++) {
+      const row = block[r];
+      const claim = String(row[idxClaimOps - minC] || '').trim().toUpperCase();
+      if (!claim) continue;
+
+      const obj = ensureObj(claim);
+
+      if (idxOR !== -1 && obj.or == null) {
+        const cb = normalizeCheckbox_(row[idxOR - minC]);
+        if (cb !== '') obj.or = cb;
+      }
+      if (idxStatus !== -1 && obj.status == null) {
+        const v = normalizeStatusValue_(row[idxStatus - minC]);
+        if (v !== '') obj.status = v;
+      }
+      if (idxTs !== -1 && obj.ts == null) {
+        const v = row[idxTs - minC];
+        if (v !== '' && v != null) obj.ts = v;
+      }
+      if (idxUpdate !== -1 && obj.updateRt == null && updateRT) {
+        const rt = updateRT[r] && updateRT[r][0];
+        const t = (rt && rt.getText) ? String(rt.getText() || '').trim() : '';
+        if (t) obj.updateRt = rt;
+      }
+
+      if (idxUpdateAsso !== -1 && obj.updateAssoRt == null && updateAssoRT) {
+        const rt = updateAssoRT[r] && updateAssoRT[r][0];
+        const t = (rt && rt.getText) ? String(rt.getText() || '').trim() : '';
+        if (t) obj.updateAssoRt = rt;
+      }
+      if (idxTsAsso !== -1 && obj.tsAsso == null) {
+        const v = row[idxTsAsso - minC];
+        if (v !== '' && v != null) obj.tsAsso = v;
+      }
+      if (idxUpdateAdmin !== -1 && obj.updateAdminRt == null && updateAdminRT) {
+        const rt = updateAdminRT[r] && updateAdminRT[r][0];
+        const t = (rt && rt.getText) ? String(rt.getText() || '').trim() : '';
+        if (t) obj.updateAdminRt = rt;
+      }
+      if (idxTsAdmin !== -1 && obj.tsAdmin == null) {
+        const v = row[idxTsAdmin - minC];
+        if (v !== '' && v != null) obj.tsAdmin = v;
+      }
+
+      if (idxRemarks !== -1 && obj.remarksRt == null) {
+        // Prefer RichText to preserve formatting/hyperlinks/line breaks.
+        if (remarksRT && remarksRT[r] && remarksRT[r][0] && remarksRT[r][0].getText) {
+          const rt = remarksRT[r][0];
+          const txt = String(rt.getText() || '');
+          if (txt !== '') {
+            obj.remarksRt = rt;
+            obj.remarks = txt; // keep plain value too
+          }
+        } else if (obj.remarks == null) {
+          const v = row[idxRemarks - minC];
+          const txt = String(v == null ? '' : v);
+          if (txt !== '') obj.remarks = txt;
+        }
+      }
+    }
+  }
+
+  // Prepare raw Update Status rich text buffers (single batch write)
+  let rawUpdateRTs = null;
+  let rawUpdateAssoRTs = null;
+  let rawUpdateAdminRTs = null;
+  if (idxRawUpdate != null) {
+    rawUpdateRTs = rawSheet.getRange(2, idxRawUpdate + 1, rawValues.length, 1).getRichTextValues();
+  }
+  if (idxRawUpdateAsso != null) {
+    rawUpdateAssoRTs = rawSheet.getRange(2, idxRawUpdateAsso + 1, rawValues.length, 1).getRichTextValues();
+  }
+  if (idxRawUpdateAdmin != null) {
+    rawUpdateAdminRTs = rawSheet.getRange(2, idxRawUpdateAdmin + 1, rawValues.length, 1).getRichTextValues();
+  }
+
+  let rawRemarksRTs = null;
+  if (idxRawRemarks != null) {
+    try { rawRemarksRTs = rawSheet.getRange(2, idxRawRemarks + 1, rawValues.length, 1).getRichTextValues(); } catch (e) { rawRemarksRTs = null; }
+  }
+
+  let updated = 0;
+  Object.keys(fieldSet).forEach(claim => {
+    const i = rawMap[claim];
+    if (i == null) return;
+
+    const obj = fieldSet[claim];
+    const row = rawValues[i];
+    let touched = false;
+
+    if (idxRawOR != null && obj.or != null) { row[idxRawOR] = obj.or; touched = true; }
+    if (idxRawStatus != null && obj.status != null) { row[idxRawStatus] = obj.status; touched = true; }
+    if (idxRawTs != null && obj.ts != null) { row[idxRawTs] = obj.ts; touched = true; }
+
+    if (idxRawTsAsso != null && obj.tsAsso != null) { row[idxRawTsAsso] = obj.tsAsso; touched = true; }
+    if (idxRawTsAdmin != null && obj.tsAdmin != null) { row[idxRawTsAdmin] = obj.tsAdmin; touched = true; }
+
+    if (idxRawUpdate != null && obj.updateRt != null && rawUpdateRTs) {
+      rawUpdateRTs[i][0] = obj.updateRt;
+      row[idxRawUpdate] = obj.updateRt.getText(); // keep values in sync for downstream reads
+      touched = true;
+    }
+
+    if (idxRawUpdateAsso != null && obj.updateAssoRt != null && rawUpdateAssoRTs) {
+      rawUpdateAssoRTs[i][0] = obj.updateAssoRt;
+      row[idxRawUpdateAsso] = obj.updateAssoRt.getText();
+      touched = true;
+    }
+    if (idxRawUpdateAdmin != null && obj.updateAdminRt != null && rawUpdateAdminRTs) {
+      rawUpdateAdminRTs[i][0] = obj.updateAdminRt;
+      row[idxRawUpdateAdmin] = obj.updateAdminRt.getText();
+      touched = true;
+    }
+
+    if (idxRawRemarks != null) {
+      if (obj.remarksRt != null && rawRemarksRTs) {
+        rawRemarksRTs[i][0] = obj.remarksRt;
+        row[idxRawRemarks] = obj.remarksRt.getText();
+        touched = true;
+      } else if (obj.remarks != null && String(obj.remarks) !== '') {
+        row[idxRawRemarks] = obj.remarks;
+        touched = true;
+      }
+    }
+
+    if (touched) updated++;
+  });
+
+  // Apply column-level types/format/validation (cheap, once)
+  if (idxRawOR != null) {
+    try { rawSheet.getRange(2, idxRawOR + 1, rawValues.length, 1).insertCheckboxes(); } catch (e) {}
+  }
+  if (formatSource) {
+    try {
+      // Status: preserve dropdown *chip* rule + visuals on Raw (do NOT overwrite values)
+      // Rationale: setDataValidation(dv) can drop "chip" display + option colors; copyTo(PASTE_DATA_VALIDATION) preserves it.
+      if (idxRawStatus != null && formatSource.idxStatus !== -1) {
+        const srcCell = formatSource.sh.getRange(2, formatSource.idxStatus + 1, 1, 1);
+        const dstCol  = rawSheet.getRange(2, idxRawStatus + 1, rawValues.length, 1);
+
+        try { srcCell.copyTo(dstCol, SpreadsheetApp.CopyPasteType.PASTE_DATA_VALIDATION, false); } catch (e) {
+          // Fallback (may lose chip styling, but keeps dropdown rule at least)
+          try {
+            const dv = srcCell.getDataValidation();
+            if (dv) dstCol.setDataValidation(dv);
+          } catch (e2) {}
+        }
+
+        // Visuals (number format, fonts, alignment, borders)
+        try { srcCell.copyTo(dstCol, SpreadsheetApp.CopyPasteType.PASTE_FORMAT, false); } catch (e) {}
+
+        // Conditional formatting (if the Status column uses CF-based highlighting)
+        try { srcCell.copyTo(dstCol, SpreadsheetApp.CopyPasteType.PASTE_CONDITIONAL_FORMATTING, false); } catch (e) {}
+      }
+
+      // Update Status: column format (rich text is written below)
+      if (idxRawUpdate != null && formatSource.idxUpdate !== -1) {
+        const src2 = formatSource.sh.getRange(2, formatSource.idxUpdate + 1, 1, 1);
+        const dst2 = rawSheet.getRange(2, idxRawUpdate + 1, rawValues.length, 1);
+        src2.copyTo(dst2, SpreadsheetApp.CopyPasteType.PASTE_FORMAT, false);
+      }
+
+      // Remarks: preserve column format + (if any) data validation.
+      if (idxRawRemarks != null && formatSource.idxRemarks !== -1) {
+        const srcR = formatSource.sh.getRange(2, formatSource.idxRemarks + 1, 1, 1);
+        const dstR = rawSheet.getRange(2, idxRawRemarks + 1, rawValues.length, 1);
+        try { srcR.copyTo(dstR, SpreadsheetApp.CopyPasteType.PASTE_FORMAT, false); } catch (e) {}
+        try { srcR.copyTo(dstR, SpreadsheetApp.CopyPasteType.PASTE_DATA_VALIDATION, false); } catch (e2) {}
+      }
+
+      // Update Status Asso/Admin: column format (rich text is written below)
+      if (idxRawUpdateAsso != null && formatSource.idxUpdateAsso !== -1) {
+        const srcA = formatSource.sh.getRange(2, formatSource.idxUpdateAsso + 1, 1, 1);
+        const dstA = rawSheet.getRange(2, idxRawUpdateAsso + 1, rawValues.length, 1);
+        try { srcA.copyTo(dstA, SpreadsheetApp.CopyPasteType.PASTE_FORMAT, false); } catch (e) {}
+      }
+      if (idxRawUpdateAdmin != null && formatSource.idxUpdateAdmin !== -1) {
+        const srcB = formatSource.sh.getRange(2, formatSource.idxUpdateAdmin + 1, 1, 1);
+        const dstB = rawSheet.getRange(2, idxRawUpdateAdmin + 1, rawValues.length, 1);
+        try { srcB.copyTo(dstB, SpreadsheetApp.CopyPasteType.PASTE_FORMAT, false); } catch (e) {}
+      }
+
+      // Timestamp: number format (optional)
+      if (idxRawTs != null && formatSource.idxTs !== -1) {
+        const fmt = formatSource.sh.getRange(2, formatSource.idxTs + 1, 1, 1).getNumberFormat();
+        if (fmt) rawSheet.getRange(2, idxRawTs + 1, rawValues.length, 1).setNumberFormat(fmt);
+      }
+    } catch (e) {}
+  }
+
+  // Write back changed raw columns (batch per contiguous block)
+  const colsToWrite = [];
+  if (idxRawOR != null) colsToWrite.push(idxRawOR);
+  if (idxRawStatus != null) colsToWrite.push(idxRawStatus);
+  if (idxRawTs != null) colsToWrite.push(idxRawTs);
+  if (idxRawUpdate != null) colsToWrite.push(idxRawUpdate);
+  if (idxRawUpdateAsso != null) colsToWrite.push(idxRawUpdateAsso);
+  if (idxRawTsAsso != null) colsToWrite.push(idxRawTsAsso);
+  if (idxRawUpdateAdmin != null) colsToWrite.push(idxRawUpdateAdmin);
+  if (idxRawTsAdmin != null) colsToWrite.push(idxRawTsAdmin);
+  if (idxRawRemarks != null) colsToWrite.push(idxRawRemarks);
+
+  writeRawColumns_(rawSheet, rawValues, colsToWrite);
+
+  // Rich text write (Update Status + Asso/Admin variants)
+  if (idxRawUpdate != null && rawUpdateRTs) {
+    try { safeSetRichTextValues_(rawSheet.getRange(2, idxRawUpdate + 1, rawUpdateRTs.length, 1), rawUpdateRTs); } catch (e) {}
+  }
+  if (idxRawUpdateAsso != null && rawUpdateAssoRTs) {
+    try { safeSetRichTextValues_(rawSheet.getRange(2, idxRawUpdateAsso + 1, rawUpdateAssoRTs.length, 1), rawUpdateAssoRTs); } catch (e) {}
+  }
+  if (idxRawUpdateAdmin != null && rawUpdateAdminRTs) {
+    try { safeSetRichTextValues_(rawSheet.getRange(2, idxRawUpdateAdmin + 1, rawUpdateAdminRTs.length, 1), rawUpdateAdminRTs); } catch (e) {}
+  }
+
+  if (idxRawRemarks != null && rawRemarksRTs) {
+    try { safeSetRichTextValues_(rawSheet.getRange(2, idxRawRemarks + 1, rawRemarksRTs.length, 1), rawRemarksRTs); } catch (e) {}
+  }
+
+  return { updated, notes: 'scannedOpsRows=' + scannedRows + ' | matchedClaims=' + Object.keys(fieldSet).length + ' | fullFormat=1' };
 }
 
 
-/** ---------- SUB attachments: pick OLD + NEW in one pass (shared helper) ---------- */
-/**
- * In this project, "OLD" and "NEW" are two different Metabase datasets (not snapshots).
- * - NEW: export contains "standardization" in filename
- * - OLD: export contains "List of Claims with Aging" and does NOT contain "standardization"
- */
-function pickSubDashboardAttachments04_(attachments) {
-  const list = Array.isArray(attachments) ? attachments : [];
-  let oldBest = null;
-  let oldName = '';
-  let newBest = null;
-  let newName = '';
 
-  const getName = (a) => (a && typeof a.getName === 'function') ? String(a.getName() || '') : (a && a.name ? String(a.name || '') : '');
 
-  for (let i = 0; i < list.length; i++) {
-    const a = list[i];
-    const name = getName(a);
-    if (!name) continue;
+/** =========================
+ *  Raw minimal column writeback
+ *  ========================= */
 
-    const t = detectSubDashboardAttachmentType04_(name);
-    if (!t) continue;
+function writeRawColumns_(rawSheet, rawValues, colIdxList0based) {
+  if (DRY_RUN) return;
+  if (!rawSheet || !rawValues || !rawValues.length) return;
 
-    if (t === 'NEW') {
-      if (!newBest) { newBest = a; newName = name; continue; }
-      if (String(name).localeCompare(String(newName)) < 0) { newBest = a; newName = name; }
-      continue;
-    }
+  const cols = Array.from(new Set(colIdxList0based.filter(x => x != null && x >= 0))).sort((a, b) => a - b);
+  if (!cols.length) return;
 
-    if (t === 'OLD') {
-      if (!oldBest) { oldBest = a; oldName = name; continue; }
-      if (String(name).localeCompare(String(oldName)) < 0) { oldBest = a; oldName = name; }
-      continue;
-    }
+  // Group contiguous columns into runs to minimize Range writes
+  const runs = [];
+  let cur = [cols[0]];
+  for (let i = 1; i < cols.length; i++) {
+    const c = cols[i];
+    if (c === cur[cur.length - 1] + 1) cur.push(c);
+    else { runs.push(cur); cur = [c]; }
   }
+  runs.push(cur);
 
-  return { oldAttachment: oldBest, newAttachment: newBest, oldAtt: oldBest, newAtt: newBest };
+  for (let r = 0; r < runs.length; r++) {
+    const run = runs[r];
+    const startCol1 = run[0] + 1;
+    const width = run.length;
+
+    const out = new Array(rawValues.length);
+    for (let i = 0; i < rawValues.length; i++) {
+      const src = rawValues[i];
+      const rowOut = new Array(width);
+      for (let j = 0; j < width; j++) rowOut[j] = src[run[j]];
+      out[i] = rowOut;
+    }
+    safeSetValues_(rawSheet.getRange(2, startCol1, rawValues.length, width), out);
+  }
 }

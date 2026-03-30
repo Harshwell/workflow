@@ -170,12 +170,6 @@ function __sortOperationalSheetsSub06e_(ss, sheetNames, sortSpecs) {
       }))
     : defaultSpecs;
 
-  // SUB sort is enforced by requirement; ignore legacy default unless explicitly configured.
-  const enforcedSpecs = [
-        { headerCandidates: ['Last Status Date', 'claim_last_updated_datetime', 'claim last updated datetime'], ascending: true },
-    { headerCandidates: ['Last Status', 'last_status', 'last status'], ascending: true }
-  ];
-
   for (let i = 0; i < names.length; i++) {
     const name = String(names[i] || '').trim();
     if (!name) continue;
@@ -202,7 +196,6 @@ function __sortOperationalSheetsSub06e_(ss, sheetNames, sortSpecs) {
 
       const sortCriteria = [];
       normalizedSpecs.forEach(s => {
-      enforcedSpecs.forEach(s => {
         const idx = idxByCandidates(s.headerCandidates);
         if (idx >= 0) sortCriteria.push({ column: idx + 1, ascending: !!s.ascending });
       });
@@ -242,4 +235,3 @@ function __sortOperationalSheetsSub06e_(ss, sheetNames, sortSpecs) {
 
   return out;
 }
-

@@ -1,1060 +1,1502 @@
 /***************************************************************
- * 02_LogAndDetails.gs
- * Enterprise Edition — Semi realtime Log + perf-safe Details
+ * 03_SheetsAndValidation.gs
+ * Enterprise Edition — Sheet assurance, header healing,
+ * dropdown preservation (incl. colors), auto-heal validations,
+ * deterministic formatting (safe).
  *
- * Goals:
- * - Log shows progress early in the run (progress + first-line flush)
- * - Writes remain efficient (throttled flush)
- * - Details de-dupe + grouping without becoming a bottleneck
+ * Patched: 2025-12-27 (per user spec)
+ * - PIC Farhan/Meilani/Suci/Adi: DO NOT auto-add "Associate" on destination sheets (non-Raw Data)
+ * - Admin: MUST keep "Associate" on operational sheets
+ * - Dropdown: prefer COPY existing rule (keeps chip style + colors), avoid rebuild
+ * - Remove wrong "Last Status Date" dropdown sync (it is NOT a dropdown)
  ***************************************************************/
 'use strict';
-/** UI flag safe accessor (prevents ReferenceError if UI_FLAGS is unavailable) */
-function uiFlag_(key, fallback) {
+
+
+/** ---------- Header normalization (NBSP/spacing/BOM safe) ---------- */
+function sv03_normHeaderText_(v) {
+  let s = String(v == null ? '' : v);
+  // Remove BOM
+  s = s.replace(/^\uFEFF/, '');
+  // Normalize NBSP to normal space
+  s = s.replace(/\u00A0/g, ' ');
+  // Collapse whitespace & trim
+  s = s.replace(/\s+/g, ' ').trim();
+  return s;
+}
+
+
+/** ---------- Safe access to registries (no ReferenceError) ---------- */
+const _SV03_VALIDATION_FALLBACK = (typeof VALIDATION_LISTS !== 'undefined') ? VALIDATION_LISTS : Object.freeze({
+  PIC: Object.freeze(['Meilani', 'Farhan', 'Suci', 'Adi']),
+  UPDATE_STATUS: Object.freeze([
+    'Pending Admin','Pending SC','Pending Partner','DONE','Pending Insurance',
+    'Pending TO','Pending Finance','Pending Meilani','Pending Cust'
+  ])
+});
+
+const _SV03_VALIDATION_POLICY = (typeof VALIDATION_POLICY !== 'undefined') ? VALIDATION_POLICY : Object.freeze({
+  ENABLE_AUTO_HEAL: true,
+  MODE: 'BIDIR',               // 'RAW'|'TARGET'|'BIDIR'
+  PRESERVE_RULE_BY_COPY: true, // keep dropdown chip + colors
+  ALLOW_BLANK: true,
+  USE_FALLBACK_WHEN_EMPTY: true
+});
+
+const _SV03_FORMATS = (typeof FORMATS !== 'undefined') ? FORMATS : Object.freeze({
+  DATE: 'd mmm yy',
+  DATE_AUTO: 'd mmm yy',
+  DATETIME: 'd mmm yy, HH:mm',
+  DATETIME_LONG: 'MMMM d, yyyy, h:mm AM/PM',
+  TIMESTAMP: 'd mmm, HH:mm',
+  INT: '0',
+  MONEY0: '#,##0',
+  PERCENT: '0%'
+});
+
+const _SV03_DEST_COMMON_TYPES = (typeof COLUMN_TYPES !== 'undefined' && COLUMN_TYPES && COLUMN_TYPES.DEST_COMMON)
+  ? COLUMN_TYPES.DEST_COMMON
+  : Object.freeze({
+
+      'Submission Date': 'DATE',
+      'Submitted Datetime': 'DATETIME',
+      'Timestamp': 'TIMESTAMP',
+      'Last Status Date': 'DATE_AUTO',
+      'Last Status Aging': 'INT',
+      'LSA': 'INT',
+      'ALA': 'INT',
+      'TAT': 'INT',
+      'Activity Log Aging': 'INT',
+      'Sum Insured': 'MONEY0',
+      'Sum Insured Amount': 'MONEY0',
+      'Claim Amount': 'MONEY0',
+      'Repair/Replace Amount': 'MONEY0',
+      'Claim Own Risk Amount': 'MONEY0',
+      'OR': 'CHECKBOX',
+      'OR Amount': 'MONEY0',
+      'Nett Claim Amount': 'MONEY0',
+      'Selisih': 'MONEY0',
+      '% Approval': 'PERCENT',
+      'Q-L (Months)': 'INT'
+    });
+
+const _SV03_ALIGNMENT = (typeof COLUMN_ALIGNMENT !== 'undefined') ? COLUMN_ALIGNMENT : Object.freeze({
+  CENTER: Object.freeze(['Submission Date', 'Submitted Datetime', 'Timestamp', 'Last Status Date', 'OR']),
+  RIGHT: Object.freeze([
+    'Sum Insured', 'Sum Insured Amount',
+    'Claim Amount', 'Repair/Replace Amount', 'Claim Own Risk Amount', 'OR Amount', 'Nett Claim Amount', 'Selisih', '% Approval',
+    'Q-L (Months)', 'M-L (Months)', 'M-Q (Months)',
+    'LSA', 'ALA', 'TAT', 'Last Status Aging', 'Activity Log Aging'
+  ]),
+  LEFT: Object.freeze(['Branch'])
+});
+
+
+/** ---------- Per-PIC policy ---------- */
+// Spec: Associate must exist on operational sheets and be carried through flows; allow auto-ensure everywhere
+const SV03_PIC_NO_AUTO_ASSOCIATE = new Set([]);
+
+/** ---------- Dropdown sync tuning ---------- */
+const SV03_DROPDOWN_SYNC = Object.freeze({
+  BUFFER_ROWS: 500,
+  SCAN_MAX_ROWS: 2000,              // scan values to auto-heal (perf-safe)
+  FORCE_ALLOW_BLANK: true,          // always allow blank
+  PREFER_VALUE_IN_RANGE: true,      // best for colored dropdown options
+  APPLY_TO_ALL_SHEETS: true,        // sync across workbook sheets that contain the column
+
+  SKIP_SYNC_FOR_ADMIN: true,       // Admin dropdowns preserved via template-row copy
+  ADMIN_TEMPLATE_ROW: 2,           // Row index used as dropdown+format template
+  ADMIN_TEMPLATE_START_ROW: 2,     // Apply template from this row down
+
+
+  // If template rule is VALUE_IN_LIST, rebuilding will likely drop chip/colors.
+  // We default to NOT rebuilding list rules.
+  ALLOW_REBUILD_LIST_RULE: false
+});
+
+/** ---------- Templates (PER PROFILE) ----------
+ * Rule from user:
+ * - Special Case columns are user-managed (fixed schema); script must NOT auto-add columns
+ * - "OR" ONLY in Special Case + PO
+ * - Admin: no Device Type / LSA / ALA / TAT / OR / OR Amount
+ */
+const SV03_TEMPLATES = Object.freeze({
+  OPS_PIC_DEFAULT: Object.freeze([
+    'Submission Date',
+    'Claim Number',
+    'DB Link',
+    'DB',
+    'Partner Name',
+    'Insurance',
+    'Device Type',
+    'Product',
+    'Device Brand',
+    'IMEI/SN',
+    'Last Status',
+    'Last Status Date',
+    'Service Center',
+    'Last Status Aging',
+    'Activity Log',
+    'Activity Log Aging',
+    'TAT',
+    'Sum Insured Amount',
+    'Claim Amount',
+    'Claim Own Risk Amount',
+    'Nett Claim Amount',
+    '% Approval',
+    'Update Status',
+    'Timestamp',
+    'Status',
+    'Status Type',
+  ]),
+
+  OPS_PIC_SC: Object.freeze([
+    'Submission Date',
+    'Claim Number',
+    'DB Link',
+    'DB',
+    'Partner Name',
+    'Insurance',
+    'Device Type',
+    'Product',
+    'Device Brand',
+    'IMEI/SN',
+    'Last Status',
+    'Last Status Date',
+    'Type',
+    'Service Center',
+    'Branch',
+    'Last Status Aging',
+    'Activity Log',
+    'Activity Log Aging',
+    'TAT',
+    'Sum Insured Amount',
+    'Claim Amount',
+    'Claim Own Risk Amount',
+    'Nett Claim Amount',
+    '% Approval',
+    'Update Status',
+    'Timestamp',
+    'Status',
+    'Status Type',
+  ]),
+
+
+  OPS_PIC_PO: Object.freeze([
+    'Submission Date',
+    'Claim Number',
+    'DB Link',
+    'DB',
+    'Partner Name',
+    'Insurance',
+    'Device Type',
+    'Product',
+    'Device Brand',
+    'IMEI/SN',
+    'Last Status',
+    'Last Status Date',
+    'Service Center',
+    'Last Status Aging',
+    'Activity Log',
+    'Activity Log Aging',
+    'TAT',
+    'Sum Insured Amount',
+    'Claim Amount',
+    'Claim Own Risk Amount',
+    'Nett Claim Amount',
+    '% Approval',
+    'OR',
+    'Update Status',
+    'Timestamp',
+    'Status',
+    'Status Type',
+  ]),
+
+  OPS_PIC_WORKFLOW: Object.freeze([
+    'Submission Date',
+    'Claim Number',
+    'DB Link',
+    'DB',
+    'Partner Name',
+    'Insurance',
+    'Device Type',
+    'Product',
+    'Device Brand',
+    'IMEI/SN',
+    'Last Status',
+    'Last Status Date',
+    'Service Center',
+    'Last Status Aging',
+    'Activity Log',
+    'Activity Log Aging',
+    'TAT',
+    'Sum Insured Amount',
+    'Claim Amount',
+    'Claim Own Risk Amount',
+    'Nett Claim Amount',
+    '% Approval',
+    'Update Status Asso',
+    'Timestamp Asso',
+    'Update Status Admin',
+    'Timestamp Admin',
+    'Status',
+    'Status Type',
+  ]),
+
+  OPS_ADMIN_WORKFLOW: Object.freeze([
+    'Submission Date',
+    'Claim Number',
+    'DB Link',
+    'DB',
+    'Partner Name',
+    'Insurance',
+    'Device Type',
+    'Product',
+    'Device Brand',
+    'IMEI/SN',
+    'Last Status',
+    'Last Status Date',
+    'Service Center',
+    'Activity Log',
+    'Sum Insured Amount',
+    'Claim Amount',
+    'Claim Own Risk Amount',
+    'Nett Claim Amount',
+    '% Approval',
+    'Update Status Asso',
+    'Timestamp Asso',
+    'Update Status Admin',
+    'Timestamp Admin',
+    'Status',
+    'Status Type',
+  ]),
+
+  OPS_ADMIN_DEFAULT: Object.freeze([
+    'Submission Date',
+    'Claim Number',
+    'DB Link',
+    'DB',
+    'Partner Name',
+    'Insurance',
+    'Device Type',
+    'Product',
+    'Device Brand',
+    'IMEI/SN',
+    'Last Status',
+    'Last Status Date',
+    'Service Center',
+    'Activity Log',
+    'Sum Insured Amount',
+    'Claim Amount',
+    'Claim Own Risk Amount',
+    'Nett Claim Amount',
+    '% Approval',
+    'Update Status',
+    'Timestamp',
+    'Status',
+    'Status Type',
+  ]),
+
+  B2B: Object.freeze([
+    'Submission Date',
+    'Claim Number',
+    'DB Link',
+    'DB',
+    'Partner Name',
+    'Insurance',
+    'Device Type',
+    'Product',
+    'Device Brand',
+    'IMEI/SN',
+    'Last Status',
+    'Service Center',
+    'Last Status Aging',
+    'Activity Log Aging',
+    'TAT',
+    'Sum Insured Amount',
+    'Claim Amount',
+    'Claim Own Risk Amount',
+    'Nett Claim Amount',
+    '% Approval'
+  ]),
+
+  SPECIAL_CASE: Object.freeze([
+    'Submission Date','Claim Number','DB Link','DB','Partner Name','Insurance','Device Type',
+    'Last Status','Service Center','Last Status Aging','Activity Log Aging','TAT',
+    'Last Status Date',
+    'Q-L (Months)',
+    'Product','Sum Insured Amount',
+    'Claim Amount','OR','Claim Own Risk Amount',
+    'Nett Claim Amount',
+    'Selisih',
+    'Reason'
+  ]),
+
+  EV_BIKE: Object.freeze([
+    'Submission Date','Claim Number','DB Link','Owner Name','Policy Number','Partner Name','Insurance','Sum Insured','Status'
+  ])
+});
+
+// Optional sheets used in the single-master workbook (always enabled)
+const SV03_OPTIONAL_SHEETS_DEFAULT = Object.freeze(['B2B', 'EV-Bike', 'Special Case']);
+
+
+/** ---------- Fixed schema guard ---------- */
+// Fixed-schema sheets must NOT have headers/columns auto-healed or auto-added.
+// If headers change, user will adjust them manually.
+const SV03_FIXED_SCHEMA_SHEETS = new Set(['Special Case', 'Exclusion']);
+// Sheets that have specific Update Status/Timestamp columns (Asso/Admin) and must NOT receive generic ones.
+const SV03_WORKFLOW_SHEETS = new Set(['Ask Detail', 'Start', 'Finish']);
+
+
+function sv03_isFixedSchemaSheet_(name) {
+  const n = String(name || '').trim();
   try {
-    if (typeof UI_FLAGS !== 'undefined' && UI_FLAGS && Object.prototype.hasOwnProperty.call(UI_FLAGS, key)) {
-      return !!UI_FLAGS[key];
+    if (typeof CONFIG !== 'undefined' && CONFIG && CONFIG.fixedSchemaPolicy) {
+      const p = CONFIG.fixedSchemaPolicy;
+      if (p.specialCase && n === 'Special Case') return true;
+      if (p.exclusion && n === 'Exclusion') return true;
+      if (Array.isArray(p.fixedSheets) && p.fixedSheets.indexOf(n) !== -1) return true;
+    }
+    if (typeof FIXED_SCHEMA_POLICY !== 'undefined' && FIXED_SCHEMA_POLICY) {
+      const p2 = FIXED_SCHEMA_POLICY;
+      if (p2.specialCase && n === 'Special Case') return true;
+      if (p2.exclusion && n === 'Exclusion') return true;
+      if (Array.isArray(p2.fixedSheets) && p2.fixedSheets.indexOf(n) !== -1) return true;
     }
   } catch (e) {}
-  return !!fallback;
+  return SV03_FIXED_SCHEMA_SHEETS.has(n);
 }
-/** DRY_RUN safe accessor */
 
-// [Refactor] Removed duplicate definition of isDryRun_ (source of truth in 01_Utils)
+/** ---------- Profile helpers ---------- */
+function getWorkbookProfile_(picOrProfile) {
+  const p = String(picOrProfile || '').trim();
+  if (!p) return (typeof WORKBOOK_PROFILES !== 'undefined' && WORKBOOK_PROFILES && WORKBOOK_PROFILES.PIC) ? WORKBOOK_PROFILES.PIC : 'PIC';
 
-/** Whether Associate/Partner mapping is enabled (legacy PIC-based mapping). */
+  const up = p.toUpperCase();
+  if (up === 'ADMIN') return (typeof WORKBOOK_PROFILES !== 'undefined' && WORKBOOK_PROFILES && WORKBOOK_PROFILES.ADMIN) ? WORKBOOK_PROFILES.ADMIN : 'ADMIN';
 
-// [Refactor] Removed duplicate definition of isAssociateMappingEnabled_ (source of truth in 01_Utils)
+  // In the new single-master workflow, any non-admin identifier is treated as PIC profile.
+  return (typeof WORKBOOK_PROFILES !== 'undefined' && WORKBOOK_PROFILES && WORKBOOK_PROFILES.PIC) ? WORKBOOK_PROFILES.PIC : 'PIC';
+}
+function sv03_getProfileSpec_(profile) {
+  const p = String(profile || '').trim() || 'PIC';
+  const isAdmin = (p === 'ADMIN');
 
-/** =========================
- * Layout constants
- * ========================= */
-/** Log layout */
-const LOG_LAYOUT = Object.freeze({
-  PROGRESS_HEADER_ROW: 2,
-  PROGRESS_VALUE_ROW: 3,
-  DETAIL_HEADER_ROW: 5,
-  DETAIL_START_ROW: 6
-});
-const LOG_COLUMNS = Object.freeze({
-  NUMBER: 2,      // B
-  TIMESTAMP: 3,   // C
-  SEGMENT: 4,     // D
-  DURATION: 5,    // E
-  METRICS: 6,     // F
-  NOTES: 7,       // G
-  SEVERITY: 8     // H
-});
-/** =========================
- * LOG v2 (Structured stage log for MAIN/SUB)
- *
- * Note: This is designed to be backward compatible with the legacy Log table.
- * - Legacy table stays at columns B:H
- * - v2 table is placed starting at column J to avoid breaking existing formulas
- *
- * v2 columns match the spec (Flow/RunID/Stage/Email/Attachment/Counts/Status).
- * Call-sites can gradually migrate to logStageV2_() without breaking old logLine_().
- * ========================= */
-const LOGV2_LAYOUT = Object.freeze({
-  HEADER_ROW: LOG_LAYOUT.DETAIL_HEADER_ROW, // align with legacy header row
-  START_ROW: LOG_LAYOUT.DETAIL_START_ROW,
-  START_COL: 10, // J
-  COLS: 21
-});
-const LOGV2_HEADER = Object.freeze([
-  'No',
-  'Timestamp',
-  'Flow',
-  'Run ID',
-  'Stage',
-  'Time Segment',
-  'Duration(ms)/(s)',
-  'Email From',
-  'Email Subject',
-  'Thread ID',
-  'Attachment Name',
-  'Attachment Size',
-  'Attachment Type',
-  'Raw Rows',
-  'Ops Updated',
-  'Sub Inserted',
-  'Status',
-  'Error',
-  'Metrics',
-  'Notes',
-  'Severity'
-]);
-const DETAILS_LAYOUT = Object.freeze({
-  HEADER_ROW: 2,
-  START_ROW: 3,
-  START_COL: 2, // B
-  COLS: 8
-});
-const DETAILS_COLUMNS = Object.freeze({
-  NO: 0,
-  TIMESTAMP: 1,
-  SUBMISSION_DATE: 2,
-  TARGET_SHEET: 3,
-  CLAIM_NUMBER: 4,
-  PARTNER: 5,
-  LAST_STATUS: 6,
-  REASON: 7
-});
-/** =========================
- * Tuning knobs
- * ========================= */
-// Flush policy: "semi updated" without killing runtime
-const LOG_FLUSH_THROTTLE_MS = 2000;     // max 1 flush / 2 seconds
-const LOG_FORCE_FLUSH_ON_FIRST_WRITE = true;
-const LOG_FORCE_FLUSH_ON_ERROR = true;
-// Details tuning
-const DETAILS_DEDUPE_SCAN_LIMIT = 20000;     // scan last N rows for dedupe (perf-safe)
-const DETAILS_GROUP_THRESHOLD = 30;          // if many rows, group aggressively
-const DETAILS_CLAIM_CELL_MAX = 12;           // max claims shown in cell; full list goes to note
-const DETAILS_ROWNUM_CELL_MAX = 20;          // max row numbers shown inline
-// Details suppression rule:
-// Do NOT log the specific reason below when Submission Date is before Jun 2025.
-// Example: 21 May 25 => skip this row if reason matches.
-const DETAILS_SUPPRESS_PARTNER_NOT_MAPPED_REASON = 'Partner is not mapped (legacy mapping disabled).';
-const DETAILS_SUPPRESS_PARTNER_NOT_MAPPED_CUTOFF = new Date(2025, 5, 1); // 1 Jun 2025 (month is 0-based)
-/** Formats fallback-safe */
-const DETAILS_FORMATS = Object.freeze({
-  DATE: (
-    (typeof FORMATS !== 'undefined' && FORMATS.DATE) ? FORMATS.DATE :
-    (typeof SHEET_FORMATS !== 'undefined' && SHEET_FORMATS.DATE) ? SHEET_FORMATS.DATE :
-    'd mmm yy'
-  ),
-  DATETIME: (
-    (typeof FORMATS !== 'undefined' && FORMATS.DATETIME) ? FORMATS.DATETIME :
-    (typeof SHEET_FORMATS !== 'undefined' && SHEET_FORMATS.DATETIME) ? SHEET_FORMATS.DATETIME :
-    'd mmm yy, HH:mm'
-  )
-});
-/** =========================
- * Cache
- * ========================= */
-const CACHE = {
-  log: {
-    ss: null,
-    sh: null,
-    ensured: false,
-    nextRow: LOG_LAYOUT.DETAIL_START_ROW,
-    segNo: 0,
-    didAnyWrite: false,
-    lastFlushMs: 0,
-    mappingKeySet: new Set(),
-    // v2 (structured)
-    v2Ensured: false,
-    v2NextRow: LOGV2_LAYOUT.START_ROW,
-    v2SegNo: 0,
-    // run context
-    runId: '',
-    flow: ''
-  },
-  details: {
-    ss: null,
-    sh: null,
-    ensured: false,
-    formattedOnce: false,
-    nextNo: null,
-    existingClaimSet: null,   // cached set of claim keys already in Details
-    runClaimSet: new Set()    // claim keys appended in current execution
+  // Prefer profile spec from 00_Config (CONFIG.workbookProfiles), but always normalize to a mutable copy.
+  let base = null;
+  if (typeof CONFIG !== 'undefined' && CONFIG && CONFIG.workbookProfiles && CONFIG.workbookProfiles[p]) {
+    base = CONFIG.workbookProfiles[p];
   }
-};
-function resetLogState_() {
-  CACHE.log.segNo = 0;
-  CACHE.log.nextRow = LOG_LAYOUT.DETAIL_START_ROW;
-  CACHE.log.didAnyWrite = false;
-  CACHE.log.lastFlushMs = 0;
-  // v2
-  CACHE.log.v2SegNo = 0;
-  CACHE.log.v2NextRow = LOGV2_LAYOUT.START_ROW;
-  CACHE.log.v2Ensured = false;
-  // context (re-initialized per run; generated lazily)
-  CACHE.log.runId = '';
-  CACHE.log.flow = '';
-  try { CACHE.log.mappingKeySet = new Set(); } catch (e) {}
-}
-function resetDetailsState_() {
-  CACHE.details.nextNo = null;
-  CACHE.details.existingClaimSet = null;
-  CACHE.details.runClaimSet = new Set();
-  CACHE.details.formattedOnce = false;
-}
-/** =========================
- * Run context helpers (Flow + Run ID)
- * ========================= */
-function normalizeFlowLabel_(flow) {
-  const f = String(flow || '').trim();
-  if (!f) return '';
-  const up = f.toUpperCase();
-  if (up === 'MAIN' || up === 'SUB' || up === 'FORM') return up;
-  return f;
-}
-/**
- * Best-effort flow inference from segment/stage id when entrypoints didn't set RUNTIME.flow.
- * This keeps MAIN/SUB log separation usable without forcing changes across all entrypoints.
- */
-function inferFlowFromSegId_(segId) {
-  const id = String(segId || '').trim().toUpperCase();
-  if (!id) return '';
-  if (id === 'MAIN' || id.startsWith('MAIL') || id.startsWith('MAIN')) return 'MAIN';
-  if (id === 'SUB' || id.startsWith('SUB')) return 'SUB';
-  if (id === 'FORM' || id.startsWith('FORM')) return 'FORM';
-  return '';
-}
-/**
- * Allow entrypoints to set flow/runId explicitly.
- * - If not set, we generate runId lazily.
- * - Flow is best-effort (falls back to RUNTIME.flow if present).
- */
-function setLogRunContext_(flow, runId) {
-  try { CACHE.log.flow = normalizeFlowLabel_(flow); } catch (e) {}
-  try { CACHE.log.runId = String(runId || ''); } catch (e2) {}
+
+  const core = (base && base.core) ? Array.from(base.core) : ['Raw Data'];
+
+  let operational = (base && base.operational)
+    ? Array.from(base.operational)
+    : (isAdmin
+      ? ((CONFIG.sheetsByPic && Array.isArray(CONFIG.sheetsByPic.adminOperational)) ? CONFIG.sheetsByPic.adminOperational : [])
+      : ((CONFIG.sheetsByPic && Array.isArray(CONFIG.sheetsByPic.picOperational)) ? CONFIG.sheetsByPic.picOperational : []));
+
+
+  // Auto-include SC sheets from routing policy (prevents missing newly added SC sheets like "SC - Ivan").
   try {
-    if (typeof RUNTIME !== 'undefined' && RUNTIME) {
-      if (flow != null) RUNTIME.flow = normalizeFlowLabel_(flow);
-      if (runId != null) RUNTIME.runId = String(runId || '');
+    const scSet = new Set(operational || []);
+    const routingSheets =
+      (typeof OPS_ROUTING_POLICY !== 'undefined' && OPS_ROUTING_POLICY && OPS_ROUTING_POLICY.SHEETS) ? OPS_ROUTING_POLICY.SHEETS
+      : ((typeof CONFIG !== 'undefined' && CONFIG && CONFIG.opsRoutingPolicy && CONFIG.opsRoutingPolicy.SHEETS) ? CONFIG.opsRoutingPolicy.SHEETS
+        : ((typeof CONFIG !== 'undefined' && CONFIG && CONFIG.opsRoutingPolicyV2 && CONFIG.opsRoutingPolicyV2.SHEETS) ? CONFIG.opsRoutingPolicyV2.SHEETS
+          : null));
+    if (routingSheets) {
+      Object.keys(routingSheets).forEach(k => {
+        if (String(k || '').indexOf('SC_') === 0) {
+          const v = String(routingSheets[k] || '').trim();
+          if (v) scSet.add(v);
+        }
+      });
     }
-  } catch (e3) {}
-}
-function getLogFlow_() {
-  try {
-    if (CACHE.log.flow) return CACHE.log.flow;
-  } catch (e0) {}
-  try {
-    if (typeof RUNTIME !== 'undefined' && RUNTIME && RUNTIME.flow) return normalizeFlowLabel_(RUNTIME.flow);
-  } catch (e1) {}
-  return '';
-}
-function getRunId_() {
-  try {
-    if (CACHE.log.runId) return CACHE.log.runId;
-  } catch (e0) {}
-  try {
-    if (typeof RUNTIME !== 'undefined' && RUNTIME && RUNTIME.runId) {
-      CACHE.log.runId = String(RUNTIME.runId || '');
-      if (CACHE.log.runId) return CACHE.log.runId;
-    }
-  } catch (e1) {}
-  // Generate lazily
-  let rid = '';
-  try { rid = Utilities.getUuid(); } catch (e2) {}
-  if (!rid) {
-    // Fallback: timestamp + random
-    rid = 'RID-' + String(Date.now()) + '-' + String(Math.floor(Math.random() * 1e9));
-  }
-  try { CACHE.log.runId = rid; } catch (e3) {}
-  try { if (typeof RUNTIME !== 'undefined' && RUNTIME) RUNTIME.runId = rid; } catch (e4) {}
-  return rid;
-}
-function msFromSec_(sec) {
-  const n = Number(sec);
-  if (!isFinite(n)) return '';
-  return Math.round(n * 1000);
-}
-function joinNotes_(metrics, notes) {
-  const a = String(metrics || '').trim();
-  const b = String(notes || '').trim();
-  if (a && b) return a + ' | ' + b;
-  return a || b || '';
-}
-/** =========================
- * Mapping error log helpers (Sheet "Log")
- * ========================= */
-/** Whether mapping error logging is enabled */
-function isMappingErrorLogEnabled_() {
-  try {
-    if (typeof MAPPING_ERROR_LOG_POLICY !== 'undefined' && MAPPING_ERROR_LOG_POLICY) {
-      return !!MAPPING_ERROR_LOG_POLICY.ENABLE;
-    }
+    operational = Array.from(scSet);
   } catch (e) {}
+
+  let optional = (base && base.optional)
+    ? Array.from(base.optional)
+    : (!isAdmin && CONFIG.sheetsByPic && Array.isArray(CONFIG.sheetsByPic.optional) ? CONFIG.sheetsByPic.optional : []);
+
+  // Single-master requirement: optional sheets are not PIC-restricted anymore.
+  if (!isAdmin) {
+    const set = new Set(optional || []);
+    const defaults = (typeof SV03_OPTIONAL_SHEETS_DEFAULT !== 'undefined' && SV03_OPTIONAL_SHEETS_DEFAULT)
+      ? SV03_OPTIONAL_SHEETS_DEFAULT
+      : ['B2B', 'EV-Bike', 'Special Case'];
+    defaults.forEach(n => set.add(n));
+    optional = Array.from(set);
+  } else {
+    optional = [];
+  }
+
+  return {
+    core: Object.freeze((core || []).filter(Boolean)),
+    operational: Object.freeze((operational || []).filter(Boolean)),
+    optional: Object.freeze((optional || []).filter(Boolean))
+  };
+}
+
+/**
+ * Optional sheet gating by PIC.
+ * - EV-Bike: only for OPTIONAL_SHEETS_RULES.EVBIKE_ONLY_FOR_PIC (default Farhan)
+ * - B2B: only for OPTIONAL_SHEETS_RULES.B2B_ONLY_FOR_PIC (default Meilani)
+ * - Special Case: always enabled (exists as optional in profile spec)
+ */
+function sv03_isOptionalSheetEnabledForPic_(pic, sheetName) {
+  const n = String(sheetName || '').trim();
+  if (!n) return false;
+
+  // Single-master requirement: optional sheets are enabled regardless of PIC.
   return true;
 }
-function formatRelevantDateForLog_(dateVal) {
-  const d = normalizeDate_(dateVal);
-  if (!d) return '';
-  try {
-    const tz = Session.getScriptTimeZone ? Session.getScriptTimeZone() : 'GMT';
-    return Utilities.formatDate(d, tz, 'dd MMM yyyy');
-  } catch (e) {}
-  try { return String(d); } catch (e2) {}
-  return '';
+
+
+function sv03_shouldAutoEnsureAssociate_(pic, sheetName) {
+  // Spec: never auto-ensure Associate (legacy columns may remain).
+  return false;
 }
-/** One-line mapping error to Log sheet: <value> | <claim> | <date> */
-function logMappingError_(eventName, value, claimNumber, relevantDateVal) {
-  if (isDryRun_()) return false;
-  if (!isMappingErrorLogEnabled_()) return false;
-  const claim = String(claimNumber || '').trim();
-  const val = String(value || '').trim();
-  if (!claim || !val) return false;
-  const dateStr = formatRelevantDateForLog_(relevantDateVal);
-  const msg = val + ' | ' + claim + (dateStr ? (' | ' + dateStr) : '');
-  const key = String(eventName || 'MAPPING') + '|' + msg;
-  try {
-    if (!CACHE.log.mappingKeySet) CACHE.log.mappingKeySet = new Set();
-    if (CACHE.log.mappingKeySet.has(key)) return false;
-    CACHE.log.mappingKeySet.add(key);
-  } catch (e) {}
-  const segName = String(eventName || 'MAPPING').replace(/_/g, ' ');
-  pushLogRow_('MAP', segName, '', '', msg, 'WARN');
-  return true;
+
+
+
+function sv03_filterTemplateForPic_(pic, sheetName, headerArr) {
+  // Single-master workflow: do not filter template headers by PIC.
+  // Keep templates intact (non-destructive heal will append missing columns only).
+  return Array.isArray(headerArr) ? headerArr.slice() : [];
 }
-function isPartnerNotMappedReasonText_(reason) {
-  const r = String(reason || '');
-  if (!r) return false;
-  // Match both legacy and new phrasing (kept for backward compatibility).
-  return (r.indexOf(DETAILS_SUPPRESS_PARTNER_NOT_MAPPED_REASON) !== -1) ||
-    /partner\s+is\s+not\s+mapped(\s+to\s+any\s+associate)?/i.test(r);
-}
-function isStatusNotRoutedReasonText_(reason) {
-  const r = String(reason || '');
-  if (!r) return false;
-  return /status\s+is\s+not\s+routed/i.test(r) || /add\s+to\s+routing\s+map/i.test(r);
-}
-/** Mirror unmapped partner / unmapped status warnings into Log sheet (short entries) */
-function mirrorMappingErrorsToLog_(rows) {
-  if (!rows || !rows.length) return;
-  for (let i = 0; i < rows.length; i++) {
-    const r = rows[i];
-    if (!r) continue;
-    const reason = String(r.reason || '');
-    if (!reason) continue;
-    const claim = normalizeClaimKey_(r.claim || '') || String(r.claim || '').trim();
-    if (!claim) continue;
-    // Prefer submission date; fall back to optional status date fields if provided by call-site
-    const dateVal =
-      (r.submissionDateVal != null && r.submissionDateVal !== '') ? r.submissionDateVal :
-      (r.lastStatusDateVal != null ? r.lastStatusDateVal :
-       (r.lastStatusDate != null ? r.lastStatusDate :
-        (r.statusDateVal != null ? r.statusDateVal : '')));
-    if (isPartnerNotMappedReasonText_(reason)) {
-      // Legacy associate mapping is disabled in the new master-sheet flow; treat this reason as noise.
-      if (!isAssociateMappingEnabled_()) continue;
-      const ev = (typeof MAPPING_ERROR_LOG_POLICY !== 'undefined' && MAPPING_ERROR_LOG_POLICY && MAPPING_ERROR_LOG_POLICY.EVENT && MAPPING_ERROR_LOG_POLICY.EVENT.UNMAPPED_PARTNER)
-        ? MAPPING_ERROR_LOG_POLICY.EVENT.UNMAPPED_PARTNER
-        : 'UNMAPPED_PARTNER';
-      logMappingError_(ev, r.partner || '(Partner blank)', claim, dateVal);
-      continue;
+
+/** ---------- Sheet ensure + header healing ---------- */
+function sv03_ensureSheetWithHeader_(ss, name, headerArr, pic) {
+  let sh = ss.getSheetByName(name);
+  const isFixed = sv03_isFixedSchemaSheet_(name);
+
+  if (!sh) {
+    if (DRY_RUN) return null;
+    sh = ss.insertSheet(name);
+
+    // Fixed schema sheets are user-managed.
+    // Enterprise-safe behavior:
+    // - If a fixed-schema sheet is missing and we create it, we DO write the template header once
+    //   so the sheet is usable out-of-the-box.
+    // - After creation, we will NOT auto-heal/append columns for fixed-schema sheets.
+    const hdr = sv03_filterTemplateForPic_(pic, name, headerArr);
+    if (hdr && hdr.length && !DRY_RUN) {
+      try { sh.getRange(1, 1, 1, hdr.length).setValues([hdr]); } catch (e0) {}
+      try { sh.setFrozenRows(1); } catch (e1) {}
     }
-    if (isStatusNotRoutedReasonText_(reason)) {
-      const ev = (typeof MAPPING_ERROR_LOG_POLICY !== 'undefined' && MAPPING_ERROR_LOG_POLICY && MAPPING_ERROR_LOG_POLICY.EVENT && MAPPING_ERROR_LOG_POLICY.EVENT.UNMAPPED_LAST_STATUS)
-        ? MAPPING_ERROR_LOG_POLICY.EVENT.UNMAPPED_LAST_STATUS
-        : 'UNMAPPED_LAST_STATUS';
-      logMappingError_(ev, r.lastStatus || '(Last Status blank)', claim, dateVal);
-      continue;
-    }
+    return sh;
   }
-}
-/** =========================
- * Locale-safe helpers (formula)
- * ========================= */
-function buildSparklineFormula_(ss, ratio01) {
-  const r = Math.max(0, Math.min(1, ratio01 || 0));
-  // Prefer util from 01_Utils.gs if available
-  let argSep = ',';
-  try {
-    if (typeof getFormulaArgSep_ === 'function') argSep = getFormulaArgSep_(ss);
-  } catch (e) {}
-  // Array-literal column separator differs by locale; common:
-  // - en_* : comma
-  // - many non-en locales : backslash
-  const colSep = (argSep === ';') ? '\\' : ',';
-  const rowSep = ';';
-  // {"charttype","bar";"max",1}  (en)
-  // {"charttype"\ "bar";"max"\ 1} (many non-en locales)
-  const opts = '{"charttype"' + colSep + '"bar"' + rowSep + '"max"' + colSep + '1}';
-  return '=SPARKLINE(' + r + argSep + opts + ')';
-}
-/** =========================
- * Flush policy (semi-realtime)
- * ========================= */
-function shouldFlushLogNow_(severity) {
-  if (isDryRun_()) return false;
-  const sev = String(severity || 'INFO').toUpperCase();
-  if (LOG_FORCE_FLUSH_ON_ERROR && (sev === 'ERROR' || sev === 'FATAL')) return true;
-  if (LOG_FORCE_FLUSH_ON_FIRST_WRITE && !CACHE.log.didAnyWrite) return true;
-  const now = Date.now();
-  if (!CACHE.log.lastFlushMs) return true;
-  return (now - CACHE.log.lastFlushMs) >= LOG_FLUSH_THROTTLE_MS;
-}
-function flushLogIfNeeded_(severity) {
-  if (!shouldFlushLogNow_(severity)) return;
-  try {
-    SpreadsheetApp.flush();
-    CACHE.log.lastFlushMs = Date.now();
-  } catch (e) {}
-}
-/** =========================
- * Log sheet
- * ========================= */
-function getLogSheet_() {
-  if (CACHE.log.sh) return CACHE.log.sh;
-  const ss = SpreadsheetApp.openById(CONFIG.logSpreadsheetId);
-  const sh = ss.getSheetByName(CONFIG.logSheetName) || ss.getSheets()[0];
-  CACHE.log.ss = ss;
-  CACHE.log.sh = sh;
-  if (!CACHE.log.ensured) {
-    ensureLogLayout_(sh);
-    CACHE.log.ensured = true;
+
+  // Non-destructive header heal (append missing columns) — skip for fixed-schema sheets
+  if (!isFixed && name !== 'Raw Data' && headerArr && headerArr.length) {
+    const hdr = sv03_filterTemplateForPic_(pic, name, headerArr);
+    sv03_ensureHeadersNonDestructive_(sh, hdr);
   }
   return sh;
 }
-function ensureLogLayout_(sh) {
-  if (isDryRun_()) return;
-  // Minimal + idempotent: don't wipe formatting unless missing
-  try {
-    const headerRange = sh.getRange(LOG_LAYOUT.PROGRESS_HEADER_ROW, 2, 1, 4);
-    const h = headerRange.getValues()[0];
-    const expected = ['Progress', '%', 'Current Step', 'Updated At'];
-    let needs = false;
-    for (let i = 0; i < expected.length; i++) {
-      if (String(h[i] || '').trim() !== expected[i]) { needs = true; break; }
-    }
-    if (needs) {
-      safeSetValues_(headerRange, [expected]);
-      try { headerRange.setFontWeight('bold'); } catch (e0) {}
-    }
-    const detailHdrRange = sh.getRange(LOG_LAYOUT.DETAIL_HEADER_ROW, LOG_COLUMNS.NUMBER, 1, 7);
-    const dHdr = detailHdrRange.getValues()[0];
-    const dExp = ['No','Time','Segment','Duration (s)','Metrics','Notes','Severity'];
-    let needsHdr = false;
-    for (let i = 0; i < dExp.length; i++) {
-      if (String(dHdr[i] || '').trim() !== dExp[i]) { needsHdr = true; break; }
-    }
-    if (needsHdr) {
-      safeSetValues_(detailHdrRange, [dExp]);
-      try { detailHdrRange.setFontWeight('bold'); } catch (e1) {}
-    }
-  } catch (e) {}
-  // v2 structured log table (non-breaking, placed at col J)
-  try { ensureLogV2Layout_(sh); } catch (e2) {}
+
+
+function sv03_ensureHeadersNonDestructive_(sh, expectedHeaders) {
+  if (!sh || !expectedHeaders || !expectedHeaders.length) return;
+
+  // [Spec] "Activity Log" column is OPTIONAL: do NOT auto-append unless explicitly enabled.
+  const features = (typeof CONFIG !== 'undefined' && CONFIG && CONFIG.features) ? CONFIG.features : {};
+  const ensureActivityLog = !!(features && features.ensureActivityLogColumn);
+
+
+  const lc = Math.max(sh.getLastColumn(), 1);
+  const hdr = sh.getRange(1, 1, 1, lc).getValues()[0].map(v => sv03_normHeaderText_(v));
+
+  const missing = [];
+  for (let i = 0; i < expectedHeaders.length; i++) {
+    const hRaw = expectedHeaders[i];
+    const hNorm = sv03_normHeaderText_(hRaw);
+    if (!hNorm) continue;
+    if (!ensureActivityLog && hNorm === 'activity log') continue;
+    if (hdr.indexOf(hNorm) === -1) missing.push(sv03_normHeaderText_(hRaw));
+  }
+  if (!missing.length) return;
+
+  if (DRY_RUN) return;
+  const startCol = hdr.length + 1;
+  sh.insertColumnsAfter(hdr.length, missing.length);
+  sh.getRange(1, startCol, 1, missing.length).setValues([missing]);
 }
-function ensureLogV2Layout_(sh) {
-  if (isDryRun_()) return;
-  if (!sh) return;
-  try {
-    const hdr = sh.getRange(LOGV2_LAYOUT.HEADER_ROW, LOGV2_LAYOUT.START_COL, 1, LOGV2_LAYOUT.COLS);
-    const existing = hdr.getValues()[0].map(v => String(v || '').trim());
-    let ok = true;
-    for (let i = 0; i < LOGV2_HEADER.length; i++) {
-      if ((existing[i] || '') !== LOGV2_HEADER[i]) { ok = false; break; }
-    }
-    if (!ok) {
-      safeSetValues_(hdr, [Array.from(LOGV2_HEADER)]);
-      try { hdr.setFontWeight('bold'); } catch (e0) {}
-    }
-    // Formats (bounded to prevent full-sheet formatting overhead)
-    const maxRows = Math.max(1, sh.getMaxRows() - LOGV2_LAYOUT.START_ROW + 1);
-    // Timestamp
-    try {
-      sh.getRange(LOGV2_LAYOUT.START_ROW, LOGV2_LAYOUT.START_COL + 1, maxRows, 1)
-        .setNumberFormat(DETAILS_FORMATS.DATETIME);
-    } catch (e1) {}
-    // Duration (ms) integer
-    try {
-      sh.getRange(LOGV2_LAYOUT.START_ROW, LOGV2_LAYOUT.START_COL + 6, maxRows, 1)
-        .setNumberFormat('0');
-    } catch (e2) {}
-    CACHE.log.v2Ensured = true;
-  } catch (e) {}
-}
-function getNextLogV2Row_(sh) {
-  const start = LOGV2_LAYOUT.START_ROW;
-  try {
-    if (CACHE.log.v2NextRow && CACHE.log.v2NextRow >= start) return CACHE.log.v2NextRow;
-  } catch (e0) {}
-  const lr = sh.getLastRow ? sh.getLastRow() : 0;
-  const next = Math.max(lr + 1, start);
-  try { CACHE.log.v2NextRow = next; } catch (e1) {}
-  return next;
-}
+
 /**
- * Push one structured row into LOG v2 table.
- * Fields are best-effort; call-sites may pass partial.
+ * Ensure sheets per profile (strict to user spec):
+ * - ADMIN: Raw Data + Ask Detail + Start + Finish + OR (no optional)
+ * - PIC: Raw Data + operational + optional (B2B/Special Case/EV-Bike)
  */
-function pushLogV2Row_(entry) {
-  const sh = getLogSheet_();
-  try { if (!CACHE.log.v2Ensured) ensureLogV2Layout_(sh); } catch (e0) {}
-  const rowNo = getNextLogV2Row_(sh);
-  try { CACHE.log.v2SegNo = (CACHE.log.v2SegNo || 0) + 1; } catch (e1) {}
-  const no = CACHE.log.v2SegNo || 1;
-  const e = entry || {};
-  const ts = (e.timestamp instanceof Date) ? e.timestamp : new Date();
-  const values = [[
-    no,
-    ts,
-    e.flow || getLogFlow_() || '',
-    e.runId || getRunId_() || '',
-    e.stage || '',
-    e.timeSegment || '',
-    (e.durationMs != null && e.durationMs !== '') ? e.durationMs :
-      (e.durationSec != null && e.durationSec !== '' ? msFromSec_(e.durationSec) : ''),
-    e.emailFrom || '',
-    e.emailSubject || '',
-    e.threadId || '',
-    e.attachmentName || '',
-    (e.attachmentSize != null && e.attachmentSize !== '') ? e.attachmentSize : '',
-    e.attachmentType || '',
-    (e.rawRows != null && e.rawRows !== '') ? e.rawRows : '',
-    (e.opsUpdated != null && e.opsUpdated !== '') ? e.opsUpdated : '',
-    (e.subInserted != null && e.subInserted !== '') ? e.subInserted : '',
-    e.status || '',
-    e.error || '',
-    e.metrics || '',
-    e.notes || '',
-    e.severity || ''
-  ]];
-  safeSetValues_(sh.getRange(rowNo, LOGV2_LAYOUT.START_COL, 1, LOGV2_LAYOUT.COLS), values);
-  try { CACHE.log.v2NextRow = rowNo + 1; } catch (e2) {}
-  // Keep flushing policy consistent with legacy
-  flushLogIfNeeded_(e.status || 'INFO');
+function ensurePicSheets_(ss, pic) {
+  // [Schema] Keep a lightweight system record (versioning/governance)
+  try { sv03_ensureSystemSheet_(ss); } catch (eSys) {}
+
+  // Defensive: avoid warm-instance residue if this function is used as an entrypoint.
+  try { if (typeof resetRuntime_ === 'function') resetRuntime_(); } catch (e) {}
+
+  const profile = getWorkbookProfile_(pic);
+  const spec = sv03_getProfileSpec_(profile);
+
+  // Raw Data must exist (anchor minimal; full header handled later by ensureRawHeaders_)
+  let raw = ss.getSheetByName('Raw Data');
+  if (!raw) {
+    if (DRY_RUN) return;
+    raw = ss.insertSheet('Raw Data');
+    raw.getRange(1, 1).setValue(CONFIG.headers.updateStatus); // anchor
+    try { raw.setFrozenRows(1); } catch (e) {}
+  }
+
+  // Ensure operational sheets (profile-specific templates)
+  (spec.operational || []).forEach(name => {
+    if (profile === 'ADMIN') {
+      const tpl = SV03_WORKFLOW_SHEETS.has(String(name || '').trim())
+        ? SV03_TEMPLATES.OPS_ADMIN_WORKFLOW
+        : SV03_TEMPLATES.OPS_ADMIN_DEFAULT;
+      sv03_ensureSheetWithHeader_(ss, name, tpl, pic);
+    } else {
+      // PIC (single-master): all operational sheets live in one workbook.
+      if (SV03_WORKFLOW_SHEETS.has(String(name || '').trim())) {
+        sv03_ensureSheetWithHeader_(ss, name, SV03_TEMPLATES.OPS_PIC_WORKFLOW, pic);
+      } else if (name === 'PO') {
+        sv03_ensureSheetWithHeader_(ss, 'PO', SV03_TEMPLATES.OPS_PIC_PO, pic);
+      } else if (name === (OPS_ROUTING_POLICY && OPS_ROUTING_POLICY.SHEETS ? OPS_ROUTING_POLICY.SHEETS.SC_FARHAN : 'SC - Farhan')
+              || name === (OPS_ROUTING_POLICY && OPS_ROUTING_POLICY.SHEETS ? OPS_ROUTING_POLICY.SHEETS.SC_MEILANI : 'SC - Meilani')
+              || String(name || '').indexOf('SC - ') === 0) {
+        // SC sheets require a "Type" dropdown column.
+        sv03_ensureSheetWithHeader_(ss, name, SV03_TEMPLATES.OPS_PIC_SC, pic);
+      } else {
+        sv03_ensureSheetWithHeader_(ss, name, SV03_TEMPLATES.OPS_PIC_DEFAULT, pic);
+      }
+    }
+  });
+
+  // Ensure optional sheets ONLY for PIC profile + PIC gating rules
+  if (profile !== 'ADMIN') {
+    (spec.optional || []).forEach(name => {
+      if (!sv03_isOptionalSheetEnabledForPic_(pic, name)) return;
+
+      if (name === 'B2B') {
+        sv03_ensureSheetWithHeader_(ss, 'B2B', SV03_TEMPLATES.B2B, pic);
+        return;
+      }
+
+      if (name === 'EV-Bike') {
+        sv03_ensureSheetWithHeader_(ss, 'EV-Bike', SV03_TEMPLATES.EV_BIKE, pic);
+        return;
+      }
+
+      if (name === 'Special Case') {
+        // Fixed schema: do not auto-heal columns; only ensure sheet exists
+        sv03_ensureSheetWithHeader_(ss, 'Special Case', SV03_TEMPLATES.SPECIAL_CASE, pic);
+        return;
+      }
+
+      sv03_ensureSheetWithHeader_(ss, name, SV03_TEMPLATES.OPS_PIC_DEFAULT, pic);
+    });
+  }
+
+  // Post setup: remove filters (except EV-Bike) + enforce formatting + enforce dropdown sync
+  sv03_removeAllFiltersForPic_(ss, raw, pic);
+  enforceStandardLayoutForPic_(ss, pic);
 }
-/**
- * Convenience helper for stage log (recommended new API).
- *
- * @param {string} stage - e.g. SEARCH/ATTACH/CONVERT/EXTRACT/UPDATE/UPSERT/WEBHOOK/CLEANUP/END
- * @param {Object=} meta
- */
-function logStageV2_(stage, meta) {
-  const m = meta || {};
-  pushLogV2Row_({
-    timestamp: (m.timestamp instanceof Date) ? m.timestamp : new Date(),
-    flow: m.flow || getLogFlow_(),
-    runId: m.runId || getRunId_(),
-    stage: stage || m.stage || '',
-    timeSegment: m.timeSegment || '',
-    durationMs: (m.durationMs != null) ? m.durationMs : (m.durationSec != null ? msFromSec_(m.durationSec) : ''),
-    durationSec: (m.durationSec != null) ? m.durationSec : '',
-    emailFrom: m.emailFrom || '',
-    emailSubject: m.emailSubject || '',
-    threadId: m.threadId || '',
-    attachmentName: m.attachmentName || '',
-    attachmentSize: m.attachmentSize || '',
-    attachmentType: m.attachmentType || '',
-    rawRows: (m.rawRows != null ? m.rawRows : ''),
-    opsUpdated: (m.opsUpdated != null ? m.opsUpdated : ''),
-    subInserted: (m.subInserted != null ? m.subInserted : ''),
-    status: m.status || 'OK',
-    error: m.error || '',
-    metrics: m.metrics || '',
-    notes: m.notes || '',
-    severity: m.severity || ''
+
+/** ---------- Filters ---------- */
+function sv03_removeSheetFilter_(sheet) {
+  if (!sheet) return;
+  const f = sheet.getFilter();
+  if (f && !DRY_RUN) f.remove();
+}
+
+function sv03_removeAllFiltersForPic_(ss, rawSheet, pic) {
+  if (!ss) return;
+  sv03_removeSheetFilter_(rawSheet);
+
+  const profile = getWorkbookProfile_(pic);
+  const spec = sv03_getProfileSpec_(profile);
+
+  const targets = [].concat(spec.operational || []);
+  if (profile !== 'ADMIN') {
+    (spec.optional || []).forEach(name => {
+      if (sv03_isOptionalSheetEnabledForPic_(pic, name)) targets.push(name);
+    });
+  }
+
+  targets.forEach(name => {
+    // Requirement: never reset/unfilter EV-Bike sheet.
+    if (String(name || '').trim() === 'EV-Bike') return;
+    const sh = ss.getSheetByName(name);
+    if (sh) sv03_removeSheetFilter_(sh);
   });
 }
-function clearLogSheet_() {
-  const sh = getLogSheet_();
-  ensureLogLayout_(sh);
-  // Clear progress values (content only; keep header)
-  const pr = sh.getRange(LOG_LAYOUT.PROGRESS_VALUE_ROW, 2, 1, 4);
-  safeClearContents_(pr);
-  safeClearNotes_(pr);
-  // Clear detail table body
+
+/** ---------- Hard clear: keep header row ---------- */
+function clearSheetDataHard_(sh, opts) {
+  opts = opts || {};
+  const bufferRows = (opts.bufferRows != null) ? opts.bufferRows : 300;
+  const clearFormats = (opts.clearFormats != null) ? !!opts.clearFormats : true;
+  const preserveTemplateRow = !!opts.preserveTemplateRow; // keep row 2 formatting/DV as template when requested
+
+  const lastCol = sh.getLastColumn();
+  if (lastCol <= 0) return;
+
   const maxRows = sh.getMaxRows();
-  const detailRows = maxRows - (LOG_LAYOUT.DETAIL_START_ROW - 1);
-  if (detailRows > 0) {
-    const rng = sh.getRange(LOG_LAYOUT.DETAIL_START_ROW, LOG_COLUMNS.NUMBER, detailRows, 7);
-    safeClearContents_(rng);
-    safeClearNotes_(rng);
-    // Keep format to preserve visual style (per spec)
-    // safeClearFormat_(rng);
+  const lastRowContent = sh.getLastRow();
+  const targetLastRow = Math.min(maxRows, Math.max(1, lastRowContent) + bufferRows);
+  if (targetLastRow <= 1) return;
+
+  const rng = sh.getRange(2, 1, targetLastRow - 1, lastCol);
+  if (DRY_RUN) return;
+
+  // Always clear values + notes for all data rows (row 2..targetLastRow)
+  rng.clearContent();
+  rng.clearNote();
+
+  if (!clearFormats) return;
+
+  // IMPORTANT: preserve row 2 formats when used as a dropdown/template row.
+  if (preserveTemplateRow && targetLastRow >= 3) {
+    const fmt = sh.getRange(3, 1, targetLastRow - 2, lastCol);
+    fmt.clearFormat();
+  } else {
+    rng.clearFormat();
   }
-  // Clear v2 structured log table body (cols J..)
-  try {
-    const maxRows = sh.getMaxRows();
-    const rows = maxRows - (LOGV2_LAYOUT.START_ROW - 1);
-    if (rows > 0) {
-      const rng2 = sh.getRange(LOGV2_LAYOUT.START_ROW, LOGV2_LAYOUT.START_COL, rows, LOGV2_LAYOUT.COLS);
-      safeClearContents_(rng2);
-      safeClearNotes_(rng2);
+}
+
+/** ---------- Hyperlink styling helper ---------- */
+function applyDbLinkFormatting_(sheet, header, dataRowCount, startRow) {
+  if (!sheet || !header || dataRowCount <= 0) return;
+  startRow = startRow || 2;
+  const idx = header.indexOf('DB Link');
+  if (idx === -1) return;
+  const range = sheet.getRange(startRow, idx + 1, dataRowCount, 1);
+  safeSetFontColor_(range, '#1155cc');
+  safeSetUnderline_(range);
+}
+
+/** ---------- Raw header helpers ---------- */
+function getRawHeader_(rawSheet) {
+  const lastCol = Math.max(rawSheet.getLastColumn(), 1);
+  return rawSheet.getRange(1, 1, 1, lastCol).getValues()[0].map(h => String(h || '').trim());
+}
+
+/** Batch ensure columns before an anchor header */
+function ensureColumnsBefore_(sheet, anchorHeader, colsToEnsure) {
+  const header = getRawHeader_(sheet);
+  let anchorIdx = header.indexOf(anchorHeader);
+
+  // ensure anchor exists
+  if (anchorIdx === -1) {
+    if (!DRY_RUN) {
+      sheet.insertColumnAfter(header.length);
+      sheet.getRange(1, header.length + 1).setValue(anchorHeader);
     }
-  } catch (e2) {}
-  resetLogState_();
-  if (uiFlag_('FLUSH_AFTER_LAYOUT_CLEAR', false)) flushNow_();
-}
-function setProgress_(ratio01, stepLabel) {
-const sh = getLogSheet_();
-const ss = CACHE.log.ss || SpreadsheetApp.openById(CONFIG.logSpreadsheetId);
-const r = Math.max(0, Math.min(1, ratio01 || 0));
-const pct = Math.round(r * 100);
-const spark = buildSparklineFormula_(ss, r);
-// Progress cell:
-// - Keeps legacy sparkline visualization.
-// - Adds a note containing flow/runId/state for easier debugging.
-const progressCell = sh.getRange('B3');
-safeSetFormula_(progressCell, spark);
-const updatedAt = nowStr_('dd MMM yyyy, HH:mm:ss');
-safeSetValues_(sh.getRange('C3:E3'), [[pct + '%', stepLabel || '', updatedAt]]);
-try {
-  const flow = getLogFlow_() || '';
-  const runId = getRunId_() || '';
-  const state = (r >= 1) ? 'DONE' : (r <= 0 ? 'START' : 'RUNNING');
-  const note = [
-    'State: ' + state,
-    'Flow: ' + (flow || '-'),
-    'RunID: ' + (runId || '-'),
-    'Pct: ' + String(pct) + '%',
-    'Updated: ' + updatedAt
-  ].join('\n');
-  progressCell.setNote(note);
-} catch (e0) {}
-CACHE.log.didAnyWrite = true;
-// "semi realtime": flush early once, then throttle.
-if (uiFlag_('REALTIME_PROGRESS', false)) flushNow_();
-else flushLogIfNeeded_('INFO');
-}
-/**
- * Flow-aware progress helper (recommended call-site).
- *
- * This is the canonical entry point to satisfy the requirement:
- * Log sheet must update Progress, %, Current Step, Updated At for MAIN/SUB (and optionally FORM).
- *
- * @param {string} flow - 'main' | 'sub' | 'form' (case-insensitive)
- * @param {number} ratio01 - 0..1
- * @param {string} stepLabel - current step label
- * @param {Object=} opt - {runId?:string, prefixFlowInStep?:boolean}
- */
-function setProgressForFlow_(flow, ratio01, stepLabel, opt) {
-  const o = opt || {};
-  const f = normalizeFlowLabel_(flow || '');
-  const rid = (o.runId != null) ? String(o.runId || '') : '';
-  try { setLogRunContext_(f, rid || getRunId_()); } catch (e0) {}
-  const prefix = (o.prefixFlowInStep === false) ? '' : (f ? '[' + f + '] ' : '');
-  setProgress_(ratio01, prefix + (stepLabel || ''));
-}
-/**
- * Backward-compatible alias used by refactored modules.
- * Keep names stable across files while the project migrates.
- */
-function updateLogProgress06_(flow, ratio01, stepLabel, runId) {
-  setProgressForFlow_(flow, ratio01, stepLabel, { runId: runId, prefixFlowInStep: true });
-}
-function startSegment_(id, name) {
-  return { id: id || '', name: name || '', start: new Date() };
-}
-function pushLogRow_(segId, segName, durationSec, metrics, notes, severity) {
-  const sev = severity || 'INFO';
-  CACHE.log.segNo++;
-  const sh = getLogSheet_();
-  const timeStr = nowStr_('HH:mm:ss');
-  const row = [[
-    CACHE.log.segNo,
-    timeStr,
-    (segId || '') + ' – ' + (segName || ''),
-    (durationSec != null && durationSec !== '') ? durationSec : '',
-    metrics || '',
-    notes || '',
-    sev
-  ]];
-  const r = CACHE.log.nextRow;
-  safeSetValues_(sh.getRange(r, LOG_COLUMNS.NUMBER, 1, 7), row);
-  safeSetNumberFormat_(sh.getRange(r, LOG_COLUMNS.DURATION, 1, 1), '0.00');
-  CACHE.log.nextRow = r + 1;
-  CACHE.log.didAnyWrite = true;
-  // Mirror into structured log v2 (best-effort, backward compatible)
-  try {
-    pushLogV2Row_({
-      timestamp: new Date(),
-      flow: (function(){ const rid = getRunId_(); const f0 = getLogFlow_(); const f = f0 || inferFlowFromSegId_(segId); try { if (!f0 && f) setLogRunContext_(f, rid); } catch (e0) {} return f; })(),
-      runId: getRunId_(),
-      stage: String(segId || ''),
-      timeSegment: String(segName || ''),
-      durationSec: (durationSec != null && durationSec !== '') ? durationSec : '',
-      durationMs: (durationSec != null && durationSec !== '') ? msFromSec_(durationSec) : '',
-      status: String(sev || 'INFO'),
-      error: ((String(sev).toUpperCase() === 'ERROR' || String(sev).toUpperCase() === 'FATAL') ? String(notes || '') : ''),
-      metrics: String(metrics || ''),
-      notes: String(notes || ''),
-      severity: String(sev || 'INFO')
-    });
-  } catch (eV2) {}
-  if (uiFlag_('REALTIME_LOG_LINES', false)) flushNow_();
-  else flushLogIfNeeded_(sev);
-}
-function endSegment_(ctx, metrics, notes, severity) {
-  const end = new Date();
-  const durationSec = (end.getTime() - ctx.start.getTime()) / 1000.0;
-  pushLogRow_(ctx.id, ctx.name, durationSec, metrics, notes, severity);
-}
-function logLine_(id, name, metrics, notes, severity) {
-  pushLogRow_(id, name, '', metrics, notes, severity || 'INFO');
-}
-/** =========================
- * Details sheet
- * ========================= */
-function getDetailsSheet_() {
-  if (CACHE.details.sh) return CACHE.details.sh;
-  const ss = SpreadsheetApp.openById(CONFIG.logSpreadsheetId);
-  const sh = ss.getSheetByName(CONFIG.detailsSheetName) || ss.insertSheet(CONFIG.detailsSheetName);
-  CACHE.details.ss = ss;
-  CACHE.details.sh = sh;
-  if (!CACHE.details.ensured) {
-    ensureDetailsLayout_(sh);
-    CACHE.details.ensured = true;
+    header.push(anchorHeader);
+    anchorIdx = header.length - 1;
   }
-  return sh;
-}
-function ensureDetailsLayout_(sh) {
-  if (isDryRun_()) return;
-  const headerRange = sh.getRange(DETAILS_LAYOUT.HEADER_ROW, DETAILS_LAYOUT.START_COL, 1, DETAILS_LAYOUT.COLS);
-  const existing = headerRange.getValues()[0].map(v => String(v || '').trim());
-  const expected = ['No.','Timestamp','Submission Date','Target Sheet','Claim Number','Partner','Last Status','Reason'];
-  let ok = true;
-  for (let i = 0; i < expected.length; i++) {
-    if ((existing[i] || '') !== expected[i]) { ok = false; break; }
+
+  const missing = [];
+  (colsToEnsure || []).forEach(c => {
+    const name = String(c || '').trim();
+    if (!name) return;
+    if (header.indexOf(name) > -1) return;
+    missing.push(name);
+  });
+  if (!missing.length) return buildHeaderIndex_(header);
+
+  // insert in one shot
+  const anchorCol1 = anchorIdx + 1;
+  if (!DRY_RUN) {
+    sheet.insertColumnsBefore(anchorCol1, missing.length);
+    sheet.getRange(1, anchorCol1, 1, missing.length).setValues([missing]);
   }
-  if (!ok) safeSetValues_(headerRange, [expected]);
-  // Format header once
-  try { headerRange.setFontWeight('bold'); } catch (e) {}
-  // Avoid formatting entire sheet repeatedly
-  if (CACHE.details.formattedOnce) return;
-  try {
-    const maxRows = Math.max(1, sh.getMaxRows() - DETAILS_LAYOUT.START_ROW + 1);
-    // Timestamp col (table col index 1 => absolute col START_COL+1)
-    sh.getRange(DETAILS_LAYOUT.START_ROW, DETAILS_LAYOUT.START_COL + DETAILS_COLUMNS.TIMESTAMP, maxRows, 1)
-      .setNumberFormat(DETAILS_FORMATS.DATETIME);
-    // Submission Date col (table col index 2 => absolute col START_COL+2)
-    sh.getRange(DETAILS_LAYOUT.START_ROW, DETAILS_LAYOUT.START_COL + DETAILS_COLUMNS.SUBMISSION_DATE, maxRows, 1)
-      .setNumberFormat(DETAILS_FORMATS.DATE);
-  } catch (e2) {}
-  CACHE.details.formattedOnce = true;
+
+  header.splice(anchorIdx, 0, ...missing);
+  return buildHeaderIndex_(header);
 }
-function getNextDetailsNo_(detailsSheet) {
-  if (CACHE.details.nextNo != null) return CACHE.details.nextNo;
-  const lastRow = detailsSheet.getLastRow();
-  if (lastRow < DETAILS_LAYOUT.START_ROW) {
-    CACHE.details.nextNo = 1;
-    return 1;
-  }
-  const lastNo = normalizeNumber_(detailsSheet.getRange(lastRow, DETAILS_LAYOUT.START_COL).getValue());
-  if (lastNo != null && lastNo >= 1) {
-    CACHE.details.nextNo = Math.floor(lastNo) + 1;
-    return CACHE.details.nextNo;
-  }
-  const scanStart = Math.max(DETAILS_LAYOUT.START_ROW, lastRow - 2000);
-  const vals = detailsSheet.getRange(scanStart, DETAILS_LAYOUT.START_COL, lastRow - scanStart + 1, 1).getValues();
-  for (let i = vals.length - 1; i >= 0; i--) {
-    const n = normalizeNumber_(vals[i][0]);
-    if (n != null && n >= 1) {
-      CACHE.details.nextNo = Math.floor(n) + 1;
-      return CACHE.details.nextNo;
-    }
-  }
-  CACHE.details.nextNo = 1;
-  return 1;
+
+/** Ensure main + required columns are before Update Status */
+function ensureRawHeaders_(rawSheet, mainHeaderArr) {
+  const h = CONFIG.headers;
+
+  // Canonical rename support: LSA/ALA -> Last Status Aging / Activity Log Aging
+  const rawHdr0 = getRawHeader_(rawSheet);
+  const LSA_CANON = 'Last Status Aging';
+  const ALA_CANON = 'Activity Log Aging';
+  const hasLsa = rawHdr0.indexOf(LSA_CANON) > -1 || rawHdr0.indexOf(String(h.lastStatusAging || 'LSA')) > -1 || rawHdr0.indexOf('LSA') > -1;
+  const hasAla = rawHdr0.indexOf(ALA_CANON) > -1 || rawHdr0.indexOf(String(h.activityLogAging || 'ALA')) > -1 || rawHdr0.indexOf('ALA') > -1;
+  const lsaToEnsure = hasLsa ? null : LSA_CANON;
+  const alaToEnsure = hasAla ? null : ALA_CANON;
+
+  // 1) main header before Update Status
+  let idx = ensureColumnsBefore_(rawSheet, h.updateStatus, (mainHeaderArr || []).filter(Boolean));
+
+  // 2) critical support fields before Update Status
+  idx = ensureColumnsBefore_(rawSheet, h.updateStatus, [
+    h.claimSubmittedDatetime,
+    lsaToEnsure,
+    alaToEnsure,
+    h.lastUpdate,
+    h.lastActivityLogDate,
+    h.claimSubmissionDate,
+    h.nettClaimAmount,
+    h.ownRiskAmount
+  ].filter(Boolean));
+
+  // 3) derived/auto fields before Update Status
+  idx = ensureColumnsBefore_(rawSheet, h.updateStatus, [
+    h.qLMonths || 'Q-L (Months)',
+    'M-L (Months)',
+    'M-Q (Months)',
+    h.orColumn,
+    h.timestamp,
+    h.status
+  ]);
+
+  // 4) ensure custom tail columns exist (non-destructive append)
+  const tail = (typeof CONFIG !== 'undefined' && CONFIG && Array.isArray(CONFIG.rawDataCustomTailHeaders))
+    ? CONFIG.rawDataCustomTailHeaders
+    : [
+      'Update Status',
+      'Timestamp',
+      'Status',
+      'Q-L (Months)',
+      'M-L (Months)',
+      'M-Q (Months)',
+      'Update Status Asso',
+      'Timestamp Asso',
+      'Update Status Admin',
+      'Timestamp Admin'
+    ];
+  const tailFiltered = (tail || []).filter(x => String(x || '').trim().toLowerCase() !== 'associate');
+  try { sv03_ensureHeadersNonDestructive_(rawSheet, tailFiltered); } catch (e) {}
+
+  // Header index may change after tail healing.
+  try { idx = buildHeaderIndex_(getRawHeader_(rawSheet)); } catch (e2) {}
+  return idx;
 }
-/** Normalize claim key for dedupe */
-function normalizeClaimKey_(claim) {
-  const s = String(claim || '').trim();
-  if (!s) return '';
-  return s.toUpperCase();
+
+/** Clear Raw contents (values only) */
+function clearRawDataContents_(rawSheet) {
+  const lastRow = rawSheet.getLastRow();
+  const lastCol = rawSheet.getLastColumn();
+  if (lastRow <= 1 || lastCol <= 0) return;
+  safeClearContents_(rawSheet.getRange(2, 1, lastRow - 1, lastCol));
 }
-/** Extract plausible claim tokens from a cell value (handles grouped cells/newlines) */
-function extractClaimTokens_(cellVal) {
-  const s = String(cellVal || '').trim();
-  if (!s) return [];
-  const tokens = s.split(/[\s,;|]+/).filter(Boolean);
+
+/** =========================================================
+ * Dropdown validation: preserve colors + (optional) auto-heal
+ * ========================================================= */
+
+function sv03_findHeaderCol1_(sh, headerName) {
+  if (!sh) return -1;
+  const lc = Math.max(sh.getLastColumn(), 1);
+  const header = sh.getRange(1, 1, 1, lc).getValues()[0].map(v => sv03_normHeaderText_(v));
+  const idx0 = header.indexOf(sv03_normHeaderText_(headerName));
+  return (idx0 === -1) ? -1 : (idx0 + 1);
+}
+
+function sv03_getTemplateRuleCell_(ss, sheetNames, headerName) {
+  for (let i = 0; i < (sheetNames || []).length; i++) {
+    const sh = ss.getSheetByName(sheetNames[i]);
+    if (!sh) continue;
+    const col1 = sv03_findHeaderCol1_(sh, headerName);
+    if (col1 < 1) continue;
+    try {
+      const cell = sh.getRange(2, col1);
+      const rule = cell.getDataValidation();
+      if (rule) return { sh, cell, col1, rule };
+    } catch (e) {}
+  }
+  return null;
+}
+
+function sv03_scanColumnValues_(sh, col1, maxRows) {
+  const set = new Set();
+  if (!sh || col1 < 1) return set;
+
+  const lr = sh.getLastRow();
+  const n = Math.max(0, Math.min(lr - 1, maxRows || SV03_DROPDOWN_SYNC.SCAN_MAX_ROWS));
+  if (n <= 0) return set;
+
+  const vals = sh.getRange(2, col1, n, 1).getValues();
+  for (let i = 0; i < vals.length; i++) {
+    const v = vals[i][0];
+    const s = String(v == null ? '' : v).trim();
+    if (s) set.add(s);
+  }
+  return set;
+}
+
+function sv03_unionSetsToArray_(sets, forceBlank) {
   const out = [];
-  for (let i = 0; i < tokens.length; i++) {
-    const t = String(tokens[i] || '').trim();
-    if (!t) continue;
-    if (/^[A-Z0-9][A-Z0-9_-]{3,}$/i.test(t)) out.push(normalizeClaimKey_(t));
+  const seen = new Set();
+
+  if (forceBlank) {
+    out.push('');
+    seen.add('');
+  }
+
+  for (let i = 0; i < sets.length; i++) {
+    const s = sets[i];
+    if (!s) continue;
+    s.forEach(v => {
+      const x = String(v == null ? '' : v).trim();
+      if (seen.has(x)) return;
+      seen.add(x);
+      out.push(x);
+    });
   }
   return out;
 }
-/** Build (cached) set of claims already logged in Details */
-function getExistingDetailsClaimSet_(sh) {
-  if (CACHE.details.existingClaimSet) return CACHE.details.existingClaimSet;
-  const set = new Set();
-  const lr = sh.getLastRow();
-  if (lr < DETAILS_LAYOUT.START_ROW) {
-    CACHE.details.existingClaimSet = set;
-    return set;
-  }
-  // Claim Number absolute col = START_COL + (table index 4)
-  const claimCol = DETAILS_LAYOUT.START_COL + DETAILS_COLUMNS.CLAIM_NUMBER;
-  const scanStart = Math.max(DETAILS_LAYOUT.START_ROW, lr - DETAILS_DEDUPE_SCAN_LIMIT + 1);
-  const count = lr - scanStart + 1;
-  if (count <= 0) {
-    CACHE.details.existingClaimSet = set;
-    return set;
-  }
-  const vals = sh.getRange(scanStart, claimCol, count, 1).getValues();
-  for (let i = 0; i < vals.length; i++) {
-    const tokens = extractClaimTokens_(vals[i][0]);
-    for (let k = 0; k < tokens.length; k++) set.add(tokens[k]);
-  }
-  CACHE.details.existingClaimSet = set;
-  return set;
-}
-/** Pick a representative submission date (earliest valid date-only) */
-function pickGroupSubmissionDate_(rows) {
-  let best = null;
-  for (let i = 0; i < rows.length; i++) {
-    const v = rows[i] ? rows[i].submissionDateVal : null;
-    const d = normalizeDate_(v);
-    if (!d) continue;
-    const dd = new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0, 0, 0);
-    if (!best || dd.getTime() < best.getTime()) best = dd;
-  }
-  return best ? best : '';
-}
-function formatRowNumsInline_(nums) {
-  const a = Array.from(new Set((nums || []).filter(n => n != null && n !== ''))).sort((x, y) => x - y);
-  if (!a.length) return '';
-  const slice = a.slice(0, DETAILS_ROWNUM_CELL_MAX);
-  const more = a.length - slice.length;
-  return more > 0 ? (slice.join(', ') + ' …(+' + more + ')') : slice.join(', ');
-}
-function formatClaimsCell_(claims) {
-  const a = Array.from(new Set((claims || []).map(normalizeClaimKey_).filter(Boolean)));
-  if (!a.length) return { cell: '', note: '' };
-  const slice = a.slice(0, DETAILS_CLAIM_CELL_MAX);
-  const more = a.length - slice.length;
-  const cell = more > 0 ? (slice.join('\n') + '\n…(+' + more + ' more)') : slice.join('\n');
-  const note = more > 0 ? a.join('\n') : '';
-  return { cell, note };
-}
-/**
- * Business rule for Details sheet:
- * - If reason indicates "Partner is not mapped" (legacy mapping)
- * - ...and Submission Date is before Jun 2025
- * => suppress this row from being appended into Details.
- */
-function shouldSuppressPartnerNotMappedDetail_(submissionDateVal, reason) {
-  if (!isAssociateMappingEnabled_()) return false;
-  const r = String(reason || '');
-  if (!r) return false;
-  // exact phrase match first (fast path), fallback to case-insensitive contains
-  const hit = (r.indexOf(DETAILS_SUPPRESS_PARTNER_NOT_MAPPED_REASON) !== -1) ||
-    /partner\s+is\s+not\s+mapped\s+to\s+any\s+associate/i.test(r);
-  if (!hit) return false;
-  const d = normalizeDate_(submissionDateVal);
-  if (!d) return false; // if date is missing/unparseable, keep the row (safer)
-  const dd = new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0, 0, 0);
-  return dd.getTime() < DETAILS_SUPPRESS_PARTNER_NOT_MAPPED_CUTOFF.getTime();
-}
-/**
- * Append to Details:
- * - legacy suppression
- * - dedupe by Claim tokens (existing Details + current run)
- * - optional grouping by (targetSheet, partner, lastStatus, reason)
- */
-/** Resolve workbook profile for Details filtering (best-effort, backward compatible). */
-function resolveDetailsProfile_(opts) {
-  // 1) explicit call-site override
+
+function sv03_ruleCriteriaToList_(rule) {
+  if (!rule) return null;
   try {
-    if (opts && opts.profile != null && opts.profile !== '') return String(opts.profile);
-  } catch (e) {}
-  // 2) common globals used across modules (best-effort)
-  try { if (typeof ACTIVE_PROFILE !== 'undefined' && ACTIVE_PROFILE) return String(ACTIVE_PROFILE); } catch (e2) {}
-  try { if (typeof CURRENT_PROFILE !== 'undefined' && CURRENT_PROFILE) return String(CURRENT_PROFILE); } catch (e3) {}
-  try {
-    if (typeof RUNTIME !== 'undefined' && RUNTIME) {
-      if (RUNTIME.profile) return String(RUNTIME.profile);
-      if (RUNTIME.workbookProfile) return String(RUNTIME.workbookProfile);
-    }
-  } catch (e4) {}
-  try { if (typeof CACHE !== 'undefined' && CACHE && CACHE.profile) return String(CACHE.profile); } catch (e5) {}
-  return '';
-}
-function isAdminProfile_(profile) {
-  const p = String(profile || '').trim();
-  if (!p) return false;
-  return p.toLowerCase() === 'admin';
-}
-/**
- * Append to Details:
- * - legacy suppression (Details only)
- * - Admin suppression: hide non-routed warning row
- * - dedupe by Claim tokens (existing Details + current run)
- * - per-claim rows (no grouping) to keep Submission Date unambiguous
- *
- * @param {Array<Object>} rows
- * @param {Object=} opts - optional { profile: 'Admin'|'PIC'|... }
- * @return {number} appended row count
- */
-function appendDetailsRows_(rows, opts) {
-  if (isDryRun_()) return 0;
-  if (!rows || !rows.length) return 0;
-  // Mirror unmapped partner / status warnings into Log sheet (short, per spec)
-  try { mirrorMappingErrorsToLog_(rows); } catch (e0) {}
-  const profile = resolveDetailsProfile_(opts);
-  const isAdmin = isAdminProfile_(profile);
-  // 1) legacy suppression (Details only) + Admin suppression
-  const filtered = rows.filter(r => {
-    if (!r) return false;
-    // Admin: remove the "Status is not routed..." noise row
-    if (isAdmin) {
-      const reason = String(r.reason || '');
-      if (/status\s+is\s+not\s+routed/i.test(reason) || /add\s+to\s+routing\s+map/i.test(reason)) return false;
-    }
-    // New flow: no Associate/Partner auto-mapping; drop legacy 'Partner not mapped' reasons.
-    if (!isAssociateMappingEnabled_() && isPartnerNotMappedReasonText_(r.reason)) return false;
-    // Business rule: suppress "Partner is not mapped..." for Submission Date < Jun 2025
-    if (shouldSuppressPartnerNotMappedDetail_(r.submissionDateVal, r.reason)) return false;
-    const v = r.submissionDateVal;
-    if (v == null || v === '') return true;
-    try {
-      if (typeof isLegacyBySubmission_ === 'function') return !isLegacyBySubmission_(v);
-    } catch (eL) {}
-    return true;
-  });
-  if (!filtered.length) return 0;
-  const sh = getDetailsSheet_();
-  ensureDetailsLayout_(sh);
-  // 2) dedupe by claim tokens (skip already logged)
-  const existingSet = getExistingDetailsClaimSet_(sh);
-  const runSet = CACHE.details.runClaimSet || (CACHE.details.runClaimSet = new Set());
-  const deduped = [];
-  for (let i = 0; i < filtered.length; i++) {
-    const r = filtered[i];
-    // Support single claim OR grouped claim text
-    const tokens = extractClaimTokens_(r.claim || '');
-    if (tokens.length) {
-      let anyNew = false;
-      for (let k = 0; k < tokens.length; k++) {
-        if (!existingSet.has(tokens[k]) && !runSet.has(tokens[k])) { anyNew = true; break; }
+    const type = rule.getCriteriaType();
+    const vals = rule.getCriteriaValues();
+
+    if (String(type) === String(SpreadsheetApp.DataValidationCriteria.VALUE_IN_LIST)) {
+      const arr = vals && vals[0] ? vals[0] : [];
+      const list = [];
+      for (let i = 0; i < arr.length; i++) {
+        const x = arr[i];
+        if (x == null) continue;
+        list.push(String(x));
       }
-      if (!anyNew) continue; // all tokens already known
-      for (let k = 0; k < tokens.length; k++) runSet.add(tokens[k]);
+      return { kind: 'LIST', list };
     }
-    deduped.push(r);
-  }
-  if (!deduped.length) return 0;
-  // 3) stable ordering to visually "group" by Partner + Last Status
-  deduped.sort((a, b) => {
-    const ap = String(a.partner || '').toLowerCase();
-    const bp = String(b.partner || '').toLowerCase();
-    if (ap < bp) return -1;
-    if (ap > bp) return 1;
-    const as = String(a.lastStatus || '').toLowerCase();
-    const bs = String(b.lastStatus || '').toLowerCase();
-    if (as < bs) return -1;
-    if (as > bs) return 1;
-    const ac = normalizeClaimKey_(a.claim || '');
-    const bc = normalizeClaimKey_(b.claim || '');
-    if (ac < bc) return -1;
-    if (ac > bc) return 1;
-    return 0;
-  });
-  // 4) append rows (one row per claim to keep submission date unambiguous)
-  const ts = new Date();
-  const startNo = getNextDetailsNo_(sh);
-  const startRow = sh.getLastRow() + 1;
-  const out = [];
-  const claimNotes = [];
-  for (let i = 0; i < deduped.length; i++) {
-    const r = deduped[i];
-    // Submission Date: normalize to date-only
-    let subDate = '';
-    const d = normalizeDate_(r.submissionDateVal);
-    if (d) subDate = new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0, 0, 0);
-    const claim = normalizeClaimKey_(r.claim || '') || String(r.claim || '');
-    const rowNo = (r.rowNumber != null && r.rowNumber !== '') ? String(r.rowNumber) : '';
-    const baseReason = String(r.reason || '');
-    const reason = baseReason + (rowNo ? (' | Row: ' + rowNo) : '');
-    out.push([
-      startNo + i,
-      ts,
-      subDate,
-      r.targetSheet || '',
-      claim,
-      r.partner || '',
-      r.lastStatus || '',
-      reason
-    ]);
-    // Notes: if claim contains multiple tokens, keep full list in note (rare)
-    try {
-      const tokens = extractClaimTokens_(r.claim || '');
-      claimNotes.push(tokens && tokens.length > 1 ? tokens.join('\n') : '');
-    } catch (eN) {
-      claimNotes.push('');
+
+    if (String(type) === String(SpreadsheetApp.DataValidationCriteria.VALUE_IN_RANGE)) {
+      const rng = vals && vals[0] ? vals[0] : null;
+      return rng ? { kind: 'RANGE', range: rng } : null;
     }
-  }
-  safeSetValues_(sh.getRange(startRow, DETAILS_LAYOUT.START_COL, out.length, DETAILS_LAYOUT.COLS), out);
-  // Date formats: Submission Date col
+  } catch (e) {}
+  return null;
+}
+
+function sv03_applyRuleCopyToColumn_(srcCell, dstSheet, dstCol1, rows, opt) {
+  opt = opt || {};
+  const dryRun = (typeof DRY_RUN !== 'undefined') ? DRY_RUN : false;
+  if (dryRun) return;
+  if (!srcCell || !dstSheet || dstCol1 < 1 || rows <= 0) return;
+
   try {
-    safeSetNumberFormat_(
-      sh.getRange(startRow, DETAILS_LAYOUT.START_COL + DETAILS_COLUMNS.SUBMISSION_DATE, out.length, 1),
-      DETAILS_FORMATS.DATE
+    const dst = dstSheet.getRange(2, dstCol1, rows, 1);
+
+    // Data validation is the key to preserve dropdown "chip" UI + option colors.
+    try { srcCell.copyTo(dst, SpreadsheetApp.CopyPasteType.PASTE_DATA_VALIDATION, false); } catch (e1) {}
+
+    // Optional: copy only non-destructive formatting (NO background fill) to avoid "mass fill" bugs.
+    if (opt.copyFormat) {
+      try { dst.setNumberFormat(srcCell.getNumberFormat()); } catch (e2) {}
+      try { dst.setHorizontalAlignment(srcCell.getHorizontalAlignment()); } catch (e3) {}
+      try { dst.setVerticalAlignment(srcCell.getVerticalAlignment()); } catch (e4) {}
+      try { dst.setWrap(srcCell.getWrap()); } catch (e5) {}
+      try { dst.setTextStyle(srcCell.getTextStyle()); } catch (e6) {}
+      try { dst.setFontColor(srcCell.getFontColor()); } catch (e7) {}
+    }
+  } catch (e) {}
+}
+/**
+ * Auto-heal dropdown rule:
+ * - ONLY safe (preserve chip/colors) when rule is VALUE_IN_RANGE and the source range has capacity.
+ * - If rule is VALUE_IN_LIST, rebuilding usually kills chip/colors => we skip unless explicitly allowed.
+ */
+function sv03_healTemplateRule_(template, mergedOptions) {
+  if (DRY_RUN) return { mode: 'dry_run', changed: false, notes: '' };
+  if (!_SV03_VALIDATION_POLICY.ENABLE_AUTO_HEAL) return { mode: 'policy_off', changed: false, notes: '' };
+  if (!template || !template.cell || !template.rule) return { mode: 'missing_template', changed: false, notes: '' };
+
+  const info = sv03_ruleCriteriaToList_(template.rule);
+  if (!info) return { mode: 'unknown_rule', changed: false, notes: 'criteria_unreadable' };
+
+  const allowBlank = (_SV03_VALIDATION_POLICY.ALLOW_BLANK || SV03_DROPDOWN_SYNC.FORCE_ALLOW_BLANK);
+  const want = new Set((mergedOptions || []).map(x => String(x == null ? '' : x).trim()));
+  if (allowBlank) want.add('');
+
+  if (info.kind === 'RANGE' && info.range) {
+    try {
+      const r = info.range;
+      const vals = r.getValues(); // 2D
+      const flat = [];
+      for (let i = 0; i < vals.length; i++) flat.push(String(vals[i][0] == null ? '' : vals[i][0]).trim());
+
+      const have = new Set(flat);
+
+      // Ensure at least one blank exists in the source range (blank-safe)
+      if (allowBlank && !have.has('')) {
+        let hasEmptySlot = false;
+        for (let i = 0; i < flat.length; i++) { if (!flat[i]) { hasEmptySlot = true; break; } }
+        if (!hasEmptySlot && r.getNumRows() >= 1) {
+          r.getCell(1, 1).setValue('');
+          have.add('');
+        }
+      }
+
+      const toAdd = [];
+      want.forEach(v => { if (!have.has(v)) toAdd.push(v); });
+
+      if (!toAdd.length) return { mode: 'range', changed: false, notes: 'no_change' };
+
+      // Fill existing blank slots only (no rule rebuild)
+      for (let i = 0; i < vals.length && toAdd.length; i++) {
+        const cur = String(vals[i][0] == null ? '' : vals[i][0]).trim();
+        if (!cur) r.getCell(i + 1, 1).setValue(toAdd.shift());
+      }
+
+      if (toAdd.length) {
+        // Not enough capacity => do NOT rebuild (color-safe). Just report.
+        return { mode: 'range', changed: true, notes: 'range_capacity_insufficient_left=' + toAdd.length };
+      }
+      return { mode: 'range', changed: true, notes: 'filled_empty_slots' };
+    } catch (e1) {
+      return { mode: 'range', changed: false, notes: 'range_heal_failed: ' + e1 };
+    }
+  }
+
+  if (info.kind === 'LIST') {
+    if (SV03_DROPDOWN_SYNC.ALLOW_REBUILD_LIST_RULE) {
+      // Optional escape hatch (will likely drop chip/colors)
+      try {
+        const arr = [];
+        want.forEach(v => arr.push(v));
+        if (arr.length > 300) arr.length = 300;
+
+        const rule = SpreadsheetApp.newDataValidation()
+          .requireValueInList(arr, true)
+          .setAllowInvalid(false)
+          .build();
+
+        template.cell.setDataValidation(rule);
+        return { mode: 'list', changed: true, notes: 'rebuilt_list' };
+      } catch (e2) {
+        return { mode: 'list', changed: false, notes: 'list_rebuild_failed: ' + e2 };
+      }
+    }
+    return { mode: 'list', changed: false, notes: 'skip_list_rebuild_preserve_colors' };
+  }
+
+  return { mode: 'unknown', changed: false, notes: 'no_action' };
+}
+
+/**
+ * Sync dropdown across workbook for a given headerName:
+ * - Find a template rule cell (priority order)
+ * - Build merged options depending on policy MODE:
+ *   - RAW    => only Raw Data values
+ *   - TARGET => only operational/optional values
+ *   - BIDIR  => union
+ * - Heal template (range-safe only)
+ * - Copy template rule to all sheets that contain that header
+ *
+ * IMPORTANT:
+ * - We do NOT "invent" chip-style. If no template rule exists, fallback is classic validation (arrow).
+ *   For chip+colors: ensure at least 1 template cell has the correct dropdown (manual once), then script propagates it.
+ */
+function sv03_syncDropdownForWorkbook_(ss, pic, headerName, fallbackSeed, opts) {
+  opts = opts || {};
+  if (!ss) return { ok: false, notes: 'missing_ss' };
+
+  const profile = getWorkbookProfile_(pic);
+  const spec = sv03_getProfileSpec_(profile);
+
+  const allSheets = ['Raw Data']
+    .concat(spec.operational || [])
+    .concat(profile !== 'ADMIN' ? (spec.optional || []) : []);
+
+  // template priority order
+  const templateSheets = (opts.templateSheets && opts.templateSheets.length) ? opts.templateSheets : allSheets;
+  const tpl = sv03_getTemplateRuleCell_(ss, templateSheets, headerName);
+
+  // build options sets per policy MODE
+  const sets = [];
+  const mode = String((_SV03_VALIDATION_POLICY.MODE || 'BIDIR')).toUpperCase();
+
+  const allowBlank = (_SV03_VALIDATION_POLICY.ALLOW_BLANK || SV03_DROPDOWN_SYNC.FORCE_ALLOW_BLANK);
+
+  if (fallbackSeed && fallbackSeed.length) sets.push(new Set(fallbackSeed));
+
+  function addScanFromSheetList_(sheetList) {
+    (sheetList || []).forEach(name => {
+      const sh = ss.getSheetByName(name);
+      if (!sh) return;
+      const col1 = sv03_findHeaderCol1_(sh, headerName);
+      if (col1 < 1) return;
+      sets.push(sv03_scanColumnValues_(sh, col1, SV03_DROPDOWN_SYNC.SCAN_MAX_ROWS));
+    });
+  }
+
+  if (mode === 'RAW') {
+    addScanFromSheetList_(['Raw Data']);
+  } else if (mode === 'TARGET') {
+    addScanFromSheetList_((spec.operational || []).concat(profile !== 'ADMIN' ? (spec.optional || []) : []));
+  } else {
+    addScanFromSheetList_(allSheets);
+  }
+
+  const merged = sv03_unionSetsToArray_(sets, allowBlank);
+
+  // choose a template target if missing
+  let template = tpl;
+  if (!template) {
+    // pick first sheet that has the header
+    for (let i = 0; i < templateSheets.length; i++) {
+      const sh = ss.getSheetByName(templateSheets[i]);
+      if (!sh) continue;
+      const col1 = sv03_findHeaderCol1_(sh, headerName);
+      if (col1 < 1) continue;
+      template = { sh, cell: sh.getRange(2, col1), col1, rule: null };
+      break;
+    }
+  }
+  if (!template || !template.cell) return { ok: false, notes: 'no_target_column_found' };
+
+  // Create minimal fallback validation IF no rule exists at all (chip/colors won't exist)
+  if (!template.cell.getDataValidation()) {
+    if (!DRY_RUN) {
+      try {
+        const base = merged.length ? merged : (allowBlank ? [''] : []);
+        const rule = SpreadsheetApp.newDataValidation()
+          .requireValueInList(base.slice(0, 300), true)
+          .setAllowInvalid(false)
+          .build();
+        template.cell.setDataValidation(rule);
+      } catch (e0) {}
+    }
+  }
+
+  // refresh rule handle
+  template.rule = template.cell.getDataValidation();
+
+  // heal template rule (range-safe only)
+  const heal = sv03_healTemplateRule_(template, merged);
+
+  // copy rule to all sheets where column exists
+  const applyToSheets = (opts.applyToSheets && opts.applyToSheets.length) ? opts.applyToSheets : allSheets;
+
+  applyToSheets.forEach(name => {
+    const sh = ss.getSheetByName(name);
+    if (!sh) return;
+    const col1 = sv03_findHeaderCol1_(sh, headerName);
+    if (col1 < 1) return;
+
+    const lastRow = Math.max(sh.getLastRow(), 2);
+    const rows = Math.min(sh.getMaxRows() - 1, Math.max(1, (lastRow - 1) + SV03_DROPDOWN_SYNC.BUFFER_ROWS));
+    sv03_applyRuleCopyToColumn_(template.cell, sh, col1, rows, { copyFormat: (headerName === 'Status') });
+  });
+
+  return { ok: true, mode: heal.mode, changed: heal.changed, notes: heal.notes, mergedCount: merged.length };
+}
+
+/** =========================================================
+ * Formatting enforcement (number formats + alignment)
+ * ========================================================= */
+
+function sv03_applyNumberFormatsByType_(sh, headerRow) {
+  if (!sh || !headerRow || DRY_RUN) return;
+
+  const lastRow = Math.max(sh.getLastRow(), 2);
+  const rows = Math.min(sh.getMaxRows() - 1, Math.max(1, (lastRow - 1) + SV03_DROPDOWN_SYNC.BUFFER_ROWS));
+
+  const typeMap = Object.assign({}, _SV03_DEST_COMMON_TYPES, {
+    'LSA': 'INT',
+    'ALA': 'INT',
+    'TAT': 'INT'
+  });
+
+  headerRow.forEach((name, i) => {
+    const t = typeMap[name];
+    if (!t) return;
+
+    let fmt = null;
+    if (t === 'DATE') fmt = _SV03_FORMATS.DATE;
+    else if (t === 'DATE_AUTO') fmt = sv03_getDateAutoNumberFormatForColumn_(sh, i + 1, rows);
+    else if (t === 'DATETIME') fmt = _SV03_FORMATS.DATETIME;
+    else if (t === 'TIMESTAMP') fmt = _SV03_FORMATS.TIMESTAMP;
+    else if (t === 'INT') fmt = _SV03_FORMATS.INT;
+    else if (t === 'MONEY0') fmt = _SV03_FORMATS.MONEY0;
+    else if (t === 'PERCENT') fmt = _SV03_FORMATS.PERCENT || '0%';
+
+    if (!fmt) return;
+    try { sh.getRange(2, i + 1, rows, 1).setNumberFormat(fmt); } catch (e) {}
+  });
+}
+
+
+function sv03_getDateAutoNumberFormatForColumn_(sh, col1, rows) {
+  const fallback = (_SV03_FORMATS && _SV03_FORMATS.DATE_AUTO) ? _SV03_FORMATS.DATE_AUTO : ((_SV03_FORMATS && _SV03_FORMATS.DATE) ? _SV03_FORMATS.DATE : 'd mmm yy');
+  if (!sh || !col1 || !rows) return fallback;
+
+  // If column contains explicit time components, prefer datetime display.
+  // Otherwise keep date-only format.
+  try {
+    const sampleRows = Math.max(1, Math.min(Number(rows) || 1, 200));
+    const vals = sh.getRange(2, col1, sampleRows, 1).getValues();
+    for (let i = 0; i < vals.length; i++) {
+      const v = vals[i] ? vals[i][0] : null;
+      if (!(v instanceof Date) || isNaN(v.getTime())) continue;
+      if (v.getHours() !== 0 || v.getMinutes() !== 0 || v.getSeconds() !== 0 || v.getMilliseconds() !== 0) {
+        return (_SV03_FORMATS && _SV03_FORMATS.DATETIME) ? _SV03_FORMATS.DATETIME : 'd mmm yy, HH:mm';
+      }
+    }
+  } catch (e) {}
+
+  return fallback;
+}
+
+function sv03_applyAlignment_(sh, headerRow) {
+  if (!sh || !headerRow || DRY_RUN) return;
+
+  const lastRow = Math.max(sh.getLastRow(), 2);
+  const rows = Math.min(sh.getMaxRows() - 1, Math.max(1, (lastRow - 1) + SV03_DROPDOWN_SYNC.BUFFER_ROWS));
+
+  const centerSet = new Set(_SV03_ALIGNMENT.CENTER || []);
+  const rightSet = new Set(_SV03_ALIGNMENT.RIGHT || []);
+
+  headerRow.forEach((name, i) => {
+    let align = null;
+    if (centerSet.has(name)) align = 'center';
+    else if (rightSet.has(name)) align = 'right';
+    else return;
+
+    try { sh.getRange(1, i + 1, rows + 1, 1).setHorizontalAlignment(align); } catch (e) {}
+  });
+}
+
+function sv03_applyCheckboxesIfExists_(sh, headerRow, headerName) {
+  if (!sh || !headerRow || DRY_RUN) return false;
+  const idx = headerRow.indexOf(headerName);
+  if (idx === -1) return false;
+
+  const lastRow = Math.max(sh.getLastRow(), 2);
+  const rows = Math.min(sh.getMaxRows() - 1, Math.max(1, (lastRow - 1) + SV03_DROPDOWN_SYNC.BUFFER_ROWS));
+  try { sh.getRange(2, idx + 1, rows, 1).insertCheckboxes(); } catch (e) {}
+  return true;
+}
+
+
+/**
+ * Apply Data Validation + cell formatting from a template row to a target data region.
+ * Purpose: preserve dropdown "chip" styling that tends to go flat when validations are rebuilt.
+ *
+ * Notes:
+ * - Does NOT touch values (only format + validation).
+ * - Intended to be called after routing writes values into operational sheets (especially Admin).
+ *
+ * @param {GoogleAppsScript.Spreadsheet.Sheet} sh
+ * @param {Object=} opt
+ *   - templateRow {number=} row index for template (default: SV03_DROPDOWN_SYNC.ADMIN_TEMPLATE_ROW || 2)
+ *   - startRow {number=} first row to apply (default: SV03_DROPDOWN_SYNC.ADMIN_TEMPLATE_START_ROW || 2)
+ *   - endRow {number=} last row to apply (default: sh.getLastRow())
+ *   - startCol {number=} first col (default: 1)
+ *   - endCol {number=} last col (default: sh.getLastColumn())
+ * @return {{ok:boolean, applied:boolean, rows:number, cols:number, reason:string}}
+ */
+function sv03_applyTemplateRowDvAndFormat_(sh, opt) {
+  if (!sh) return { ok: false, applied: false, rows: 0, cols: 0, reason: 'no_sheet' };
+  const dryRun = (typeof DRY_RUN !== 'undefined') ? DRY_RUN : false;
+  if (dryRun) return { ok: true, applied: false, rows: 0, cols: 0, reason: 'dry_run' };
+
+  opt = opt || {};
+  const templateRow = Number(opt.templateRow || (SV03_DROPDOWN_SYNC.ADMIN_TEMPLATE_ROW || 2));
+  const startRow = Number(opt.startRow || (SV03_DROPDOWN_SYNC.ADMIN_TEMPLATE_START_ROW || 2));
+  const endRow = Number(opt.endRow || sh.getLastRow() || startRow - 1);
+
+  const rows = Math.max(0, endRow - startRow + 1);
+  if (rows <= 0) return { ok: true, applied: false, rows: 0, cols: 0, reason: 'no_target_rows' };
+
+  // IMPORTANT:
+  // For Admin workbooks we must not "paste format" across the whole sheet, because it can propagate a flagged
+  // row's background fill to every row (mass-fill bug). We only copy dropdown rules (and optional safe formatting)
+  // for specific columns.
+  const colsToApply = (opt.columns && opt.columns.length) ? opt.columns : ['Status'];
+  const applied = [];
+
+  for (let i = 0; i < colsToApply.length; i++) {
+    const headerName = colsToApply[i];
+    const col1 = sv03_findHeaderCol1_(sh, headerName);
+    if (col1 < 1) continue;
+
+    try {
+      const srcCell = sh.getRange(templateRow, col1, 1, 1);
+      const dst = sh.getRange(startRow, col1, rows, 1);
+
+      // Preserve dropdown chip UI + option colors via DV copy.
+      try { srcCell.copyTo(dst, SpreadsheetApp.CopyPasteType.PASTE_DATA_VALIDATION, false); } catch (e1) {}
+
+      // Optional safe formatting (NO background).
+      if (opt.copyFormat) {
+        try { dst.setNumberFormat(srcCell.getNumberFormat()); } catch (e2) {}
+        try { dst.setHorizontalAlignment(srcCell.getHorizontalAlignment()); } catch (e3) {}
+        try { dst.setVerticalAlignment(srcCell.getVerticalAlignment()); } catch (e4) {}
+        try { dst.setWrap(srcCell.getWrap()); } catch (e5) {}
+        try { dst.setTextStyle(srcCell.getTextStyle()); } catch (e6) {}
+        try { dst.setFontColor(srcCell.getFontColor()); } catch (e7) {}
+      }
+
+      applied.push(headerName);
+    } catch (e) {}
+  }
+
+  return { ok: true, applied: applied.length > 0, rows, cols: applied.length, appliedCols: applied, reason: 'applied' };
+}
+
+
+/**
+ * Ensure "Type" dropdown exists for SC sheets (or any sheet that has a "Type" column).
+ * We only add validation when the column exists but has no rule yet.
+ */
+function sv03_ensureTypeDropdownIfMissing_(sh, header) {
+  if (!sh || !header || !header.length) return;
+  const idx = header.indexOf('Type');
+  if (idx === -1) return;
+
+  // Preserve existing rule (chip/colors/etc.)
+  try {
+    const dv = sh.getRange(2, idx + 1).getDataValidation();
+    if (dv) return;
+  } catch (e) {}
+
+  const buffer = (SV03_DROPDOWN_SYNC && SV03_DROPDOWN_SYNC.BUFFER_ROWS) ? SV03_DROPDOWN_SYNC.BUFFER_ROWS : 500;
+  const maxRows = sh.getMaxRows();
+  const last = Math.max(2, sh.getLastRow() || 2);
+  const endRow = Math.min(maxRows, last + buffer);
+  const rows = Math.max(0, endRow - 1);
+  if (rows <= 0) return;
+
+  // Preferred: copy data validation (and safe format) from an existing template cell in this workbook.
+  // This preserves dropdown-chip colors & the exact option set.
+  try {
+    const ss = sh.getParent();
+    const sheetNames = ss.getSheets().map(s => s.getName());
+    const tpl = sv03_getTemplateRuleCell_(ss, sheetNames, 'Type');
+    if (tpl && tpl.cell) {
+      sv03_applyRuleCopyToColumn_(tpl.cell, sh, idx + 1, rows, { copyFormat: true });
+      return;
+    }
+  } catch (eTpl) {}
+
+  // Last resort fallback: create classic list-based DV (may degrade chip/colors).
+  try {
+    const typeOpts = (typeof getScTypeDropdownOptions_ === 'function')
+      ? getScTypeDropdownOptions_()
+      : ['SC - Rcvd','SC - Est','Insurance','OR','Finish','SC - Wait Rep','SC - On Rep'];
+
+    const rule = SpreadsheetApp.newDataValidation()
+      .requireValueInList(typeOpts, true)
+      .setAllowInvalid(true)
+      .build();
+
+    sh.getRange(2, idx + 1, rows, 1).setDataValidation(rule);
+  } catch (e) {}
+}
+
+
+function sv03_enforceStandardLayoutForSheet_(sh) {
+  if (!sh) return;
+
+  const lc = Math.max(sh.getLastColumn(), 1);
+  const header = sh.getRange(1, 1, 1, lc).getValues()[0].map(v => sv03_normHeaderText_(v));
+
+  // Spec: header row (row 1) must be center + middle.
+  try { sh.getRange(1, 1, 1, lc).setHorizontalAlignment('center').setVerticalAlignment('middle'); } catch (e0) {}
+
+  try { sh.setFrozenRows(1); } catch (e) {}
+
+  sv03_applyNumberFormatsByType_(sh, header);
+  sv03_applyAlignment_(sh, header);
+
+  // Checkbox: ONLY where OR column exists (PO + Special Case)
+  sv03_applyCheckboxesIfExists_(sh, header, 'OR');
+
+  // Ensure SC Type dropdown exists when column is present.
+  sv03_ensureTypeDropdownIfMissing_(sh, header);
+}
+
+/**
+ * Enforce workbook-wide layout:
+ * - Formatting per sheet
+ * - Dropdown sync (Status) with preservation + auto-heal
+ */
+function enforceStandardLayoutForPic_(ss, pic) {
+  if (!ss) return;
+
+  const profile = getWorkbookProfile_(pic);
+  const spec = sv03_getProfileSpec_(profile);
+
+  // 1) format ops sheets
+  (spec.operational || []).forEach(name => {
+    const sh = ss.getSheetByName(name);
+    if (sh) sv03_enforceStandardLayoutForSheet_(sh);
+  });
+
+  // 2) format optional sheets only for PIC (and only when enabled for the PIC)
+  if (profile !== 'ADMIN') {
+    (spec.optional || []).forEach(name => {
+      if (!sv03_isOptionalSheetEnabledForPic_(pic, name)) return;
+      const sh = ss.getSheetByName(name);
+      if (sh) sv03_enforceStandardLayoutForSheet_(sh);
+    });
+  }
+
+  // 3) Raw Data: freeze only (formats handled elsewhere)
+  const raw = ss.getSheetByName('Raw Data');
+  if (raw) { try { raw.setFrozenRows(1); } catch (e) {} }
+
+
+  // 4) Dropdown sync (key for chip + colors + consistency)
+  const seedStatus = (_SV03_VALIDATION_FALLBACK && _SV03_VALIDATION_FALLBACK.UPDATE_STATUS)
+    ? Array.from(_SV03_VALIDATION_FALLBACK.UPDATE_STATUS)
+    : [];
+
+  // STATUS dropdown policy:
+  // - Admin: DO NOT rebuild/sync rules (can flatten chip styling). Preserve via template-row copy.
+  // - PIC: allow workbook-level sync (preserve by copy, auto-heal).
+  const adminSkip = (profile === 'ADMIN' && SV03_DROPDOWN_SYNC.SKIP_SYNC_FOR_ADMIN);
+
+  let resStatus = null;
+
+  if (adminSkip) {
+    resStatus = { ok: true, mode: 'admin_template', changed: false, notes: 'skip_sync_preserve_template', mergedCount: 0 };
+
+    // Apply template row -> data region (DV only) for Admin operational sheets only.
+    (spec.operational || []).forEach(name => {
+      const sh = ss.getSheetByName(name);
+      if (!sh) return;
+      sv03_applyTemplateRowDvAndFormat_(sh, {
+        templateRow: SV03_DROPDOWN_SYNC.ADMIN_TEMPLATE_ROW,
+        startRow: SV03_DROPDOWN_SYNC.ADMIN_TEMPLATE_START_ROW,
+        columns: ['Status'],
+        copyFormat: false
+      });
+    });
+  } else {
+    // STATUS: default policy MODE
+    resStatus = sv03_syncDropdownForWorkbook_(ss, pic, 'Status', seedStatus, {});
+  }
+
+  // DO NOT sync "Last Status Date" as a dropdown (it is a date field, not a dropdown).
+
+
+
+
+  // Log only as INFO/WARN (no crash)
+  try {
+    logLine_(
+      'VAL',
+      'Dropdown sync',
+      'status=' + (resStatus && resStatus.ok ? 'ok' : 'skip'),
+      'Status(' + ((resStatus && resStatus.mode) || '-') + ',' + ((resStatus && resStatus.mergedCount) || 0) + ',' + ((resStatus && resStatus.notes) || '-') + ')',
+      (resStatus && resStatus.ok) ? 'INFO' : 'WARN'
     );
   } catch (e) {}
-  // Notes on Claim Number cell
-  try {
-    const claimColAbs = DETAILS_LAYOUT.START_COL + DETAILS_COLUMNS.CLAIM_NUMBER;
-    safeSetNotes_(sh.getRange(startRow, claimColAbs, out.length, 1), claimNotes);
-  } catch (e2) {}
-  CACHE.details.nextNo = startNo + out.length;
-  // RUNTIME is optional across repos; keep this file safe if it doesn't exist.
-  try {
-    if (typeof RUNTIME !== 'undefined' && RUNTIME) {
-      if (typeof RUNTIME.detailsAppendedThisRun !== 'number') RUNTIME.detailsAppendedThisRun = 0;
-      RUNTIME.detailsAppendedThisRun += out.length;
-    }
-  } catch (eR) {}
-  if (uiFlag_('REALTIME_DETAILS_APPEND', false)) flushNow_();
-  return out.length;
+
 }
-/** =========================
- * Run metrics sink (append-only)
- * ========================= */
 
-const RUN_METRICS_SHEET_NAME = '_RunMetrics';
-const RUN_METRICS_HEADER = Object.freeze([
-  'Timestamp',
-  'Flow',
-  'Request ID',
-  'Status',
-  'Duration(ms)',
-  'Processed',
-  'Failed',
-  'Ops Updated',
-  'Rows Moved',
-  'Notes'
-]);
+/** ---------- Basic workbook validation (fast, non-fatal) ---------- */
+function validateWorkbook_(ss, pic) {
+  const profile = getWorkbookProfile_(pic);
+  const isAdmin = (profile === 'ADMIN');
 
-function ensureRunMetricsSheet_() {
-  const enabled = !!(CONFIG && CONFIG.features && CONFIG.features.enableRunMetrics);
-  if (!enabled) return null;
+  const routingMap = (pic === 'Admin') ? CONFIG.statusRoutingAdmin : CONFIG.statusRoutingPIC;
+  const spec = sv03_getProfileSpec_(profile);
+
+  const problems = [];
+  const checkExists = name => {
+    const sh = ss.getSheetByName(name);
+    if (!sh) problems.push('Missing sheet: "' + name + '"');
+    return sh;
+  };
+  const checkClaimHeader = (sh, name) => {
+    try {
+      const lc = sh.getLastColumn();
+      if (!lc) return;
+      const hdr = sh.getRange(1, 1, 1, lc).getValues()[0].map(v => sv03_normHeaderText_(v));
+      if (name !== 'Raw Data' && hdr.indexOf('Claim Number') === -1) problems.push('Sheet "' + name + '" missing header "Claim Number"');
+    } catch (e) { problems.push('Sheet "' + name + '" header read failed: ' + e); }
+  };
+
+  // Raw must exist
+  const raw = checkExists('Raw Data');
+  if (raw) {
+    const rh = getRawHeader_(raw);
+    if (rh.indexOf(CONFIG.headers.claimNumber) === -1) problems.push('Raw Data missing "' + CONFIG.headers.claimNumber + '" (will be inserted).');
+    if (rh.indexOf(CONFIG.headers.claimSubmissionDate) === -1) problems.push('Raw Data missing "' + CONFIG.headers.claimSubmissionDate + '" (will be inserted).');
+  }
+
+  // Required operational sheets
+  (spec.operational || []).forEach(n => checkExists(n));
+
+  // Routing map sheets should exist + have Claim Number header
+  Object.keys(routingMap).forEach(n => {
+    const sh = checkExists(n);
+    if (sh) checkClaimHeader(sh, n);
+  });
+
+  // Optional sheets are NOT required for Admin
+  if (!isAdmin) {
+    (spec.optional || []).forEach(n => {
+      const sh = ss.getSheetByName(n);
+      if (!sh) problems.push('Missing sheet: "' + n + '"');
+      else checkClaimHeader(sh, n);
+    });
+  }
+
+  if (problems.length) {
+    logLine_('VALID', 'Workbook validation', 'issues=' + problems.length, problems.join(' | '), 'WARN');
+    appendDetailsRows_(problems.map(p => ({
+      targetSheet: pic + ' - Workbook',
+      claim: '',
+      partner: '',
+      lastStatus: '',
+      reason: p,
+      submissionDateVal: ''
+    })));
+  } else {
+    logLine_('VALID', 'Workbook validation', '0 issues', 'OK', 'INFO');
+  }
+
+  return { issues: problems.length, problems };
+}
+
+/** Ensure _System sheet has schema/app version metadata (best-effort). */
+function sv03_ensureSystemSheet_(ss) {
+  if (!ss) return null;
   if (DRY_RUN) return null;
-  const ss = SpreadsheetApp.openById(String(CONFIG.logSpreadsheetId));
-  let sh = ss.getSheetByName(RUN_METRICS_SHEET_NAME);
-  if (!sh) sh = ss.insertSheet(RUN_METRICS_SHEET_NAME);
+  const name = '_System';
+  let sh = ss.getSheetByName(name);
+  if (!sh) sh = ss.insertSheet(name);
+  const header = ['Key','Value','Updated At'];
   if (sh.getLastRow() < 1) {
-    sh.getRange(1, 1, 1, RUN_METRICS_HEADER.length).setValues([RUN_METRICS_HEADER]);
-    try { sh.setFrozenRows(1); } catch (e0) {}
+    sh.getRange(1,1,1,header.length).setValues([header]);
+    try { sh.setFrozenRows(1); } catch (eF) {}
+  }
+  const data = sh.getDataRange().getValues();
+  const idx = {};
+  for (let r=1; r<data.length; r++) {
+    const k = String(data[r][0] || '').trim();
+    if (k) idx[k]=r+1;
+  }
+  const tz = (function(){ try { return Session.getScriptTimeZone(); } catch (e){ return ''; } })();
+  const pairs = [
+    ['schema_version', (typeof SCHEMA_VERSION !== 'undefined') ? String(SCHEMA_VERSION) : '' ],
+    ['app_version', (typeof APP_VERSION !== 'undefined') ? String(APP_VERSION) : '' ],
+    ['timezone', tz ]
+  ];
+  const now = new Date();
+  for (let i=0;i<pairs.length;i++) {
+    const k=pairs[i][0];
+    const v=pairs[i][1];
+    const row=[k,v,now];
+    if (idx[k]) {
+      sh.getRange(idx[k],1,1,row.length).setValues([row]);
+    } else {
+      sh.getRange(sh.getLastRow()+1,1,1,row.length).setValues([row]);
+    }
   }
   return sh;
-}
-
-/**
- * Append a run metric row.
- * metric: {flow, requestId, status, durationMs, processed, failed, opsUpdated, rowsMoved, notes}
- */
-function recordRunMetrics_(metric) {
-  const enabled = !!(CONFIG && CONFIG.features && CONFIG.features.enableRunMetrics);
-  if (!enabled) return false;
-  if (DRY_RUN) return false;
-  try {
-    const sh = ensureRunMetricsSheet_();
-    if (!sh) return false;
-    const m = metric || {};
-    const row = [
-      new Date(),
-      String(m.flow || ''),
-      String(m.requestId || ''),
-      String(m.status || ''),
-      Number(m.durationMs || 0),
-      Number(m.processed || 0),
-      Number(m.failed || 0),
-      Number(m.opsUpdated || 0),
-      Number(m.rowsMoved || 0),
-      String(m.notes || '')
-    ];
-    sh.getRange(sh.getLastRow() + 1, 1, 1, row.length).setValues([row]);
-    return true;
-  } catch (e) {
-    try { Logger.log('recordRunMetrics_ failed: ' + String(e && e.message ? e.message : e)); } catch (e2) {}
-    return false;
-  }
 }
