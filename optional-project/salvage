@@ -289,14 +289,14 @@ function runQueuedSalvage() {
     ctx.attachmentType = mailBundle.attachment.getContentType();
 
     if (wasThreadProcessedRecently_(ctx.threadId, ctx.messageId)) {
-      updateProgress_(100, 'Skipped duplicate thread');
+      updateProgress_(100, 'Skipped duplicate message');
       logStage_(ctx, {
         stage: 'EMAIL',
         segment: 'duplicate_guard',
         durationMs: Date.now() - emailStart,
         status: 'SKIPPED',
         severity: 'WARN',
-        notes: 'Skipped because thread was already processed previously.',
+        notes: 'Skipped because the same thread+message was already processed within dedupe window.',
       });
       return;
     }
