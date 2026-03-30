@@ -1,0 +1,1416 @@
+/**
+ * SC Transfer to Service Center Spreadsheet
+ * Enterprise Refactor Edition
+ *
+ * Goals:
+ * - Enterprise mode: config-driven, safer defaults, predictable run summary
+ * - Easy to debug: append-only log with Run ID, stage metrics, clear fatal/warn rows
+ * - Future-proof: route rules and branch rules centralized in config
+ * - Efficient: read each source once, batch destination writes, cache lookups
+ *
+ * Entry point:
+ * - runServiceCenterTransfer()
+ */
+
+const CONFIG = {
+  SCRIPT_VERSION: "2026.03.09-sc-transfer-enterprise-v1",
+  FLOW_NAME: "SC_TRANSFER",
+  DEST_SPREADSHEET_ID: "10TpYJ3lvMt8yq7RoKXuqVkdXITJE-ywz5MEPZXkuGx8",
+
+  SOURCE_SHEETS: ["SC - Farhan", "SC - Ivan", "SC - Meilani", "Start"],
+
+  START_SHEET_NAME: "Start",
+  START_ALLOWED_LAST_STATUS: new Set([
+    "WAITING_WALKIN_START",
+    "WAITING_COURIER_START",
+    "COURIER_PICKUP_START_DONE",
+  ]),
+
+  OVERVIEW_SHEET: "Overview",
+  PROGRESS_CELL_A1: "F3",
+  DURATION_CELL_A1: "F4",
+
+  RUN_GUARD: {
+    LOCK_WAIT_MS: 30000,
+    MIN_SECONDS_BETWEEN_RUNS: 10,
+    PROP_LAST_RUN_MS: "SC_TRANSFER_LAST_RUN_MS",
+    PROP_LAST_RUN_ID: "SC_TRANSFER_LAST_RUN_ID",
+  },
+
+  LOGGING: {
+    SHEET_NAME: "Log - SC Transfer",
+    MODE: "APPEND",
+    MAX_ROWS: 5000,
+    AUTO_RESIZE: true,
+  },
+
+  DEST_SHEETS_TO_CLEAR: [
+    "Unicom", "Sitcomtara", "Mitracare", "EzCare", "iBox", "GSI", "Andalas", "Klikcare", "J-Bros",
+    "MEA", "MMB", "MDP", "Deltasindo", "Carlcare", "B-Store", "Multikom", "Unmapped"
+  ],
+
+  ALLOWED_STATUSES: new Set([
+    "Pending SC (TA)",
+    "Pending SC (Repair)",
+    "Pending SC (Estimate)",
+    "Pending SC (Estimation)"
+  ]),
+
+  DEST_COLUMNS: {
+    claimNumber: "Claim Number",
+    deviceBrand: "Device Brand",
+    deviceType: "Device Type",
+    imeiSn: "IMEI/SN",
+    scName: "Service Center Name",
+    scBranch: "Service Center Branch",
+    lastStatus: "Last Status",
+    lastStatusDate: "Last Status Date",
+    lastStatusAging: "Last Status Aging",
+    remarks: "Remarks",
+    dashboardLink: "Dashboard Link",
+  },
+
+  DEST_HEADER_CANDIDATES: {
+    claimNumber: ["Claim Number", "Claim No", "Claim"],
+    deviceBrand: ["Device Brand", "Brand"],
+    deviceType: ["Device Type", "Type"],
+    imeiSn: ["IMEI/SN", "IMEI", "SN", "Serial Number", "IMEI SN"],
+    scName: ["Service Center Name", "Service Center", "SC Name", "SC"],
+    scBranch: ["Service Center Branch", "SC Branch", "Branch"],
+    lastStatus: ["Last Status", "Status Terakhir"],
+    lastStatusDate: ["Last Status Date", "Status Date", "Last Update", "Last Updated"],
+    lastStatusAging: ["Last Status Aging", "Last Status Aging (days)", "Status Aging", "Aging", "Aging (days)"],
+    remarks: ["Remarks", "Remark", "Notes", "Note"],
+    dashboardLink: ["Dashboard Link", "DB Link", "Link"],
+  },
+
+  SOURCE_HEADER_CANDIDATES: {
+    status: ["Status", "Update Status"],
+    claimNumber: ["Claim Number", "Claim No", "Claim"],
+    deviceBrand: ["Device Brand", "Brand"],
+    deviceType: ["Device Type", "Type"],
+    imeiSn: ["IMEI/SN", "IMEI", "SN", "Serial Number", "IMEI SN"],
+    scName: ["Service Center", "Service Center Name", "SC", "SC Name"],
+    lastStatus: ["Last Status"],
+    lastStatusDate: ["Last Status Date", "Status Date", "Last Update", "Last Updated"],
+    lastStatusAging: ["Last Status Aging", "Last Status Aging (days)", "Status Aging", "Aging", "Aging (days)"],
+    remarks: ["Remarks", "Remark", "Note", "Notes"],
+    dbLink: ["DB Link", "Dashboard Link", "Link"],
+  },
+
+  REQUIRED_SOURCE_KEYS: ["claimNumber", "scName"],
+  REQUIRED_DEST_KEYS: [
+    "claimNumber", "deviceBrand", "deviceType", "imeiSn", "scName",
+    "lastStatus", "lastStatusDate", "lastStatusAging", "remarks", "dashboardLink"
+  ],
+
+  ROUTE_RULES: [
+    { sheet: "Mitracare", tokens: ["mitracare", "digimap"] },
+    { sheet: "Sitcomtara", tokens: ["sitcomtara", "sitcom tara"] },
+    { sheet: "iBox", tokens: ["ibox", "i box"] },
+    { sheet: "GSI", tokens: ["gsi"] },
+    { sheet: "Multikom", tokens: ["multikom"] },
+    { sheet: "Andalas", tokens: ["andalas"] },
+    { sheet: "Klikcare", tokens: ["klikcare"] },
+    { sheet: "J-Bros", tokens: ["j bros", "jbros", "j-bros"] },
+    { sheet: "MEA", tokens: ["makmur era abadi"], regex: /\bmea\b/ },
+    { sheet: "MMB", tokens: ["manado mitra bersama"], regex: /\bmmb\b/ },
+    { sheet: "MDP", regex: /\bmdp\b/ },
+    { sheet: "Deltasindo", tokens: ["deltasindo"] },
+    { sheet: "Unicom", tokens: ["unicom", "xiaomi", "samsung"] },
+    { sheet: "EzCare", tokens: ["ezcare", "ez care"] },
+    { sheet: "Carlcare", tokens: ["carlcare"] },
+    { sheet: "B-Store", tokens: ["b store", "b-store", "bstor"] },
+  ],
+
+  BRANCH_BY_DEST: {
+    Unicom: function (normName) {
+      if (normName.indexOf("xiaomi") >= 0) return "Xiaomi Exclusive";
+      if (normName.indexOf("samsung") >= 0) return "Samsung Exclusive";
+      if (normName.indexOf("unicom") >= 0) return "Unicom";
+      return "";
+    },
+    Mitracare: function () { return "Mitracare"; },
+    Sitcomtara: function () { return "Sitcomtara"; },
+    Sitcom: function (normName) {
+      if (normName.indexOf("mitracare") >= 0 || normName.indexOf("digimap") >= 0) return "Mitracare";
+      if (normName.indexOf("sitcomtara") >= 0 || normName.indexOf("sitcom tara") >= 0) return "Sitcomtara";
+      return "";
+    },
+  },
+
+  DATE_OUTPUT_FORMAT: '[$-id-ID]d mmmm yyyy',
+  UNMAPPED_SHEET_NAME: "Unmapped",
+  LINK_TEXT: "LINK",
+};
+
+const LAST_STATUS_LABELS = {
+  CLAIM_ADDED_SC: "Claim Added by Service Center",
+  SERVICE_CENTER_CLAIM_RECEIVE: "Device Received at Service Center",
+  RECEIVED_SC: "Gadget Received at Service Center",
+  SERVICE_CENTER_CLAIM_ESTIMATE: "Service Center Submit Repair Cost",
+  ESTIMATE_COST: "Estimating Repair Cost",
+  QOALA_CLAIM_RESUBMIT_ESTIMATE: "Request New Repair Cost",
+  SERVICE_CENTER_CLAIM_RESUBMIT_ESTIMATE: "Service Center Submit New Repair Cost",
+  ON_PROGRESS: "Claim On Progress",
+  SERVICE_CENTER_CLAIM_WAITING_REPAIR: "Waiting for Service Center to Start Repair",
+  SERVICE_CENTER_CLAIM_ON_PROGRESS: "Repair On Progress",
+  SERVICE_CENTER_CLAIM_CHANGE_IMEI: "IMEI Changed",
+  INSURANCE_APPROVED: "Claim Approved by Insurance",
+  INSURANCE_CLAIM_APPROVE_REPAIR: "Claim Approved by Insurance",
+  DONE_REPAIR: "Claim Done And Repaired",
+  SERVICE_CENTER_CLAIM_WAITING_WALKIN_FINISH: "Awaiting Customer Pickup",
+  WAITING_WALKIN_FINISH: "Customer Picked Up Gadget",
+  COURIER_PICKED_UP: "Courier Picking Up Gadget",
+  WAITING_COURIER_FINISH: "Courier Finished",
+  INSURANCE_APPROVED_REPLACED: "Claim to Replace Approved by Insurance",
+  INSURANCE_CLAIM_APPROVE_REPLACE: "Insurance Approved - Switch to Replacement (TLO)",
+  SERVICE_CENTER_REPAIR_CANCELLED_FOR_REPLACE: "Repair Cancelled - No Further Action Needed by Service Center",
+  WAITING_WALKIN_START: "Customer on the way",
+  WAITING_COURIER_START: "Customer on the way",
+  COURIER_PICKUP_START_DONE: "Delivered to Service Center",
+};
+
+const RUNTIME_CACHE = {
+  normByValue: {},
+  normSize: 0,
+  normMaxSize: 3000,
+};
+
+function _validateConfig_() {
+  var requiredText = [
+    "SCRIPT_VERSION",
+    "FLOW_NAME",
+    "DEST_SPREADSHEET_ID",
+    "OVERVIEW_SHEET",
+    "UNMAPPED_SHEET_NAME",
+  ];
+  for (var i = 0; i < requiredText.length; i++) {
+    var key = requiredText[i];
+    if (!String(CONFIG[key] || "").trim()) {
+      throw new Error('Invalid CONFIG: "' + key + '" is required.');
+    }
+  }
+  if (!CONFIG.SOURCE_SHEETS || !CONFIG.SOURCE_SHEETS.length) {
+    throw new Error("Invalid CONFIG: SOURCE_SHEETS must not be empty.");
+  }
+}
+
+/* =========================
+ *  MENU
+ * ========================= */
+
+function onOpen() {
+  SpreadsheetApp.getUi()
+    .createMenu("SC Transfer")
+    .addItem("Run Transfer Now", "runServiceCenterTransfer")
+    .addToUi();
+}
+
+/* =========================
+ *  ENTRY POINT
+ * ========================= */
+
+function runServiceCenterTransfer() {
+  _validateConfig_();
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(CONFIG.RUN_GUARD.LOCK_WAIT_MS)) {
+    _setProgressSafe_("Skipped: another run is still in progress.");
+    return;
+  }
+
+  var props = PropertiesService.getScriptProperties();
+  var srcSS = SpreadsheetApp.getActiveSpreadsheet();
+  var tz = Session.getScriptTimeZone();
+  var runId = _newRunId_(tz);
+  var ctx = _newRunContext_(srcSS, tz, runId);
+
+  try {
+    if (!_guardAgainstRapidRerun_(props, ctx)) {
+      return;
+    }
+
+    var runTimer = _startTimer_();
+    _setProgressSafe_("Running: init...");
+    _logInfo_(ctx, "BOOT", "BOOT - Run started", {
+      metrics: {
+        version: CONFIG.SCRIPT_VERSION,
+        flow: CONFIG.FLOW_NAME,
+        srcSpreadsheetId: srcSS.getId(),
+        destSpreadsheetId: CONFIG.DEST_SPREADSHEET_ID,
+        mode: "OVERWRITE_DEST",
+      },
+      notes: "Pipeline initialized.",
+    });
+    _flushLog_(ctx);
+
+    var overview = srcSS.getSheetByName(CONFIG.OVERVIEW_SHEET);
+    ctx.overviewSheet = overview;
+
+    _setProgress_(ctx, "Running: opening destination workbook...");
+    var openStep = _timeStage_(function () {
+      return SpreadsheetApp.openById(CONFIG.DEST_SPREADSHEET_ID);
+    });
+    ctx.destSS = openStep.res;
+    ctx.destRegistry = _buildSheetRegistry_(ctx.destSS);
+
+    _logInfo_(ctx, "OPEN", "OPEN - Open destination workbook", {
+      ms: openStep.ms,
+      metrics: {
+        ok: !!ctx.destSS,
+        destinationSheetCount: ctx.destRegistry.sheetNames.length,
+      },
+      notes: "Destination workbook opened successfully.",
+    });
+    _flushLog_(ctx);
+
+    _setProgress_(ctx, "Running: clearing destination sheets...");
+    var clearStep = _timeStage_(function () {
+      return _clearDestinationSheets_(ctx);
+    });
+    _logInfo_(ctx, "CLR", "CLR - Clear destination sheets", {
+      ms: clearStep.ms,
+      metrics: clearStep.res,
+      notes: clearStep.res.clearedSheetsCount ? "Destination sheets cleared." : "Nothing to clear.",
+    });
+    _flushLog_(ctx);
+
+    _setProgress_(ctx, "Running: scanning source sheets...");
+    var collectStep = _timeStage_(function () {
+      return _collectAndGroupRows_(ctx, srcSS);
+    });
+
+    ctx.metrics.scannedSources = collectStep.res.scannedSources;
+    ctx.metrics.skippedSources = collectStep.res.skippedSources;
+    ctx.metrics.pickedRows = collectStep.res.pickedRows;
+    ctx.metrics.dedupedRows = collectStep.res.dedupedRows;
+    ctx.metrics.bucketCount = collectStep.res.bucketCount;
+    ctx.bucket = collectStep.res.bucket;
+
+    _logInfo_(ctx, "PICK", "PICK - Aggregate source rows", {
+      ms: collectStep.ms,
+      metrics: {
+        scannedSources: ctx.metrics.scannedSources,
+        skippedSources: ctx.metrics.skippedSources,
+        pickedRows: ctx.metrics.pickedRows,
+        dedupedRows: ctx.metrics.dedupedRows,
+        bucketCount: ctx.metrics.bucketCount,
+      },
+      notes: "Eligible rows collected and deduplicated.",
+    });
+    _flushLog_(ctx);
+
+    if (ctx.fallbackRequested.size) {
+      _logWarn_(ctx, "WARN", "WARN - Unmapped destination fallback used", {
+        metrics: {
+          requestedMissingSheets: ctx.fallbackRequested.size,
+          fallbackSheet: CONFIG.UNMAPPED_SHEET_NAME,
+        },
+        notes: "Requested sheets not found: " + Array.from(ctx.fallbackRequested).join(", "),
+      });
+    }
+    if (ctx.fallbackCreated) {
+      _logInfo_(ctx, "INFO", "INFO - Fallback sheet created", {
+        metrics: { sheet: CONFIG.UNMAPPED_SHEET_NAME },
+        notes: "Fallback sheet was auto-created with default header.",
+      });
+    }
+    _flushLog_(ctx);
+
+    _setProgress_(ctx, "Running: writing " + ctx.metrics.dedupedRows + " rows...");
+    var writeStep = _timeStage_(function () {
+      return _writeBuckets_(ctx);
+    });
+
+    ctx.metrics.writtenRows = writeStep.res.writtenRows;
+    ctx.metrics.failedWrites = writeStep.res.failedWrites;
+
+    _logInfo_(ctx, "WRITE", "WRITE - Batch write destinations", {
+      ms: writeStep.ms,
+      metrics: {
+        writtenRows: ctx.metrics.writtenRows,
+        failedWrites: ctx.metrics.failedWrites,
+        destinationSheets: ctx.metrics.bucketCount,
+      },
+      notes: ctx.metrics.writtenRows ? "Destination writes completed." : "No rows written.",
+    });
+    _flushLog_(ctx);
+
+    _setProgress_(ctx, "Running: sorting destination sheets...");
+    var sortStep = _timeStage_(function () {
+      return _sortDestinationSheets_(ctx);
+    });
+
+    _logInfo_(ctx, "SORT", "SORT - Apply final sort order", {
+      ms: sortStep.ms,
+      metrics: sortStep.res,
+      notes: sortStep.res.sortedSheets ? "Destination sheets sorted." : "No destination sheets required sorting.",
+    });
+    _flushLog_(ctx);
+
+    var totalMs = runTimer.stop();
+    var durationText = _formatDuration_(totalMs);
+    _writeRunFooter_(ctx, durationText, totalMs);
+
+    var finalStatus = ctx.hasError ? "FAIL" : (ctx.hasWarn ? "WARN" : "OK");
+    var finalSeverity = ctx.hasError ? "ERROR" : (ctx.hasWarn ? "WARN" : "INFO");
+
+    _setProgress_(ctx, "Done: wrote " + ctx.metrics.writtenRows + "/" + ctx.metrics.dedupedRows + " rows. (" + durationText + ")");
+    _log_(ctx, {
+      stage: "DONE",
+      segment: "DONE - Transfer finished",
+      severity: finalSeverity,
+      status: finalStatus,
+      ms: totalMs,
+      metrics: {
+        picked: ctx.metrics.pickedRows,
+        deduped: ctx.metrics.dedupedRows,
+        written: ctx.metrics.writtenRows,
+        failedWrites: ctx.metrics.failedWrites,
+        duration: durationText,
+      },
+      notes: "Run completed.",
+    });
+    _flushLog_(ctx);
+  } catch (err) {
+    _setProgress_(ctx, "ERROR: check Log - SC Transfer / Apps Script Executions");
+    _logError_(ctx, "FATAL", "FATAL - Unhandled error", {
+      error: _errorToString_(err),
+      notes: err && err.stack ? String(err.stack) : "",
+    });
+    _flushLog_(ctx);
+    throw err;
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+/* =========================
+ *  CONTEXT / RUN STATE
+ * ========================= */
+
+function _newRunContext_(srcSS, tz, runId) {
+  return {
+    flow: CONFIG.FLOW_NAME,
+    tz: tz,
+    runId: runId,
+    srcSS: srcSS,
+    destSS: null,
+    overviewSheet: null,
+    logSheet: _prepareLogSheet_(srcSS),
+    logRows: [],
+    logSeq: 0,
+    hasWarn: false,
+    hasError: false,
+    fallbackRequested: new Set(),
+    fallbackCreated: false,
+    metrics: {
+      scannedSources: 0,
+      skippedSources: 0,
+      pickedRows: 0,
+      dedupedRows: 0,
+      bucketCount: 0,
+      writtenRows: 0,
+      failedWrites: 0,
+    },
+    caches: {
+      destColumnMap: {},
+      createdRichTextLinks: {},
+      normalizedHeaders: {},
+    },
+    destRegistry: null,
+    bucket: new Map(),
+  };
+}
+
+function _newRunId_(tz) {
+  var ts = Utilities.formatDate(new Date(), tz, "yyyyMMdd-HHmmss");
+  return ts + "-" + Utilities.getUuid().slice(0, 8);
+}
+
+function _guardAgainstRapidRerun_(props, ctx) {
+  var nowMs = Date.now();
+  var lastRunMs = Number(props.getProperty(CONFIG.RUN_GUARD.PROP_LAST_RUN_MS) || "0");
+  var lastRunId = props.getProperty(CONFIG.RUN_GUARD.PROP_LAST_RUN_ID) || "";
+
+  if (lastRunMs && (nowMs - lastRunMs) < CONFIG.RUN_GUARD.MIN_SECONDS_BETWEEN_RUNS * 1000) {
+    _logWarn_(ctx, "BOOT", "BOOT - Skipped (anti double-click)", {
+      metrics: {
+        minSeconds: CONFIG.RUN_GUARD.MIN_SECONDS_BETWEEN_RUNS,
+        previousRunId: lastRunId,
+      },
+      notes: "Execution skipped because another run was triggered too recently.",
+      status: "SKIP",
+    });
+    _flushLog_(ctx);
+    _setProgressSafe_("Skipped: too soon (anti double-click).");
+    return false;
+  }
+
+  props.setProperty(CONFIG.RUN_GUARD.PROP_LAST_RUN_MS, String(nowMs));
+  props.setProperty(CONFIG.RUN_GUARD.PROP_LAST_RUN_ID, ctx.runId);
+  return true;
+}
+
+/* =========================
+ *  LOGGING
+ * ========================= */
+
+function _prepareLogSheet_(srcSS) {
+  var sh = srcSS.getSheetByName(CONFIG.LOGGING.SHEET_NAME);
+  if (!sh) sh = srcSS.insertSheet(CONFIG.LOGGING.SHEET_NAME);
+
+  var headers = [[
+    "Seq",
+    "Timestamp",
+    "Time",
+    "Flow",
+    "Run ID",
+    "Stage",
+    "Segment",
+    "Severity",
+    "Status",
+    "Duration (ms)",
+    "Duration (s)",
+    "Metrics",
+    "Notes",
+    "Error",
+  ]];
+
+  if (sh.getLastRow() === 0) {
+    sh.getRange(1, 1, 1, headers[0].length).setValues(headers);
+    sh.setFrozenRows(1);
+    sh.getRange(1, 1, 1, headers[0].length).setFontWeight("bold");
+  } else {
+    var existing = sh.getRange(1, 1, 1, headers[0].length).getValues()[0];
+    if (_normRow_(existing) !== _normRow_(headers[0])) {
+      sh.clearContents();
+      sh.getRange(1, 1, 1, headers[0].length).setValues(headers);
+      sh.setFrozenRows(1);
+      sh.getRange(1, 1, 1, headers[0].length).setFontWeight("bold");
+    }
+  }
+
+  return sh;
+}
+
+function _logInfo_(ctx, stage, segment, opt) {
+  _logWithSeverity_(ctx, "INFO", stage, segment, opt);
+}
+
+function _logWarn_(ctx, stage, segment, opt) {
+  _logWithSeverity_(ctx, "WARN", stage, segment, opt);
+}
+
+function _logError_(ctx, stage, segment, opt) {
+  _logWithSeverity_(ctx, "ERROR", stage, segment, opt);
+}
+
+function _logWithSeverity_(ctx, severity, stage, segment, opt) {
+  opt = opt || {};
+  _log_(ctx, {
+    stage: stage,
+    segment: segment,
+    severity: severity,
+    status: opt.status || (severity === "ERROR" ? "FAIL" : "OK"),
+    ms: opt.ms,
+    metrics: opt.metrics,
+    notes: opt.notes,
+    error: opt.error,
+  });
+}
+
+function _log_(ctx, opt) {
+  opt = opt || {};
+  var ts = new Date();
+  ctx.logSeq += 1;
+
+  var severity = String(opt.severity || "INFO").toUpperCase();
+  if (severity === "WARN") ctx.hasWarn = true;
+  if (severity === "ERROR") ctx.hasError = true;
+
+  var ms = opt.ms == null ? "" : Number(opt.ms);
+  var seconds = ms === "" ? "" : Number((ms / 1000).toFixed(2));
+
+  ctx.logRows.push([
+    ctx.logSeq,
+    ts,
+    Utilities.formatDate(ts, ctx.tz, "H:mm:ss"),
+    ctx.flow,
+    ctx.runId,
+    opt.stage || "",
+    opt.segment || "",
+    severity,
+    opt.status || "",
+    ms,
+    seconds,
+    _metricText_(opt.metrics),
+    opt.notes || "",
+    opt.error || "",
+  ]);
+}
+
+function _flushLog_(ctx) {
+  if (!ctx.logSheet || !ctx.logRows.length) return;
+
+  var startRow = ctx.logSheet.getLastRow() + 1;
+  ctx.logSheet.getRange(startRow, 1, ctx.logRows.length, ctx.logRows[0].length).setValues(ctx.logRows);
+
+  var writeCount = ctx.logRows.length;
+  ctx.logSheet.getRange(startRow, 2, writeCount, 1).setNumberFormat("d MMM yyyy, HH:mm:ss");
+  ctx.logSheet.getRange(startRow, 10, writeCount, 2).setNumberFormat("0.00");
+  ctx.logSheet.getRange(startRow, 12, writeCount, 3).setWrap(true);
+
+  if (CONFIG.LOGGING.AUTO_RESIZE) {
+    try {
+      ctx.logSheet.autoResizeColumns(1, 14);
+      ctx.logSheet.setColumnWidth(12, 300);
+      ctx.logSheet.setColumnWidth(13, 380);
+      ctx.logSheet.setColumnWidth(14, 420);
+    } catch (e) {
+      // ignore formatting issues
+    }
+  }
+
+  ctx.logRows = [];
+  _trimLogIfNeeded_(ctx.logSheet);
+}
+
+function _trimLogIfNeeded_(logSheet) {
+  var maxRows = Number(CONFIG.LOGGING.MAX_ROWS || 0);
+  if (!maxRows) return;
+
+  var lastRow = logSheet.getLastRow();
+  if (lastRow <= maxRows) return;
+
+  var rowsToDelete = lastRow - maxRows;
+  if (rowsToDelete <= 0) return;
+
+  logSheet.deleteRows(2, rowsToDelete);
+}
+
+/* =========================
+ *  COLLECT / ROUTE / DEDUPE
+ * ========================= */
+
+function _collectAndGroupRows_(ctx, srcSS) {
+  var allPicked = [];
+  var scannedSources = 0;
+  var skippedSources = 0;
+
+  for (var i = 0; i < CONFIG.SOURCE_SHEETS.length; i++) {
+    var sheetName = CONFIG.SOURCE_SHEETS[i];
+    var sheet = srcSS.getSheetByName(sheetName);
+
+    if (!sheet) {
+      skippedSources += 1;
+      _logError_(ctx, "PICK", "PICK - Source sheet missing (" + sheetName + ")", {
+        error: "SOURCE_SHEET_NOT_FOUND",
+      });
+      continue;
+    }
+
+    scannedSources += 1;
+    var scanStage = _timeStage_(function (targetSheet) {
+      return _collectEligibleRowsFromSource_(targetSheet);
+    }.bind(null, sheet));
+
+    if (scanStage.res.errors.length) {
+      skippedSources += 1;
+      for (var e = 0; e < scanStage.res.errors.length; e++) {
+        var item = scanStage.res.errors[e];
+        _logError_(ctx, "PICK", "ERROR - SOURCE_PARSE (" + sheetName + ")", {
+          metrics: { missingHeaderKey: item.missingHeaderKey },
+          notes: "Source sheet skipped due to missing required headers.",
+          error: _safeJson_(item),
+        });
+      }
+      continue;
+    }
+
+    _logInfo_(ctx, "PICK", "PICK - Scan source (" + sheetName + ")", {
+      ms: scanStage.ms,
+      metrics: {
+        picked: scanStage.res.picked.length,
+        totalRows: scanStage.res.totalRows,
+      },
+      notes: scanStage.res.picked.length ? "Eligible rows collected." : "No eligible rows.",
+    });
+
+    allPicked = allPicked.concat(scanStage.res.picked);
+  }
+
+  var dedupeStage = _timeStage_(function () {
+    return _dedupeAndBucketRows_(ctx, allPicked);
+  });
+
+  _logInfo_(ctx, "PICK", "PICK - Dedupe and bucket rows", {
+    ms: dedupeStage.ms,
+    metrics: {
+      inputRows: allPicked.length,
+      dedupedRows: dedupeStage.res.dedupedRows,
+      destinationSheets: dedupeStage.res.bucketCount,
+    },
+    notes: "Deduplication completed.",
+  });
+
+  return {
+    scannedSources: scannedSources,
+    skippedSources: skippedSources,
+    pickedRows: allPicked.length,
+    dedupedRows: dedupeStage.res.dedupedRows,
+    bucketCount: dedupeStage.res.bucketCount,
+    bucket: dedupeStage.res.bucket,
+  };
+}
+
+function _collectEligibleRowsFromSource_(sheet) {
+  var errors = [];
+  var values = sheet.getDataRange().getValues();
+  if (!values || values.length < 2) {
+    return { picked: [], errors: errors, totalRows: values ? values.length - 1 : 0 };
+  }
+
+  var headers = values[0].map(function (h) { return String(h || "").trim(); });
+  var idx = _buildHeaderIndexMap_(headers, CONFIG.SOURCE_HEADER_CANDIDATES);
+  var isStartSheet = sheet.getName() === CONFIG.START_SHEET_NAME;
+
+  for (var r = 0; r < CONFIG.REQUIRED_SOURCE_KEYS.length; r++) {
+    var key = CONFIG.REQUIRED_SOURCE_KEYS[r];
+    if (idx[key] == null) {
+      errors.push({ sheet: sheet.getName(), missingHeaderKey: key, headers: headers });
+      return { picked: [], errors: errors, totalRows: values.length - 1 };
+    }
+  }
+
+  if (!isStartSheet && idx.status == null) {
+    errors.push({ sheet: sheet.getName(), missingHeaderKey: "status", headers: headers });
+    return { picked: [], errors: errors, totalRows: values.length - 1 };
+  }
+
+  if (isStartSheet && idx.status == null && idx.lastStatus == null) {
+    errors.push({ sheet: sheet.getName(), missingHeaderKey: "lastStatus", headers: headers });
+    return { picked: [], errors: errors, totalRows: values.length - 1 };
+  }
+
+  var picked = [];
+  for (var rowIndex = 1; rowIndex < values.length; rowIndex++) {
+    var row = values[rowIndex];
+
+    var status = idx.status == null ? "" : String(row[idx.status] || "").trim();
+    var lastStatus = idx.lastStatus == null ? "" : String(row[idx.lastStatus] || "").trim();
+
+    var eligibleByStatus = _isAllowedStatus_(status);
+    var eligibleByStartStatus = isStartSheet && _isStartAllowedLastStatus_(lastStatus);
+
+    if (!eligibleByStatus && !eligibleByStartStatus) continue;
+
+    var claimNumber = String(row[idx.claimNumber] || "").trim();
+    var serviceCenterName = String(row[idx.scName] || "").trim();
+    if (!claimNumber || !serviceCenterName) continue;
+
+    picked.push({
+      sourceSheet: sheet.getName(),
+      sourceRowNumber: rowIndex + 1,
+      claimNumber: claimNumber,
+      deviceBrand: idx.deviceBrand == null ? "" : row[idx.deviceBrand],
+      deviceType: idx.deviceType == null ? "" : row[idx.deviceType],
+      imeiSn: idx.imeiSn == null ? "" : row[idx.imeiSn],
+      serviceCenterName: serviceCenterName,
+      lastStatus: idx.lastStatus == null ? "" : row[idx.lastStatus],
+      lastStatusDate: idx.lastStatusDate == null ? "" : row[idx.lastStatusDate],
+      lastStatusAging: idx.lastStatusAging == null ? "" : row[idx.lastStatusAging],
+      remarks: idx.remarks == null ? "" : row[idx.remarks],
+      dashboardUrl: _buildDashboardUrl_(claimNumber),
+    });
+  }
+
+  return { picked: picked, errors: errors, totalRows: values.length - 1 };
+}
+
+function _dedupeAndBucketRows_(ctx, rows) {
+  var deduped = new Map();
+
+  for (var i = 0; i < rows.length; i++) {
+    var row = rows[i];
+    var requestedDestName = _resolveDestSheetName_(row.serviceCenterName);
+    var destSheet = _ensureDestSheet_(ctx, requestedDestName);
+    var destName = destSheet.getName();
+    var key = destName + "__" + String(row.claimNumber).trim().toUpperCase();
+
+    var enrichedRow = _cloneObject_(row);
+    enrichedRow.destSheetName = destName;
+
+    if (!deduped.has(key)) {
+      deduped.set(key, enrichedRow);
+      continue;
+    }
+
+    var previous = deduped.get(key);
+    if (_shouldReplaceDedupedRow_(previous, enrichedRow)) {
+      deduped.set(key, enrichedRow);
+    }
+  }
+
+  var bucket = new Map();
+  deduped.forEach(function (row) {
+    if (!bucket.has(row.destSheetName)) bucket.set(row.destSheetName, []);
+    bucket.get(row.destSheetName).push(row);
+  });
+
+  bucket.forEach(function (list) {
+    list.sort(function (a, b) {
+      return _compareClaimNumbers_(a.claimNumber, b.claimNumber);
+    });
+  });
+
+  return {
+    dedupedRows: deduped.size,
+    bucketCount: bucket.size,
+    bucket: bucket,
+  };
+}
+
+function _shouldReplaceDedupedRow_(currentRow, nextRow) {
+  var currentDate = _coerceToDate_(currentRow.lastStatusDate);
+  var nextDate = _coerceToDate_(nextRow.lastStatusDate);
+
+  var currentTime = currentDate ? currentDate.getTime() : 0;
+  var nextTime = nextDate ? nextDate.getTime() : 0;
+
+  if (nextTime !== currentTime) return nextTime > currentTime;
+
+  var currentStatus = String(currentRow.lastStatus || "").trim();
+  var nextStatus = String(nextRow.lastStatus || "").trim();
+  if (currentStatus !== nextStatus) return nextStatus > currentStatus;
+
+  return Number(nextRow.sourceRowNumber || 0) > Number(currentRow.sourceRowNumber || 0);
+}
+
+/* =========================
+ *  DESTINATION WRITES
+ * ========================= */
+
+function _writeBuckets_(ctx) {
+  var writtenRows = 0;
+  var failedWrites = 0;
+
+  ctx.bucket.forEach(function (rows, destSheetName) {
+    var sheet = ctx.destRegistry.byName[destSheetName];
+    if (!sheet) {
+      failedWrites += rows.length;
+      _logError_(ctx, "WRITE", "ERROR - Destination sheet missing (" + destSheetName + ")", {
+        error: "DEST_SHEET_MISSING",
+      });
+      return;
+    }
+
+    _setProgress_(ctx, "Running: writing " + destSheetName + " (" + rows.length + ")...");
+    var writeStage = _timeStage_(function () {
+      return _appendToDestination_(ctx, sheet, rows);
+    });
+
+    writtenRows += writeStage.res;
+    if (writeStage.res !== rows.length) failedWrites += (rows.length - writeStage.res);
+
+    _logInfo_(ctx, "WRITE", "WRITE - Append (" + destSheetName + ")", {
+      ms: writeStage.ms,
+      metrics: {
+        requestedRows: rows.length,
+        writtenRows: writeStage.res,
+      },
+      notes: writeStage.res ? "Destination sheet updated." : "No rows written.",
+    });
+    _flushLog_(ctx);
+  });
+
+  return {
+    writtenRows: writtenRows,
+    failedWrites: failedWrites,
+  };
+}
+
+function _appendToDestination_(ctx, destSheet, rows) {
+  if (!rows || !rows.length) return 0;
+
+  var headerRow = _getSheetHeaderRow_(destSheet);
+  var colMap = _getDestColumnMapCached_(ctx, destSheet, headerRow);
+
+  for (var i = 0; i < CONFIG.REQUIRED_DEST_KEYS.length; i++) {
+    var key = CONFIG.REQUIRED_DEST_KEYS[i];
+    if (colMap[key] == null) {
+      _logError_(ctx, "WRITE", "ERROR - DEST_MISSING_COLUMN (" + destSheet.getName() + ")", {
+        metrics: { missing: key },
+        error: 'Header missing for key="' + key + '"',
+      });
+      return 0;
+    }
+  }
+
+  var lastCol = Math.max(destSheet.getLastColumn(), 1);
+  var startRow = destSheet.getLastRow() + 1;
+  var out = [];
+  var richLinks = [];
+  var hasBranchColumn = colMap.scBranch != null;
+
+  for (var rowIndex = 0; rowIndex < rows.length; rowIndex++) {
+    var row = rows[rowIndex];
+    var outRow = _createBlankRow_(lastCol);
+
+    outRow[colMap.claimNumber] = row.claimNumber;
+    outRow[colMap.deviceBrand] = row.deviceBrand;
+    outRow[colMap.deviceType] = row.deviceType;
+    outRow[colMap.imeiSn] = row.imeiSn;
+    outRow[colMap.scName] = row.serviceCenterName;
+    outRow[colMap.lastStatus] = _translateLastStatus_(row.lastStatus);
+
+    var dateValue = _coerceToDate_(row.lastStatusDate);
+    outRow[colMap.lastStatusDate] = dateValue || (row.lastStatusDate || "");
+    outRow[colMap.lastStatusAging] = row.lastStatusAging;
+    outRow[colMap.remarks] = row.remarks;
+
+    if (hasBranchColumn) {
+      outRow[colMap.scBranch] = _resolveBranchForSheet_(row.serviceCenterName, destSheet.getName());
+    }
+
+    out.push(outRow);
+    richLinks.push([_buildRichTextLink_(ctx, row.dashboardUrl)]);
+  }
+
+  destSheet.getRange(startRow, 1, out.length, lastCol).setValues(out);
+
+  if (colMap.lastStatusDate != null) {
+    try {
+      destSheet.getRange(startRow, colMap.lastStatusDate + 1, out.length, 1).setNumberFormat(CONFIG.DATE_OUTPUT_FORMAT);
+    } catch (e) {
+      // ignore date format issue
+    }
+  }
+
+  destSheet.getRange(startRow, colMap.dashboardLink + 1, richLinks.length, 1).setRichTextValues(richLinks);
+
+  return out.length;
+}
+
+function _clearDestinationSheets_(ctx) {
+  var clearedRowsBySheet = {};
+  var emptySheets = [];
+  var skippedSheets = [];
+  var clearedSheetsCount = 0;
+  var totalClearedRows = 0;
+
+  for (var i = 0; i < CONFIG.DEST_SHEETS_TO_CLEAR.length; i++) {
+    var sheetName = CONFIG.DEST_SHEETS_TO_CLEAR[i];
+    var sh = ctx.destRegistry.byName[sheetName];
+
+    if (!sh) {
+      skippedSheets.push(sheetName);
+      continue;
+    }
+
+    var lastRow = sh.getLastRow();
+    var lastCol = Math.max(sh.getLastColumn(), 1);
+
+    if (lastRow > 1) {
+      var rowsToClear = lastRow - 1;
+      sh.getRange(2, 1, rowsToClear, lastCol).clearContent();
+      clearedRowsBySheet[sheetName] = rowsToClear;
+      clearedSheetsCount += 1;
+      totalClearedRows += rowsToClear;
+    } else {
+      emptySheets.push(sheetName);
+    }
+  }
+
+  return {
+    clearedSheetsCount: clearedSheetsCount,
+    totalClearedRows: totalClearedRows,
+    emptySheets: emptySheets.length,
+    skippedSheets: skippedSheets.length,
+    detail: _kvList_(clearedRowsBySheet),
+  };
+}
+
+function _ensureDestSheet_(ctx, requestedSheetName) {
+  var existing = ctx.destRegistry.byName[requestedSheetName];
+  if (existing) return existing;
+
+  ctx.fallbackRequested.add(requestedSheetName);
+  var fallbackName = CONFIG.UNMAPPED_SHEET_NAME;
+  var fallbackSheet = ctx.destRegistry.byName[fallbackName];
+
+  if (!fallbackSheet) {
+    fallbackSheet = ctx.destSS.insertSheet(fallbackName);
+    _initializeFallbackSheet_(fallbackSheet);
+    ctx.destRegistry.byName[fallbackName] = fallbackSheet;
+    ctx.destRegistry.sheetNames.push(fallbackName);
+    ctx.fallbackCreated = true;
+  }
+
+  return fallbackSheet;
+}
+
+function _initializeFallbackSheet_(sheet) {
+  var header = [[
+    CONFIG.DEST_COLUMNS.claimNumber,
+    CONFIG.DEST_COLUMNS.deviceBrand,
+    CONFIG.DEST_COLUMNS.deviceType,
+    CONFIG.DEST_COLUMNS.imeiSn,
+    CONFIG.DEST_COLUMNS.scName,
+    CONFIG.DEST_COLUMNS.lastStatus,
+    CONFIG.DEST_COLUMNS.lastStatusDate,
+    CONFIG.DEST_COLUMNS.lastStatusAging,
+    CONFIG.DEST_COLUMNS.remarks,
+    CONFIG.DEST_COLUMNS.dashboardLink,
+  ]];
+  sheet.getRange(1, 1, 1, header[0].length).setValues(header);
+  sheet.setFrozenRows(1);
+}
+
+function _sortDestinationSheets_(ctx) {
+  var sheetNames = _getSortableDestinationSheetNames_(ctx);
+  var sortedSheets = 0;
+  var skippedEmpty = 0;
+  var skippedMissingSheet = 0;
+  var skippedMissingColumns = 0;
+
+  for (var i = 0; i < sheetNames.length; i++) {
+    var sheetName = sheetNames[i];
+    var sheet = ctx.destRegistry.byName[sheetName];
+
+    if (!sheet) {
+      skippedMissingSheet += 1;
+      continue;
+    }
+
+    var lastRow = sheet.getLastRow();
+    if (lastRow <= 2) {
+      skippedEmpty += 1;
+      continue;
+    }
+
+    var headerRow = _getSheetHeaderRow_(sheet);
+    var colMap = _getDestColumnMapCached_(ctx, sheet, headerRow);
+
+    if (colMap.lastStatusAging == null || colMap.lastStatus == null || colMap.scName == null) {
+      skippedMissingColumns += 1;
+      _logWarn_(ctx, "SORT", "WARN - SORT_COLUMNS_MISSING (" + sheetName + ")", {
+        metrics: {
+          lastStatusAging: colMap.lastStatusAging != null,
+          lastStatus: colMap.lastStatus != null,
+          scName: colMap.scName != null,
+        },
+        notes: "Sheet skipped because one or more sort columns are missing.",
+      });
+      continue;
+    }
+
+    var lastCol = Math.max(sheet.getLastColumn(), 1);
+    sheet.getRange(2, 1, lastRow - 1, lastCol).sort([
+      { column: colMap.scName + 1, ascending: true },
+      { column: colMap.lastStatus + 1, ascending: true },
+      { column: colMap.lastStatusAging + 1, ascending: false },
+    ]);
+    sortedSheets += 1;
+  }
+
+  return {
+    requestedSheets: sheetNames.length,
+    sortedSheets: sortedSheets,
+    skippedEmpty: skippedEmpty,
+    skippedMissingSheet: skippedMissingSheet,
+    skippedMissingColumns: skippedMissingColumns,
+  };
+}
+
+function _getSortableDestinationSheetNames_(ctx) {
+  var seen = {};
+  var out = [];
+  var ordered = CONFIG.DEST_SHEETS_TO_CLEAR.slice();
+
+  if (ctx && ctx.bucket) {
+    ctx.bucket.forEach(function (_rows, sheetName) {
+      ordered.push(sheetName);
+    });
+  }
+
+  ordered.push(CONFIG.UNMAPPED_SHEET_NAME);
+
+  for (var i = 0; i < ordered.length; i++) {
+    var name = String(ordered[i] || "").trim();
+    if (!name || seen[name]) continue;
+    seen[name] = true;
+    out.push(name);
+  }
+
+  return out;
+}
+
+function _buildSheetRegistry_(ss) {
+  var sheets = ss.getSheets();
+  var byName = {};
+  var sheetNames = [];
+
+  for (var i = 0; i < sheets.length; i++) {
+    byName[sheets[i].getName()] = sheets[i];
+    sheetNames.push(sheets[i].getName());
+  }
+
+  return {
+    byName: byName,
+    sheetNames: sheetNames,
+  };
+}
+
+/* =========================
+ *  HEADER MATCHING
+ * ========================= */
+
+function _buildHeaderIndexMap_(headers, candidatesByKey) {
+  var idx = {};
+  Object.keys(candidatesByKey).forEach(function (key) {
+    var found = _findHeaderIndex_(headers, candidatesByKey[key]);
+    idx[key] = found >= 0 ? found : null;
+  });
+  return idx;
+}
+
+function _findHeaderIndex_(headers, candidates) {
+  var exactHeaders = headers.map(function (h) { return String(h || "").trim(); });
+  var normalizedHeaders = exactHeaders.map(_norm_);
+  var normalizedCandidates = candidates.map(_norm_);
+  var exactIndex = {};
+  var normalizedIndex = {};
+
+  for (var hi = 0; hi < exactHeaders.length; hi++) {
+    if (!exactIndex.hasOwnProperty(exactHeaders[hi])) exactIndex[exactHeaders[hi]] = hi;
+    if (!normalizedIndex.hasOwnProperty(normalizedHeaders[hi])) normalizedIndex[normalizedHeaders[hi]] = hi;
+  }
+
+  for (var i = 0; i < candidates.length; i++) {
+    var exactCandidate = String(candidates[i] || "").trim();
+    var exactIdx = exactIndex.hasOwnProperty(exactCandidate) ? exactIndex[exactCandidate] : -1;
+    if (exactIdx >= 0) return exactIdx;
+  }
+
+  for (var j = 0; j < normalizedCandidates.length; j++) {
+    var normKey = normalizedCandidates[j];
+    var normIdx = normalizedIndex.hasOwnProperty(normKey) ? normalizedIndex[normKey] : -1;
+    if (normIdx >= 0) return normIdx;
+  }
+
+  for (var c = 0; c < normalizedCandidates.length; c++) {
+    var candidate = normalizedCandidates[c];
+    if (!candidate) continue;
+
+    var wordCount = candidate.split(/\s+/).filter(Boolean).length;
+    if (wordCount < 2 && candidate.length < 8) continue;
+
+    var matches = [];
+    for (var h = 0; h < normalizedHeaders.length; h++) {
+      var header = normalizedHeaders[h];
+      if (!header) continue;
+      if (header.indexOf(candidate) >= 0) matches.push(h);
+    }
+    if (matches.length === 1) return matches[0];
+  }
+
+  return -1;
+}
+
+function _getDestColumnMapCached_(ctx, sheet, headerRow) {
+  var cacheKey = sheet.getSheetId();
+  if (ctx.caches.destColumnMap[cacheKey]) return ctx.caches.destColumnMap[cacheKey];
+
+  var map = _buildHeaderIndexMap_(headerRow, CONFIG.DEST_HEADER_CANDIDATES);
+  ctx.caches.destColumnMap[cacheKey] = map;
+  return map;
+}
+
+function _getSheetHeaderRow_(sheet) {
+  var lastCol = Math.max(sheet.getLastColumn(), 1);
+  return sheet.getRange(1, 1, 1, lastCol).getValues()[0].map(function (h) {
+    return String(h || "").trim();
+  });
+}
+
+/* =========================
+ *  ROUTING / BRANCH / URL
+ * ========================= */
+
+function _resolveDestSheetName_(serviceCenterName) {
+  var normalized = _norm_(serviceCenterName);
+
+  for (var i = 0; i < CONFIG.ROUTE_RULES.length; i++) {
+    var rule = CONFIG.ROUTE_RULES[i];
+    if (rule.tokens && _containsAnyToken_(normalized, rule.tokens)) return rule.sheet;
+    if (rule.regex && rule.regex.test(normalized)) return rule.sheet;
+  }
+
+  return CONFIG.UNMAPPED_SHEET_NAME;
+}
+
+function _resolveBranchForSheet_(serviceCenterName, destSheetName) {
+  var resolver = CONFIG.BRANCH_BY_DEST[String(destSheetName || "").trim()];
+  if (!resolver) return "";
+  return resolver(_norm_(serviceCenterName));
+}
+
+function _buildDashboardUrl_(claimNumber) {
+  var raw = String(claimNumber || "").trim();
+  if (!raw) return "";
+
+  var isGadget = /^(SFP|SMR|SFX)/i.test(raw);
+  var base = isGadget
+    ? "https://partner.qoala.app/gadget/claim/"
+    : "https://partner.qoala.app/partnership/claim/";
+  return base + raw;
+}
+
+function _buildRichTextLink_(ctx, url) {
+  var cacheKey = String(url || "");
+  if (!cacheKey) {
+    return SpreadsheetApp.newRichTextValue().setText("").build();
+  }
+
+  if (ctx.caches.createdRichTextLinks[cacheKey]) {
+    return ctx.caches.createdRichTextLinks[cacheKey];
+  }
+
+  var link = SpreadsheetApp.newRichTextValue()
+    .setText(CONFIG.LINK_TEXT)
+    .setLinkUrl(url)
+    .build();
+
+  ctx.caches.createdRichTextLinks[cacheKey] = link;
+  return link;
+}
+
+/* =========================
+ *  STATUS / DATE / NORMALIZATION
+ * ========================= */
+
+function _isAllowedStatus_(status) {
+  var raw = String(status || "").trim();
+  if (!raw) return false;
+
+  var normalized = _norm_(raw);
+  if (normalized.indexOf("pending sc") < 0) return false;
+
+  if (/\bta\b/.test(normalized)) return true;
+  if (normalized.indexOf("repair") >= 0) return true;
+  if (normalized.indexOf("estimate") >= 0 || normalized.indexOf("estimation") >= 0) return true;
+
+  return CONFIG.ALLOWED_STATUSES.has(raw);
+}
+
+function _isStartAllowedLastStatus_(status) {
+  var key = String(status || "")
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+  return CONFIG.START_ALLOWED_LAST_STATUS.has(key);
+}
+
+function _translateLastStatus_(status) {
+  var raw = String(status || "").trim();
+  if (!raw) return "";
+
+  var exactKey = raw.toUpperCase();
+  if (LAST_STATUS_LABELS[exactKey]) return LAST_STATUS_LABELS[exactKey];
+
+  var normalizedKey = exactKey.replace(/[^A-Z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+  if (LAST_STATUS_LABELS[normalizedKey]) return LAST_STATUS_LABELS[normalizedKey];
+
+  return raw;
+}
+
+function _coerceToDate_(value) {
+  if (value instanceof Date && !isNaN(value.getTime())) {
+    return new Date(value.getFullYear(), value.getMonth(), value.getDate());
+  }
+
+  if (typeof value === "number" && isFinite(value)) {
+    var serialDays = Math.floor(value - 25569);
+    var utcMs = serialDays * 86400 * 1000;
+    var serialDate = new Date(utcMs);
+    return isNaN(serialDate.getTime())
+      ? null
+      : new Date(serialDate.getUTCFullYear(), serialDate.getUTCMonth(), serialDate.getUTCDate());
+  }
+
+  var raw = String(value || "").trim();
+  if (!raw) return null;
+
+  var matchIso = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (matchIso) {
+    return _buildValidatedDate_(Number(matchIso[1]), Number(matchIso[2]), Number(matchIso[3]));
+  }
+
+  var matchSlash = raw.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/);
+  if (matchSlash) {
+    var first = Number(matchSlash[1]);
+    var second = Number(matchSlash[2]);
+    var year = Number(matchSlash[3]);
+
+    var day = first;
+    var month = second;
+
+    if (first <= 12 && second > 12) {
+      month = first;
+      day = second;
+    }
+
+    return _buildValidatedDate_(year, month, day);
+  }
+
+  return null;
+}
+
+function _buildValidatedDate_(year, month, day) {
+  if (!year || !month || !day) return null;
+
+  var date = new Date(year, month - 1, day);
+  if (date.getFullYear() !== year) return null;
+  if (date.getMonth() !== month - 1) return null;
+  if (date.getDate() !== day) return null;
+  return date;
+}
+
+function _norm_(value) {
+  var raw = String(value || "");
+  if (RUNTIME_CACHE.normByValue.hasOwnProperty(raw)) {
+    return RUNTIME_CACHE.normByValue[raw];
+  }
+
+  var normalized = raw
+    .toLowerCase()
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+
+  if (RUNTIME_CACHE.normSize >= RUNTIME_CACHE.normMaxSize) {
+    RUNTIME_CACHE.normByValue = {};
+    RUNTIME_CACHE.normSize = 0;
+  }
+
+  RUNTIME_CACHE.normByValue[raw] = normalized;
+  RUNTIME_CACHE.normSize += 1;
+  return normalized;
+}
+
+/* =========================
+ *  UI / TIMING / GENERIC HELPERS
+ * ========================= */
+
+function _setProgress_(ctx, message) {
+  if (!ctx || !ctx.overviewSheet) return;
+  ctx.overviewSheet.getRange(CONFIG.PROGRESS_CELL_A1).setValue(message);
+}
+
+function _setProgressSafe_(message) {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var overview = ss.getSheetByName(CONFIG.OVERVIEW_SHEET);
+  if (!overview) return;
+  overview.getRange(CONFIG.PROGRESS_CELL_A1).setValue(message);
+}
+
+function _writeRunFooter_(ctx, durationText, totalMs) {
+  if (!ctx.overviewSheet) return;
+  ctx.overviewSheet.getRange(CONFIG.DURATION_CELL_A1).setValue(durationText);
+  ctx.overviewSheet.getRange(CONFIG.DURATION_CELL_A1).setNote(
+    "Last run: " + new Date().toISOString() + " | RunID: " + ctx.runId + " | DurationMs: " + totalMs
+  );
+}
+
+function _timeStage_(fn) {
+  var t0 = Date.now();
+  var res = fn();
+  return { res: res, ms: Date.now() - t0 };
+}
+
+function _startTimer_() {
+  var started = Date.now();
+  return {
+    stop: function () {
+      return Date.now() - started;
+    }
+  };
+}
+
+function _formatDuration_(ms) {
+  var totalSec = Math.max(0, Math.floor(ms / 1000));
+  var min = Math.floor(totalSec / 60);
+  var sec = totalSec % 60;
+  if (min <= 0) return sec + " Seconds";
+  return min + " Minutes " + sec + " Seconds";
+}
+
+function _metricText_(obj) {
+  if (!obj) return "";
+  var parts = [];
+
+  Object.keys(obj).forEach(function (key) {
+    var value = obj[key];
+    if (value === null || value === undefined || value === "") return;
+
+    if (Array.isArray(value)) value = value.join(", ");
+    else if (typeof value === "object") value = _safeJson_(value);
+
+    parts.push(key + "=" + String(value));
+  });
+
+  return parts.join(" | ");
+}
+
+function _safeJson_(value) {
+  try {
+    return JSON.stringify(value);
+  } catch (e) {
+    return String(value);
+  }
+}
+
+function _errorToString_(err) {
+  if (!err) return "";
+  if (typeof err === "string") return err;
+  return (err.name ? err.name + ": " : "") + (err.message || String(err));
+}
+
+function _containsAnyToken_(normalizedValue, tokens) {
+  for (var i = 0; i < tokens.length; i++) {
+    if (normalizedValue.indexOf(_norm_(tokens[i])) >= 0) return true;
+  }
+  return false;
+}
+
+function _cloneObject_(value) {
+  var copy = {};
+  Object.keys(value).forEach(function (key) {
+    copy[key] = value[key];
+  });
+  return copy;
+}
+
+function _compareClaimNumbers_(a, b) {
+  return String(a || "").localeCompare(String(b || ""));
+}
+
+function _createBlankRow_(size) {
+  var row = new Array(size);
+  for (var i = 0; i < size; i++) row[i] = "";
+  return row;
+}
+
+function _normRow_(row) {
+  return row.map(_norm_).join("|");
+}
+
+function _kvList_(obj) {
+  if (!obj) return "";
+  return Object.keys(obj).map(function (key) {
+    return key + "(" + obj[key] + ")";
+  }).join(", ");
+}

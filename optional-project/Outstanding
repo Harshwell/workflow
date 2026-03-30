@@ -1,0 +1,2433 @@
+/**
+ * Outstanding.gs — Claim Outstanding Mirroring (Enterprise Mode, ES5-safe)
+ * =============================================================================
+ * Mirrors hourly from "Overview Claim" → "Claim Outstanding", with:
+ * - Region routing via "Store Region" sheet (Partner Name → Region sheet), merged-header safe
+ * - Special routing: Partner Name Digimap/Digiplus → sheet "Digi"
+ * - Adds "PIC" column (derived from raw Last Status + Service Center)
+ * - Preserves manual columns (configured) by Claim Number (rich text safe)
+ * - Translates raw "Last Status" → friendly text in destination
+ * - Queue + batch processing + retry w/ exponential backoff + circuit breaker
+ * - Idempotent per hour (prevents double enqueue in same hour)
+ *
+ * Operational notes:
+ * - Recommended: bind this script to the DEST spreadsheet ("Claim Outstanding")
+ * - Setup: run install() once, then runNow() to test
+ *
+ * [Unverified] Assumptions:
+ * - Source headers are on row 1; data starts row 2 for all source sheets.
+ * - Destination schema is exactly EXPECTED_COLUMNS + "PIC".
+ * - "Store Region" layout: row1 = region name, row2 = subheaders incl "Partner Name",
+ *   row3+ = data.
+ */
+
+/** =============================================================================
+ *  CONFIG
+ *  ===========================================================================*/
+var CFG = {
+  // Spreadsheet IDs
+  OVERVIEW_CLAIM_SS_ID: '1zRlYrSRssv9LVcPKEq90CmmvTRsZoN_TqfIg2pNufbc',
+  CLAIM_OUTSTANDING_SS_ID: '1YwTjQa7AMKqHjZ-ibcgairO3IOFASidRwc9dGgHmrJM',
+  STORE_REGION_SS_ID: '1-Und57aVtmLYEovFuNyHQjvIrV8BfpyQVTHiDiWcpvk',
+
+  // Store Region sheet name
+  STORE_REGION_SHEET: 'Store Region',
+
+  // Source sheets in Overview Claim
+  SOURCE_SHEETS: [
+    'Submission',
+    'Ask Detail',
+    'OR - OLD',
+    'Start',
+    'SC - Farhan',
+    'SC - Meilani',
+    'SC - Ivan',
+    'Finish',
+    'PO'
+  ],
+
+  // Destination special sheet names
+  DEST_SHEET_DIGI: 'Digi',
+  DEST_SHEET_UNMAPPED: 'Unmapped',
+  CREATE_UNMAPPED_SHEET: true,
+
+  // Internal system sheets in destination
+  SYS_SHEET_RUNS: '_Runs',
+  SYS_SHEET_QUEUE: '_Queue',
+  SYS_SHEET_STAGING: '_Staging',
+  SYS_SHEET_AUDIT: '_Audit',
+
+  // Execution parameters
+  LOCK_TIMEOUT_MS: 25000,
+  WORKER_MAX_TASKS_PER_RUN: 6,   // tune for quota/time
+  TASK_PAGE_SIZE: 600,
+  MAX_RETRY_ATTEMPTS: 5,
+  BASE_BACKOFF_MS: 750,
+  MAX_BACKOFF_MS: 20000,
+
+  // Circuit breaker
+  CB_OPEN_AFTER_CONSEC_FAILURES: 5,
+  CB_OPEN_MS: 30 * 60 * 1000,    // 30 minutes
+
+  // Trigger cadence
+  HOURLY_TRIGGER_FUNCTION: 'enqueueHourlyRun',
+  WORKER_TRIGGER_FUNCTION: 'runWorker',
+  WORKER_TRIGGER_EVERY_MINUTES: 5,
+
+  // Columns (destination must match order below + PIC)
+  EXPECTED_COLUMNS: [
+    'Submission Date',
+    'Claim Number',
+    'Partner Name',
+    'Insurance',
+    'Last Status',
+    'Last Status Date',
+    'Service Center',
+    'Last Status Aging',
+    'Activity Log',
+    'Timestamp',
+    'TAT',
+    'Update Status',
+    'Timestamp Status'
+  ],
+  PIC_COLUMN: 'PIC',
+
+  // Explicit source bindings for destination columns that need stable mapping.
+  // If a destination column is renamed or has an alias in source, define it here.
+  SOURCE_COLUMN_BINDINGS: {
+    'Timestamp': [{ name: 'Timestamp', occurrence: 1 }],
+    'Update Status': [{ name: 'Update Status', occurrence: 1 }],
+    'Timestamp Status': [
+      { name: 'Timestamp Status', occurrence: 1 },
+      { name: 'Timestamp', occurrence: 2 }
+    ]
+  },
+
+  // Special partner names (case-insensitive)
+  DIGI_PARTNERS: ['Digimap', 'Digiplus'],
+
+  // Middle PIC mapping via Service Center keywords
+  MIDDLE_SC_KEYWORDS: {
+    Farhan: ['mitracare', 'sitcomtara', 'ibox', 'gsi'],
+    Meilani: ['unicom', 'xiaomi authorized', 'samsung exclusive', 'carlcare', 'andalas'],
+    Ivan: [
+      'andalas', 'klikcare', 'j-bros', 'makmur era abadi',
+      'manado mitra bersama', 'ezcare', 'b-store', 'deltafone', 'mdp', 'multikom',
+    ]
+  },
+
+  // Cache
+  STORE_REGION_CACHE_MS: 10 * 60 * 1000,
+
+  // Runtime recovery / retention
+  RUN_STALE_MS: 90 * 60 * 1000,          // active run older than this may be rescued
+  TASK_STALE_MS: 20 * 60 * 1000,         // IN_PROGRESS older than this will be retried
+  SYSTEM_SHEETS_MODE: 'PRUNE',           // PRUNE (recommended) | RESET_EACH_RUN
+  KEEP_RUN_ROWS: 60,
+  KEEP_QUEUE_ROWS: 800,
+  KEEP_AUDIT_ROWS: 1200,
+  KEEP_STAGING_ROWS: 5,
+  ALLOW_MANUAL_RERUN_SAME_HOUR: true,
+  RESET_SYSTEM_SHEETS_ON_MANUAL_FRESH: true,
+
+  // Claim Ongoing filters
+  EXCLUDED_LAST_STATUS_TEXTS: ['Claim Expired'],
+
+  // Formatting + manual preservation
+  // Template row used to propagate rich formatting + data validation (dropdown chips/colors) to newly-needed rows.
+  TEMPLATE_ROW_INDEX: 2,                 // row number (1-based)
+  FORMAT_TEMPLATE_SHEET: 'Digi',         // copy template row formats/validations from this sheet when creating new region sheets
+  APPLY_TEMPLATE_TO_WRITTEN_ROWS: true,  // ensure written rows have the same rich formatting + DV as template row
+  // Preserve these destination columns across refresh, keyed by Claim Number.
+  // Supports duplicate headers via occurrence (1 = first, 2 = second, ...).
+  PRESERVE_COLUMNS: [
+    { name: 'Update Status', occurrence: 1 },
+    { name: 'Timestamp Status', occurrence: 1 }
+  ]
+
+};
+
+var COMPILED_CFG = (function(cfg) {
+  function partnerKeyLocal_(s) {
+    return String(s || '').trim().toLowerCase().replace(/\s+/g, ' ');
+  }
+
+  function toLowerList_(list) {
+    var out = [];
+    for (var i = 0; i < list.length; i++) {
+      out.push(String(list[i] || '').toLowerCase());
+    }
+    return out;
+  }
+
+  var digiPartnerLookup = {};
+  for (var i = 0; i < cfg.DIGI_PARTNERS.length; i++) {
+    digiPartnerLookup[partnerKeyLocal_(cfg.DIGI_PARTNERS[i])] = true;
+  }
+
+  var excludedStatusLookup = {};
+  var excluded = cfg.EXCLUDED_LAST_STATUS_TEXTS || [];
+  for (var j = 0; j < excluded.length; j++) {
+    excludedStatusLookup[String(excluded[j] || '').trim().toLowerCase()] = true;
+  }
+
+  return {
+    DIGI_PARTNER_LOOKUP: digiPartnerLookup,
+    MIDDLE_SC_KEYWORDS_LOWER: {
+      Farhan: toLowerList_(cfg.MIDDLE_SC_KEYWORDS.Farhan || []),
+      Meilani: toLowerList_(cfg.MIDDLE_SC_KEYWORDS.Meilani || []),
+      Ivan: toLowerList_(cfg.MIDDLE_SC_KEYWORDS.Ivan || [])
+    },
+    EXCLUDED_STATUS_LOOKUP: excludedStatusLookup
+  };
+})(CFG);
+
+function validateCfg_() {
+  var required = [
+    'OVERVIEW_CLAIM_SS_ID',
+    'CLAIM_OUTSTANDING_SS_ID',
+    'STORE_REGION_SS_ID',
+    'STORE_REGION_SHEET',
+    'DEST_SHEET_DIGI',
+    'EXPECTED_COLUMNS',
+    'SOURCE_SHEETS'
+  ];
+  for (var i = 0; i < required.length; i++) {
+    var key = required[i];
+    if (!CFG[key] || (CFG[key].length !== undefined && CFG[key].length === 0)) {
+      throw new Error('Invalid CFG: required key is empty -> ' + key);
+    }
+  }
+
+  var seen = {};
+  for (var j = 0; j < CFG.SOURCE_SHEETS.length; j++) {
+    var sheetName = String(CFG.SOURCE_SHEETS[j] || '').trim();
+    if (!sheetName) throw new Error('Invalid CFG: SOURCE_SHEETS contains empty value.');
+    if (seen[sheetName]) throw new Error('Invalid CFG: duplicate SOURCE_SHEETS entry -> ' + sheetName);
+    seen[sheetName] = true;
+  }
+}
+
+
+/** =============================================================================
+ *  STATUS TRANSLATION (raw -> friendly)
+ *  ===========================================================================*/
+var STATUS_TRANSLATION = {
+  SUBMITTED: 'Claim Submitted',
+  QOALA_CLAIM_ASK_DETAIL: 'Qoala Ask Detail',
+  QOALA_CLAIM_RESUBMIT_DOC: 'Qoala Submit Document',
+  WAITING_PAYMENT: 'Waiting Payment For Own Risk',
+  DONE_EXPIRED: 'Claim Expired',
+  WAITING_WALKIN_START: 'Customer On The Way',
+  WAITING_COURIER_START: 'Courier On The Way',
+
+  CLAIM_ADDED_SC: 'Claim Added by Service Center',
+  RECEIVED_SC: 'Gadget Received at Service Center',
+  ESTIMATE_COST: 'Estimating Repair Cost',
+  ON_PROGRESS: 'Claim On Progress',
+  INSURANCE_ASK_DETAIL: 'Insurance Ask Detail',
+  CX_UPLOAD_DOC: 'Qoala Submit Document',
+  APPROVED: 'Estimation Review',
+  INSURANCE_APPROVED: 'Claim Approved by Insurance',
+  REPLACED: 'Claim Approved for Replace',
+  DONE_REPAIR: 'Claim Done And Repaired',
+  WAITING_WALKIN_FINISH: 'Customer Picked Up Gadget',
+  COURIER_PICKED_UP: 'Courier Picking Up Gadget',
+  WAITING_COURIER_FINISH: 'Courier Finished',
+
+  INSURANCE_APPROVED_REPLACED: 'Claim to Replace Approved by Insurance',
+  DONE_REJECTED: 'Claim Done And Rejected',
+  DONE: 'Claim Done',
+  DONE_REPLACED: 'Claim Done And Replaced',
+
+  CLAIM_INITIATE: 'Claim Submitted',
+  QOALA_ASK_DETAIL: 'Additional Document(s) Requested by Qoala',
+  CUSTOMER_RESUBMIT_DOCUMENT: 'Document Resubmitted by Customer',
+  QOALA_CLAIM_RESUBMIT_DOCUMENT_REQ_QOALA: 'Qoala Submit Document',
+  CLAIM_EXPIRE: 'Claim Expired',
+  QOALA_CLAIM_REOPEN: 'Reopen Claim',
+  QOALA_CLAIM_APPROVE_WALKIN: 'Claim received by Qoala',
+  CLAIM_EXPIRE_WALKIN: 'Claim Expired',
+  QOALA_CLAIM_REOPEN_WALKIN: 'Reopen Claim',
+  QOALA_CLAIM_APPROVE_PICKUP: 'Claim received by Qoala',
+  WAITING_PICKUP_START: 'Pickup Scheduled',
+  COURIER_PICKUP_START: 'Picked Up',
+  COURIER_PICKUP_START_DONE: 'Delivered to Service Center',
+
+  SERVICE_CENTER_CLAIM_RECEIVE: 'Device Received at Service Center',
+  SERVICE_CENTER_CLAIM_ESTIMATE: 'Service Center Submit Repair Cost',
+  QOALA_CLAIM_RESUBMIT_ESTIMATE: 'Request New Repair Cost',
+  SERVICE_CENTER_CLAIM_RESUBMIT_ESTIMATE: 'Service Center Submit New Repair Cost',
+  SERVICE_CENTER_CLAIM_WAITING_REPAIR: 'Waiting for Service Center to Start Repair',
+  SERVICE_CENTER_CLAIM_ON_PROGRESS: 'Repair On Progress',
+  SERVICE_CENTER_CLAIM_CHANGE_IMEI: 'IMEI Changed',
+  QOALA_CLAIM_APPROVE_REPAIR: 'Repair cost accepted',
+  QOALA_CLAIM_APPROVE_REPLACE: 'Claim Proposed for Replacement',
+  INSURANCE_CLAIM_REVIEW: 'Waiting Insurance Review',
+  INSURANCE_CLAIM_APPROVE_REPAIR: 'Claim Approved by Insurance',
+  INSURANCE_CLAIM_ASK_DETAIL_ADDITIONAL: 'Insurance Ask Detail',
+  QOALA_CLAIM_RESUBMIT_DOCUMENT_ADDITIONAL: 'Qoala Submit Document',
+  CLAIM_EXPIRE_INSURANCE: 'Claim Expired',
+  QOALA_CLAIM_REOPEN_INSURANCE_CASHLESS: 'Reopen Claim',
+
+  CUSTOMER_WAITING_PAYMENT_DEDUCTIBLE_EXCESS_FEE_REPAIR: 'Waiting for Payment of Additional Fee',
+  CUSTOMER_APPROVE_DEDUCTIBLE_EXCESS_FEE_REPAIR: 'Customer Agreed to the Additional Fee',
+  CUSTOMER_APPROVE_DEDUCTIBLE_EXCESS_FEE_REPAIR_EXPIRED: 'Claim Expired',
+  CUSTOMER_PAID_DEDUCTIBLE_EXCESS_FEE_REPAIR: 'Customer paid the additional fee',
+  SERVICE_CENTER_CLAIM_DONE_REPAIR_WALKIN: 'Repair Completed',
+  SERVICE_CENTER_CLAIM_WAITING_WALKIN_FINISH: 'Awaiting Customer Pickup',
+  SERVICE_CENTER_CLAIM_DONE: 'Claim Done',
+  SERVICE_CENTER_CLAIM_DONE_REPAIR_PICKUP: 'Repair Completed',
+  SERVICE_CENTER_CLAIM_WAITING_PICKUP_FINISH: 'Awaiting Courier Pickup',
+  COURIER_CLAIM_PICKUP_FINISH: 'Courier Picked Up',
+  COURIER_CLAIM_PICKUP_FINISH_DONE: 'Delivered to Customer',
+
+  CUSTOMER_WAITING_PAYMENT_DEDUCTIBLE_EXCESS_FEE_REPLACE: 'Waiting for Payment of Additional Fee',
+  CUSTOMER_APPROVE_DEDUCTIBLE_EXCESS_FEE_REPLACE: 'Customer Agreed to the Additional Fee',
+  CUSTOMER_APPROVE_DEDUCTIBLE_EXCESS_FEE_REPLACE_EXPIRED: 'Claim Expired',
+  CUSTOMER_PAID_DEDUCTIBLE_EXCESS_FEE_RREPLACE: 'Customer Paid Deductible Excess Fee Rreplace',
+  CUSTOMER_PAID_DEDUCTIBLE_EXCESS_FEE_REPLACE: 'Customer Paid the Additional Fee',
+  INSURANCE_CLAIM_APPROVE_REPLACE: 'Insurance Approved - Switch to Replacement (TLO)',
+  SERVICE_CENTER_REPAIR_CANCELLED_FOR_REPLACE: 'Repair Cancelled - No Further Action Needed by Service Center',
+  QOALA_PROCESS_REPLACE: 'Processing Replacement Unit',
+  QOALA_PROCESS_REPLACE_WALKIN: 'Walk in Replacement – Process Started',
+  CUSTOMER_WAITING_EXCESS_REPLACE_WALKIN: 'Waiting for Customer Excess Payment',
+  CUSTOMER_PAID_EXCESS_REPLACE_WALKIN: 'Excess Payment Received',
+  QOALA_WAITING_CUSTOMER_REPLACE: 'Waiting for Customer to Collect Replacement Unit',
+  CUSTOMER_RECEIVE_REPLACE: 'Replacement Unit Received by Customer',
+  QOALA_PROCESS_REPLACE_PICKUP: 'Pickup Replacement – Process Started',
+  CUSTOMER_WAITING_EXCESS_REPLACE_PICKUP: 'Waiting for Payment of Additional Fee',
+  CUSTOMER_PAID_EXCESS_REPLACE_PICKUP: 'Excess Payment Received',
+  COURIER_WAITING_REPLACE_PICKUP: 'Waiting for courier pickup',
+  COURIER_REPLACE_PICKUP: 'Picked up by courier',
+  COURIER_REPLACE_PICKUP_DONE: 'Delivered to customer',
+
+  QOALA_CLAIM_REJECT: 'Claim Rejected By Qoala',
+  QOALA_CLAIM_REJECT_PICKUP: 'Claim Rejected by Qoala',
+  QOALA_CLAIM_REJECT_WALKIN: 'Claim Rejected by Qoala',
+  CUSTOMER_REJECT_PAYMENT_DEDUCTIBLE_EXCESS_FEE_WALKIN: 'Customer Refused to Pay the Additional Fee',
+  CUSTOMER_REJECT_PAYMENT_DEDUCTIBLE_EXCESS_FEE_PICKUP: 'Customer Refused to Pay the Additional Fee',
+  INSURANCE_CLAIM_REJECT_WALKIN: 'Claim Rejected by Insurance',
+  INSURANCE_CLAIM_REJECT_PICKUP: 'Claim Rejected by Insurance',
+  SERVICE_CENTER_CLAIM_WAITING_WALKIN_REJECT: 'Waiting Customer Pickup Reject Repair',
+  SERVICE_CENTER_CLAIM_DONE_REJECT: 'Claim Done And Rejected',
+  SERVICE_CENTER_CLAIM_WAITING_PICKUP_REJECT: 'Await Courier (Reject)',
+  COURIER_CLAIM_PICKUP_REJECT: 'Courier Picking Up Rejected Claim',
+  COURIER_CLAIM_PICKUP_REJECT_DONE: 'Rejected Delivered',
+
+  INSURANCE_CLAIM_WAITING_PAID_REPAIR: 'Awaiting Payment',
+  INSURANCE_CLAIM_PAID_REPAIR: 'Claim Done',
+  INSURANCE_CLAIM_WAITING_PAID_REPLACE: 'Awaiting Payment',
+  INSURANCE_CLAIM_PAID_REPLACE: 'Claim Paid By Insurance'
+};
+
+
+/** =============================================================================
+ *  PIC GROUPS (membership dicts for O(1) lookup)
+ *  ===========================================================================*/
+var PIC_GROUPS = {
+  ADI_ADIT: toLookup_([
+    'SUBMITTED',
+    'QOALA_CLAIM_ASK_DETAIL',
+    'QOALA_CLAIM_RESUBMIT_DOC',
+    'WAITING_PAYMENT',
+    'DONE_EXPIRED',
+    'WAITING_WALKIN_START',
+    'WAITING_COURIER_START',
+    'CLAIM_INITIATE',
+    'QOALA_ASK_DETAIL',
+    'CUSTOMER_RESUBMIT_DOCUMENT',
+    'QOALA_CLAIM_RESUBMIT_DOCUMENT_REQ_QOALA',
+    'CLAIM_EXPIRE',
+    'QOALA_CLAIM_REOPEN',
+    'QOALA_CLAIM_APPROVE_WALKIN',
+    'CLAIM_EXPIRE_WALKIN',
+    'QOALA_CLAIM_REOPEN_WALKIN',
+    'QOALA_CLAIM_APPROVE_PICKUP',
+    'WAITING_PICKUP_START',
+    'COURIER_PICKUP_START',
+    'COURIER_PICKUP_START_DONE'
+  ]),
+  MIDDLE: toLookup_([
+    'CLAIM_ADDED_SC',
+    'RECEIVED_SC',
+    'ESTIMATE_COST',
+    'ON_PROGRESS',
+    'INSURANCE_ASK_DETAIL',
+    'CX_UPLOAD_DOC',
+    'APPROVED',
+    'INSURANCE_APPROVED',
+    'REPLACED',
+    'DONE_REPAIR',
+    'WAITING_WALKIN_FINISH',
+    'COURIER_PICKED_UP',
+    'WAITING_COURIER_FINISH',
+    'SERVICE_CENTER_CLAIM_RECEIVE',
+    'SERVICE_CENTER_CLAIM_ESTIMATE',
+    'QOALA_CLAIM_RESUBMIT_ESTIMATE',
+    'SERVICE_CENTER_CLAIM_RESUBMIT_ESTIMATE',
+    'SERVICE_CENTER_CLAIM_WAITING_REPAIR',
+    'SERVICE_CENTER_CLAIM_ON_PROGRESS',
+    'SERVICE_CENTER_CLAIM_CHANGE_IMEI',
+    'QOALA_CLAIM_APPROVE_REPAIR',
+    'QOALA_CLAIM_APPROVE_REPLACE',
+    'INSURANCE_CLAIM_REVIEW',
+    'INSURANCE_CLAIM_APPROVE_REPAIR',
+    'INSURANCE_CLAIM_ASK_DETAIL_ADDITIONAL',
+    'QOALA_CLAIM_RESUBMIT_DOCUMENT_ADDITIONAL',
+    'CLAIM_EXPIRE_INSURANCE',
+    'QOALA_CLAIM_REOPEN_INSURANCE_CASHLESS',
+    'CUSTOMER_WAITING_PAYMENT_DEDUCTIBLE_EXCESS_FEE_REPAIR',
+    'CUSTOMER_APPROVE_DEDUCTIBLE_EXCESS_FEE_REPAIR',
+    'CUSTOMER_APPROVE_DEDUCTIBLE_EXCESS_FEE_REPAIR_EXPIRED',
+    'CUSTOMER_PAID_DEDUCTIBLE_EXCESS_FEE_REPAIR',
+    'SERVICE_CENTER_CLAIM_DONE_REPAIR_WALKIN',
+    'SERVICE_CENTER_CLAIM_WAITING_WALKIN_FINISH',
+    'SERVICE_CENTER_CLAIM_DONE',
+    'SERVICE_CENTER_CLAIM_DONE_REPAIR_PICKUP',
+    'SERVICE_CENTER_CLAIM_WAITING_PICKUP_FINISH',
+    'COURIER_CLAIM_PICKUP_FINISH',
+    'COURIER_CLAIM_PICKUP_FINISH_DONE'
+  ]),
+  SUCI_YUDHA: toLookup_([
+    'INSURANCE_APPROVED_REPLACED',
+    'DONE',
+    'DONE_REPLACED',
+    'CUSTOMER_WAITING_PAYMENT_DEDUCTIBLE_EXCESS_FEE_REPLACE',
+    'CUSTOMER_APPROVE_DEDUCTIBLE_EXCESS_FEE_REPLACE',
+    'CUSTOMER_APPROVE_DEDUCTIBLE_EXCESS_FEE_REPLACE_EXPIRED',
+    'CUSTOMER_PAID_DEDUCTIBLE_EXCESS_FEE_RREPLACE',
+    'CUSTOMER_PAID_DEDUCTIBLE_EXCESS_FEE_REPLACE',
+    'INSURANCE_CLAIM_APPROVE_REPLACE',
+    'SERVICE_CENTER_REPAIR_CANCELLED_FOR_REPLACE',
+    'QOALA_PROCESS_REPLACE',
+    'QOALA_PROCESS_REPLACE_WALKIN',
+    'CUSTOMER_WAITING_EXCESS_REPLACE_WALKIN',
+    'CUSTOMER_PAID_EXCESS_REPLACE_WALKIN',
+    'QOALA_WAITING_CUSTOMER_REPLACE',
+    'CUSTOMER_RECEIVE_REPLACE',
+    'QOALA_PROCESS_REPLACE_PICKUP',
+    'CUSTOMER_WAITING_EXCESS_REPLACE_PICKUP',
+    'CUSTOMER_PAID_EXCESS_REPLACE_PICKUP',
+    'COURIER_WAITING_REPLACE_PICKUP',
+    'COURIER_REPLACE_PICKUP',
+    'COURIER_REPLACE_PICKUP_DONE',
+    'INSURANCE_CLAIM_WAITING_PAID_REPAIR',
+    'INSURANCE_CLAIM_PAID_REPAIR',
+    'INSURANCE_CLAIM_WAITING_PAID_REPLACE',
+    'INSURANCE_CLAIM_PAID_REPLACE'
+  ])
+};
+
+
+/** =============================================================================
+ *  ENTRYPOINTS
+ *  ===========================================================================*/
+function install() {
+  validateCfg_();
+  var runId = RunIds.newId();
+  var log = LoggerFactory.scoped(runId, 'install', null);
+  log.info('Start install', null);
+
+  withLock_(CFG.LOCK_TIMEOUT_MS, function() {
+    SysSheets.ensureAll(log);
+    DestSheets.ensureSpecialSheets(log);
+    Triggers.ensureTriggers(log);
+    Menus.ensureMenu_();
+  });
+
+  log.info('Install complete', null);
+}
+
+
+function runNow() {
+  startRun_({
+    scope: 'runNow',
+    manual: true,
+    forceFresh: false,
+    ignoreHourKey: !!CFG.ALLOW_MANUAL_RERUN_SAME_HOUR
+  });
+  runWorker(); // best-effort immediate drain
+}
+
+function runNowFresh() {
+  startRun_({
+    scope: 'runNowFresh',
+    manual: true,
+    forceFresh: !!CFG.RESET_SYSTEM_SHEETS_ON_MANUAL_FRESH,
+    ignoreHourKey: true
+  });
+  runWorker(); // best-effort immediate drain
+}
+
+/**
+ * Debug helper: validates Store Region sheet readability and prints diagnostics.
+ * Safe to run manually.
+ */
+function debugStoreRegion_() {
+  var runId = RunIds.newId();
+  var log = LoggerFactory.scoped(runId, 'debugStoreRegion', null);
+  SysSheets.ensureAll(log);
+  try {
+    var map = StoreRegionRepo.loadPartnerToRegionMap_(log, true);
+    log.info('debugStoreRegion done', { mapSize: Object.keys(map).length });
+    Audit.append_(log, { event: 'DEBUG_STORE_REGION_DONE', mapSize: Object.keys(map).length });
+  } catch (e) {
+    log.error('debugStoreRegion failed', { err: String(e), stack: e && e.stack ? String(e.stack) : '' });
+    Audit.append_(log, { event: 'DEBUG_STORE_REGION_FAILED', err: String(e) });
+    throw e;
+  }
+}
+
+/**
+ * Trigger hourly: create a new run and enqueue tasks (idempotent per hour).
+ */
+function enqueueHourlyRun() {
+  startRun_({
+    scope: 'enqueueHourlyRun',
+    manual: false,
+    forceFresh: false,
+    ignoreHourKey: false
+  });
+}
+
+function resetSystemState() {
+  var runId = RunIds.newId();
+  var log = LoggerFactory.scoped(runId, 'resetSystemState', null);
+
+  withLock_(CFG.LOCK_TIMEOUT_MS, function() {
+    SysSheets.ensureAll(log);
+    SystemMaintenance.resetSystemState_(log, { clearCircuitBreaker: true });
+  });
+
+  log.warn('System state reset complete', null);
+}
+
+function startRun_(opts) {
+  validateCfg_();
+  opts = opts || {};
+
+  var runId = RunIds.newId();
+  var scope = opts.scope || 'startRun';
+  var log = LoggerFactory.scoped(runId, scope, null);
+
+  if (!opts.forceFresh && CircuitBreaker.isOpen_()) {
+    log.warn('Circuit breaker OPEN; skip enqueue', null);
+    Audit.append_(log, { event: 'CB_OPEN_SKIP_ENQUEUE' });
+    return;
+  }
+
+  withLock_(CFG.LOCK_TIMEOUT_MS, function() {
+    SysSheets.ensureAll(log);
+    SystemMaintenance.beforeNewRun_(opts, log);
+
+    var existing = RunStore.getLatestActiveRun_();
+    if (existing && !QueueStore.isRunDrained_(existing.runId)) {
+      log.warn('Existing run still active; skip enqueue', {
+        existingRunId: existing.runId,
+        existingStatus: existing.status
+      });
+      Audit.append_(log, {
+        event: 'ACTIVE_RUN_SKIP_ENQUEUE',
+        existingRunId: existing.runId,
+        existingStatus: existing.status
+      });
+      return;
+    }
+
+    var hourKey = TimeUtil.hourKey_(new Date());
+    if (!opts.ignoreHourKey && RunStore.hasRunForHour_(hourKey)) {
+      log.info('Run for this hour already exists; skip enqueue', { hourKey: hourKey });
+      Audit.append_(log, { event: 'DUP_HOUR_SKIP', hourKey: hourKey });
+      return;
+    }
+
+    var regionMap = StoreRegionRepo.loadPartnerToRegionMap_(log); // key -> region
+    var regions = StoreRegionRepo.uniqueRegions_(regionMap);
+    DestSheets.ensureRegionSheets(log, regions);
+
+    var run = {
+      runId: runId,
+      hourKey: hourKey,
+      status: 'ENQUEUED',
+      createdAt: new Date(),
+      totalTasks: 0,
+      doneTasks: 0,
+      failedTasks: 0,
+      notes: opts.forceFresh ? 'Fresh run' : ''
+    };
+    RunStore.createRun_(run);
+
+    Staging.resetForRun_(runId, log);
+
+    var tasks = QueueBuilder.buildTasks_(runId, CFG.SOURCE_SHEETS, CFG.TASK_PAGE_SIZE, log);
+    QueueStore.enqueueTasks_(tasks, log);
+
+    RunStore.updateRun_(runId, { totalTasks: tasks.length });
+    Audit.append_(log, {
+      event: 'ENQUEUED',
+      tasks: tasks.length,
+      hourKey: hourKey,
+      manual: !!opts.manual,
+      forceFresh: !!opts.forceFresh
+    });
+
+    log.info('Enqueue complete', {
+      tasks: tasks.length,
+      hourKey: hourKey,
+      manual: !!opts.manual,
+      forceFresh: !!opts.forceFresh
+    });
+  });
+}
+
+/**
+ * Worker trigger: process some tasks; finalize if queue drained.
+ */
+function runWorker() {
+  validateCfg_();
+  var runId = RunIds.newId();
+  var log = LoggerFactory.scoped(runId, 'runWorker', null);
+
+  if (CircuitBreaker.isOpen_()) {
+    log.warn('Circuit breaker OPEN; skip worker', null);
+    Audit.append_(log, { event: 'CB_OPEN_SKIP_WORKER' });
+    return;
+  }
+
+  withLock_(CFG.LOCK_TIMEOUT_MS, function() {
+    SysSheets.ensureAll(log);
+
+    var activeRun = RunStore.getLatestActiveRun_();
+    if (!activeRun) {
+      log.info('No active run; nothing to do', null);
+      return;
+    }
+
+    var targetRunId = activeRun.runId;
+    log.info('Worker processing', { targetRunId: targetRunId });
+
+    QueueStore.recoverStaleInProgress_(targetRunId, log);
+
+    var tasks = QueueStore.dequeueAndMarkInProgress_(targetRunId, CFG.WORKER_MAX_TASKS_PER_RUN, log);
+    if (tasks.length === 0) {
+      if (QueueStore.isRunDrained_(targetRunId)) {
+        finalizeRunSafely_(targetRunId, log);
+      } else {
+        log.info('No runnable tasks yet (retry scheduled or in progress)', null);
+      }
+      return;
+    }
+
+    var done = 0;
+    var failed = 0;
+
+    for (var i = 0; i < tasks.length; i++) {
+      var task = tasks[i];
+      var taskLog = LoggerFactory.scoped(targetRunId, 'task', { taskId: task.taskId, sourceSheet: task.sourceSheet });
+
+      try {
+        TaskProcessor.processTask_(targetRunId, task, taskLog);
+        QueueStore.markDone_(task, taskLog);
+        done++;
+        CircuitBreaker.onSuccess_();
+      } catch (err) {
+        failed++;
+        QueueStore.markFailedOrRetry_(task, err, taskLog);
+      }
+    }
+
+    RunStore.bumpProgress_(targetRunId, { doneInc: done, failedInc: failed });
+
+    if (QueueStore.isRunDrained_(targetRunId)) {
+      finalizeRunSafely_(targetRunId, log);
+    }
+
+    log.info('Worker batch complete', { targetRunId: targetRunId, done: done, failed: failed });
+  });
+}
+
+function finalizeRunSafely_(targetRunId, log) {
+  try {
+    Finalizer.finalizeRun_(targetRunId, log);
+    var status = RunStore.computeTerminalStatus_(targetRunId);
+    RunStore.updateRun_(targetRunId, { status: status, notes: 'Finalized' });
+    Audit.append_(log, { event: 'FINALIZED', runId: targetRunId, status: status });
+    return true;
+  } catch (e) {
+    log.error('Finalize failed', { err: String(e), stack: e && e.stack ? String(e.stack) : '' });
+    RunStore.updateRun_(targetRunId, { status: 'FAILED', notes: 'Finalize failed: ' + String(e) });
+    Audit.append_(log, { event: 'FINALIZE_FAILED', runId: targetRunId, err: String(e) });
+    CircuitBreaker.onError_();
+    return false;
+  }
+}
+
+/**
+ * Adds a menu on open for manual ops.
+ */
+function onOpen() {
+  Menus.ensureMenu_();
+}
+
+
+
+/** =============================================================================
+ *  PIPELINE: TASK PROCESSOR
+ *  ===========================================================================*/
+var TaskProcessor = {
+  processTask_: function(runId, task, log) {
+    var overviewSs = SpreadsheetApp.openById(CFG.OVERVIEW_CLAIM_SS_ID);
+    var srcSheet = overviewSs.getSheetByName(task.sourceSheet);
+    if (!srcSheet) throw new Error('Source sheet not found: ' + task.sourceSheet);
+
+    var lastCol = srcSheet.getLastColumn();
+    if (lastCol === 0) return;
+
+    // Header row (row 1)
+    var headerRow = srcSheet.getRange(1, 1, 1, lastCol).getValues()[0];
+    var plan = HeaderPlan.fromHeader_(headerRow, CFG.EXPECTED_COLUMNS, log);
+
+    // Data range for this task
+    var startRow = task.startRow;
+    var numRows = task.numRows;
+
+    var maxRow = srcSheet.getLastRow();
+    if (startRow > maxRow) {
+      log.info('Task startRow beyond lastRow; skip', { startRow: startRow, maxRow: maxRow });
+      return;
+    }
+    var actualRows = Math.min(numRows, maxRow - startRow + 1);
+    if (actualRows <= 0) return;
+
+    var values = srcSheet.getRange(startRow, 1, actualRows, lastCol).getValues();
+
+    // Load mapping once per task (cached in properties)
+    var regionMap = StoreRegionRepo.loadPartnerToRegionMap_(log);
+
+    var stagingRows = [];
+    for (var i = 0; i < values.length; i++) {
+      var row = values[i];
+
+      var claimNumber = plan.getFirst_(row, 'Claim Number');
+      if (!String(claimNumber || '').trim()) continue;
+
+      var partnerName = String(plan.getFirst_(row, 'Partner Name') || '').trim();
+      var rawStatus = String(plan.getFirst_(row, 'Last Status') || '').trim();
+      var serviceCenter = String(plan.getFirst_(row, 'Service Center') || '').trim();
+
+      var destSheet = Router.route_(partnerName, regionMap);
+      var pic = PicResolver.resolve_(rawStatus, serviceCenter);
+      var translatedStatus = StatusTranslator.translate_(rawStatus);
+
+      if (StatusTranslator.shouldExclude_(rawStatus, translatedStatus)) continue;
+
+      // Build destination row in expected order (+ PIC)
+      var destRow = plan.buildDestRow_(row, translatedStatus, pic);
+
+      stagingRows.push([
+        runId,
+        destSheet,
+        String(claimNumber).trim(),
+        rawStatus
+      ].concat(destRow));
+    }
+
+    if (stagingRows.length > 0) {
+      Staging.appendRows_(stagingRows, log);
+      log.info('Appended to staging', { rows: stagingRows.length });
+    } else {
+      log.info('No rows appended (empty / filtered)', null);
+    }
+  }
+};
+
+
+
+/** =============================================================================
+ *  MANUAL PRESERVER (destination columns preserved across refresh)
+ *  ===========================================================================*/
+var ManualPreserver = {
+  // Builds a plan from destination header array: claimColIndex (0-based), preserveCols (array of {colIndex1, name, occurrence})
+  buildPlan_: function(header) {
+    var claimIdx = findHeaderIndexByOccurrence_(header, 'Claim Number', 1);
+    if (claimIdx < 0) return null;
+
+    var preserve = [];
+    var cfgList = CFG.PRESERVE_COLUMNS || [];
+    for (var i = 0; i < cfgList.length; i++) {
+      var item = cfgList[i] || {};
+      var nm = String(item.name || '').trim();
+      if (!nm) continue;
+      var occ = Number(item.occurrence || 1);
+      var idx = findHeaderIndexByOccurrence_(header, nm, occ);
+      if (idx >= 0) preserve.push({ colIndex1: idx + 1, name: nm, occurrence: occ });
+    }
+
+    if (preserve.length === 0) return null;
+    return { claimColIndex1: claimIdx + 1, preserveCols: preserve };
+  },
+
+  captureByClaim_: function(sheet, plan) {
+    if (!plan) return {};
+    var lastRow = sheet.getLastRow();
+    if (lastRow <= 1) return {};
+
+    var dataRows = lastRow - 1;
+
+    // Claim keys
+    var claimVals = sheet.getRange(2, plan.claimColIndex1, dataRows, 1).getValues();
+    var claimKeys = [];
+    for (var i = 0; i < claimVals.length; i++) {
+      claimKeys.push(String(claimVals[i][0] || '').trim());
+    }
+
+    var map = {}; // claimKey -> { colIndex1 -> RichTextValue }
+    for (var r = 0; r < claimKeys.length; r++) {
+      var ck = claimKeys[r];
+      if (!ck) continue;
+      map[ck] = {};
+    }
+
+    // Capture each preserved column as rich text (keeps inline styles)
+    for (var p = 0; p < plan.preserveCols.length; p++) {
+      var colIndex1 = plan.preserveCols[p].colIndex1;
+      var rt = sheet.getRange(2, colIndex1, dataRows, 1).getRichTextValues();
+
+      for (var j = 0; j < claimKeys.length; j++) {
+        var key = claimKeys[j];
+        if (!key) continue;
+        map[key][colIndex1] = rt[j][0]; // RichTextValue
+      }
+    }
+
+    return map;
+  },
+
+  restoreToWrittenRows_: function(sheet, header, outRows, preservedMap, log) {
+    if (!preservedMap || !outRows || outRows.length === 0) return;
+
+    var plan = this.buildPlan_(header);
+    if (!plan) return;
+
+    var dataRows = outRows.length;
+    var claimIdx0 = plan.claimColIndex1 - 1;
+
+    for (var p = 0; p < plan.preserveCols.length; p++) {
+      var colIndex1 = plan.preserveCols[p].colIndex1;
+      var range = sheet.getRange(2, colIndex1, dataRows, 1);
+
+      var curRt = range.getRichTextValues(); // preserves current values for non-overridden rows
+      var overrides = 0;
+
+      for (var i = 0; i < dataRows; i++) {
+        var ck = String(outRows[i][claimIdx0] || '').trim();
+        if (!ck) continue;
+
+        var perClaim = preservedMap[ck];
+        if (perClaim && perClaim[colIndex1]) {
+          curRt[i][0] = perClaim[colIndex1];
+          overrides++;
+        }
+      }
+
+      if (overrides > 0) {
+        range.setRichTextValues(curRt);
+        log.info('Restored preserved column', { col: header[colIndex1 - 1], occurrence: plan.preserveCols[p].occurrence, restoredCells: overrides, sheet: sheet.getName() });
+      }
+    }
+  },
+  mergePreservedMaps_: function(target, src, plan) {
+  if (!target || !src || !plan) return;
+  for (var ck in src) {
+    if (!src.hasOwnProperty(ck)) continue;
+    if (!ck) continue;
+
+    if (!target[ck]) target[ck] = {};
+    var srcObj = src[ck];
+
+    for (var p = 0; p < plan.preserveCols.length; p++) {
+      var colIndex1 = plan.preserveCols[p].colIndex1;
+      var incoming = srcObj ? srcObj[colIndex1] : null;
+      if (!incoming) continue;
+
+      var existing = target[ck][colIndex1];
+      var existingBlank = ManualPreserver._isRichTextBlank_(existing);
+      var incomingBlank = ManualPreserver._isRichTextBlank_(incoming);
+
+      // Prefer non-blank value; otherwise keep existing.
+      if ((existingBlank && !incomingBlank) || !existing) {
+        target[ck][colIndex1] = incoming;
+      }
+    }
+  }
+},
+
+_isRichTextBlank_: function(rt) {
+  try {
+    if (!rt) return true;
+    var t = rt.getText ? String(rt.getText() || '') : '';
+    return t.trim() === '';
+  } catch (e) {
+    return true;
+  }
+},
+
+};
+
+
+/** =============================================================================
+ *  FINALIZER: staging -> destination
+ *  ===========================================================================*/
+
+var Finalizer = {
+  finalizeRun_: function(runId, log) {
+    var destSs = SpreadsheetApp.openById(CFG.CLAIM_OUTSTANDING_SS_ID);
+    var staging = destSs.getSheetByName(CFG.SYS_SHEET_STAGING);
+    if (!staging) throw new Error('Missing ' + CFG.SYS_SHEET_STAGING);
+
+    var data = staging.getDataRange().getValues();
+    if (data.length <= 1) {
+      log.warn('Staging empty; nothing to finalize', { runId: runId });
+      Audit.append_(log, { event: 'FINALIZE_EMPTY_STAGING', runId: runId });
+      return;
+    }
+
+    var rows = [];
+    for (var i = 1; i < data.length; i++) {
+      if (String(data[i][0]) === String(runId)) rows.push(data[i]);
+    }
+    if (rows.length === 0) {
+      log.warn('No staging rows for runId; nothing to finalize', { runId: runId });
+      Audit.append_(log, { event: 'FINALIZE_NO_RUN_ROWS', runId: runId });
+      return;
+    }
+
+    // Column layout:
+    // 0 runId, 1 destSheet, 2 claimKey, 3 rawLastStatus, 4.. payload (EXPECTED + PIC)
+    var payloadStart = 4;
+    var payloadCols = CFG.EXPECTED_COLUMNS.length + 1; // + PIC
+
+    // group: sheetName -> claimKey -> { payload, lsdTs, hasUpdateStatus }
+    var grouped = {};
+    var deduped = 0;
+
+    var lastStatusDateIdx = indexOf_(CFG.EXPECTED_COLUMNS, 'Last Status Date');
+    var updateStatusIdx = indexOf_(CFG.EXPECTED_COLUMNS, 'Update Status');
+
+    for (var r = 0; r < rows.length; r++) {
+      var row = rows[r];
+
+      var sheetName = String(row[1] || '').trim();
+      if (!sheetName && CFG.CREATE_UNMAPPED_SHEET) sheetName = CFG.DEST_SHEET_UNMAPPED;
+      if (!sheetName) continue;
+
+      var claimKey = String(row[2] || '').trim();
+      if (!claimKey) continue;
+
+      var payload = row.slice(payloadStart, payloadStart + payloadCols);
+      var lsdValue = (lastStatusDateIdx >= 0) ? payload[lastStatusDateIdx] : '';
+      var lsdTs = TimeUtil.toTs_(lsdValue);
+      var updateStatusVal = (updateStatusIdx >= 0) ? payload[updateStatusIdx] : '';
+      var hasUpdateStatus = !isBlank_(updateStatusVal);
+
+      if (!grouped[sheetName]) grouped[sheetName] = {};
+      if (!grouped[sheetName][claimKey]) {
+        grouped[sheetName][claimKey] = { payload: payload, lsdTs: lsdTs, hasUpdateStatus: hasUpdateStatus };
+      } else {
+        var prev = grouped[sheetName][claimKey];
+        if (hasUpdateStatus && !prev.hasUpdateStatus) {
+          grouped[sheetName][claimKey] = { payload: payload, lsdTs: lsdTs, hasUpdateStatus: hasUpdateStatus };
+          deduped++;
+        } else if (!hasUpdateStatus && prev.hasUpdateStatus) {
+          // keep previous row with manual status
+        } else if (lsdTs > prev.lsdTs) {
+          grouped[sheetName][claimKey] = { payload: payload, lsdTs: lsdTs, hasUpdateStatus: hasUpdateStatus };
+          deduped++;
+        }
+      }
+    }
+
+    DestSheets.ensureSpecialSheets(log);
+
+    var header = CFG.EXPECTED_COLUMNS.slice(0);
+    header.push(CFG.PIC_COLUMN);
+
+    // Capture preserved manual columns across all managed destination sheets
+    var preservePlan = ManualPreserver.buildPlan_(header);
+    var globalPreserved = {};
+    var managedSheets = [];
+    var allSheets = destSs.getSheets();
+
+    for (var si = 0; si < allSheets.length; si++) {
+      var sh0 = allSheets[si];
+      var nm0 = sh0.getName();
+      if (isSystemSheetName_(nm0)) continue;
+
+      var head0 = sh0.getRange(1, 1, 1, header.length).getValues()[0];
+      if (!headersMatch_(head0, header)) continue;
+
+      managedSheets.push(sh0);
+
+      if (preservePlan) {
+        var local = ManualPreserver.captureByClaim_(sh0, preservePlan);
+        ManualPreserver.mergePreservedMaps_(globalPreserved, local, preservePlan);
+      }
+    }
+
+    if (preservePlan) {
+      log.info('Captured preserved manual columns (global)', {
+        claims: Object.keys(globalPreserved).length,
+        managedSheets: managedSheets.length
+      });
+    }
+
+    // Clear all existing managed sheets first to avoid stale rows surviving when a region becomes empty.
+    for (var ci = 0; ci < managedSheets.length; ci++) {
+      DestSheets.clearData_(managedSheets[ci], payloadCols);
+    }
+
+    var sheetsWritten = 0;
+    var totalWritten = 0;
+
+    for (var name in grouped) {
+      if (!grouped.hasOwnProperty(name)) continue;
+
+      var sheet = DestSheets.ensureSheetWithHeader_(destSs, name, log);
+      var claimMap = grouped[name];
+
+      var outRows = [];
+      for (var ck in claimMap) {
+        if (!claimMap.hasOwnProperty(ck)) continue;
+        outRows.push(claimMap[ck].payload);
+      }
+
+      DestSheets.ensureTemplateRowCoverage_(sheet, outRows.length, payloadCols, log);
+
+      if (outRows.length > 0) {
+        sheet.getRange(2, 1, outRows.length, outRows[0].length).setValues(outRows);
+        DestSheets.applyPostWriteFormats_(sheet, header, outRows.length, log);
+        ManualPreserver.restoreToWrittenRows_(sheet, header, outRows, globalPreserved, log);
+      }
+
+      sheetsWritten++;
+      totalWritten += outRows.length;
+      Audit.append_(log, { event: 'SHEET_WRITTEN', runId: runId, sheet: name, rows: outRows.length });
+    }
+
+    log.info('Finalize done', { runId: runId, sheets: sheetsWritten, rows: totalWritten, deduped: deduped });
+    Audit.append_(log, { event: 'FINALIZE_DONE', runId: runId, sheets: sheetsWritten, rows: totalWritten, deduped: deduped });
+    CircuitBreaker.onSuccess_();
+  }
+};
+
+
+/** =============================================================================
+ *  ROUTER
+ *  ===========================================================================*/
+var Router = {
+  route_: function(partnerName, regionMap) {
+    var pn = String(partnerName || '').trim();
+    if (!pn) return CFG.CREATE_UNMAPPED_SHEET ? CFG.DEST_SHEET_UNMAPPED : '';
+
+    var partnerKey = Norm.partnerKey_(pn);
+
+    // Digi override
+    if (COMPILED_CFG.DIGI_PARTNER_LOOKUP[partnerKey]) return CFG.DEST_SHEET_DIGI;
+
+    var region = regionMap[partnerKey];
+    if (region) return region;
+
+    return CFG.CREATE_UNMAPPED_SHEET ? CFG.DEST_SHEET_UNMAPPED : '';
+  }
+};
+
+
+/** =============================================================================
+ *  PIC RESOLVER
+ *  ===========================================================================*/
+var PicResolver = {
+  resolve_: function(rawStatus, serviceCenter) {
+    var st = String(rawStatus || '').trim();
+    if (!st) return 'Unknown';
+
+    if (PIC_GROUPS.ADI_ADIT[st]) return 'Adi & Adit';
+    if (PIC_GROUPS.SUCI_YUDHA[st]) return 'Suci & Yudha';
+
+    if (PIC_GROUPS.MIDDLE[st]) {
+      return this.resolveMiddle_(serviceCenter);
+    }
+
+    return 'Unknown';
+  },
+
+  resolveMiddle_: function(serviceCenter) {
+    var sc = String(serviceCenter || '').toLowerCase();
+    if (!sc) return 'Unknown';
+
+    if (containsAny_(sc, COMPILED_CFG.MIDDLE_SC_KEYWORDS_LOWER.Farhan)) return 'Farhan';
+    if (containsAny_(sc, COMPILED_CFG.MIDDLE_SC_KEYWORDS_LOWER.Meilani)) return 'Meilani';
+    if (containsAny_(sc, COMPILED_CFG.MIDDLE_SC_KEYWORDS_LOWER.Ivan)) return 'Ivan';
+
+    return 'Unknown';
+  }
+};
+
+
+/** =============================================================================
+ *  STATUS TRANSLATOR
+ *  ===========================================================================*/
+var StatusTranslator = {
+  translate_: function(rawStatus) {
+    var st = String(rawStatus || '').trim();
+    if (!st) return '';
+    return STATUS_TRANSLATION[st] ? STATUS_TRANSLATION[st] : st;
+  },
+
+  shouldExclude_: function(rawStatus, translatedStatus) {
+    var translated = String(translatedStatus || this.translate_(rawStatus) || '').trim().toLowerCase();
+    return !!COMPILED_CFG.EXCLUDED_STATUS_LOOKUP[translated];
+  }
+};
+
+
+/** =============================================================================
+ *  STORE REGION REPO: PartnerName -> RegionSheet (plain object map)
+ *  ===========================================================================*/
+var StoreRegionRepo = {
+  loadPartnerToRegionMap_: function(log, forceReload) {
+    var props = PropertiesService.getScriptProperties();
+    var cacheKey = 'STORE_REGION_CACHE_V2';
+    var cacheTsKey = 'STORE_REGION_CACHE_TS_V2';
+
+    var now = new Date().getTime();
+    var cachedTs = Number(props.getProperty(cacheTsKey) || '0');
+    var cachedJson = props.getProperty(cacheKey);
+
+    if (!forceReload && cachedJson && (now - cachedTs) < CFG.STORE_REGION_CACHE_MS) {
+      try {
+        var obj = JSON.parse(cachedJson);
+        if (obj && typeof obj === 'object') return obj;
+      } catch (e) {
+        // fallthrough
+      }
+    }
+
+    var ss = SpreadsheetApp.openById(CFG.STORE_REGION_SS_ID);
+    var sheet = ss.getSheetByName(CFG.STORE_REGION_SHEET);
+    if (!sheet) throw new Error('Store Region sheet not found: ' + CFG.STORE_REGION_SHEET);
+
+    var lastRow = sheet.getLastRow();
+    var lastCol = sheet.getLastColumn();
+    if (lastRow < 3 || lastCol < 1) return {};
+
+    var top2 = sheet.getRange(1, 1, 2, lastCol).getValues();
+var row1Raw = mapToTrimStrings_(top2[0]);
+var row2 = mapToTrimStrings_(top2[1]);
+
+// Row1 often contains merged region headers, so only the first cell of a merged block has the region text.
+// Fill-forward across columns so every column inside the block resolves the correct region.
+var row1 = StoreRegionRepo._fillForwardRegionHeaders_(row1Raw);
+
+var partnerCols = [];
+for (var c = 0; c < lastCol; c++) {
+  if (String(row2[c]).toLowerCase() === 'partner name') {
+    var regionName = StoreRegionRepo._normalizeRegionSheetName_(String(row1[c] || '').trim());
+    if (regionName) partnerCols.push({ colIndex1: c + 1, regionName: regionName });
+  }
+}
+
+
+
+// Diagnostics: validate Store Region sheet layout is readable by this script
+if (partnerCols.length === 0) {
+  log.error('StoreRegion unreadable: no "Partner Name" columns detected on row 2', {
+    sheet: CFG.STORE_REGION_SHEET,
+    lastRow: lastRow,
+    lastCol: lastCol,
+    row1: row1Raw.slice(0, Math.min(row1Raw.length, 30)),
+    row2: row2.slice(0, Math.min(row2.length, 30))
+  });
+  Audit.append_(log, { event: 'STORE_REGION_INVALID', reason: 'NO_PARTNER_NAME_COLUMNS', lastRow: lastRow, lastCol: lastCol });
+} else {
+  log.info('StoreRegion partner columns detected', { columns: partnerCols, lastRow: lastRow, lastCol: lastCol });
+  Audit.append_(log, { event: 'STORE_REGION_DIAG', partnerCols: partnerCols.length, regions: partnerCols.map(function(x){return x.regionName;}) });
+}
+    var map = {}; // partnerKey -> regionName
+    var conflicts = 0;
+
+    for (var p = 0; p < partnerCols.length; p++) {
+      var pc = partnerCols[p];
+      var colVals = sheet.getRange(3, pc.colIndex1, lastRow - 2, 1).getValues();
+
+      for (var r = 0; r < colVals.length; r++) {
+        var pn = String(colVals[r][0] || '').trim();
+        if (!pn) continue;
+        var key = Norm.partnerKey_(pn);
+
+        if (map[key] && map[key] !== pc.regionName) {
+          conflicts++;
+          continue;
+        }
+        map[key] = pc.regionName;
+      }
+    }
+
+    if (conflicts > 0) {
+      log.warn('StoreRegion conflicts detected (partner exists in multiple regions)', { conflicts: conflicts });
+      Audit.append_(log, { event: 'STORE_REGION_CONFLICTS', count: conflicts });
+    }
+
+    var mapSize = Object.keys(map).length;
+    if (mapSize === 0) {
+      log.warn('StoreRegion map EMPTY (no partner rows found under Partner Name columns)', {
+        sheet: CFG.STORE_REGION_SHEET,
+        partnerCols: partnerCols.length,
+        lastRow: lastRow
+      });
+      Audit.append_(log, { event: 'STORE_REGION_EMPTY', partnerCols: partnerCols.length, lastRow: lastRow });
+    } else {
+      // Sample up to 5 keys (for troubleshooting)
+      var sampleKeys = Object.keys(map).slice(0, 5);
+      log.info('StoreRegion map loaded', { partners: mapSize, sampleKeys: sampleKeys });
+      Audit.append_(log, { event: 'STORE_REGION_LOADED', partners: mapSize, partnerCols: partnerCols.length });
+    }
+
+    props.setProperty(cacheKey, JSON.stringify(map));
+    props.setProperty(cacheTsKey, String(now));
+
+    return map;
+  },
+_fillForwardRegionHeaders_: function(row1) {
+  var out = [];
+  var current = '';
+  for (var i = 0; i < row1.length; i++) {
+    var v = String(row1[i] || '').trim();
+    if (v) current = v;
+    out.push(current);
+  }
+  return out;
+},
+
+_normalizeRegionSheetName_: function(regionName) {
+  var raw = String(regionName || '').trim();
+  if (!raw) return '';
+  var up = raw.replace(/\s+/g, ' ').trim().toUpperCase();
+
+  // Common canonicalization to match destination sheet names
+  if (up === 'SUMATRA') return 'Sumatra';
+  if (up === 'JABALNUSRA') return 'Jabalnusra';
+  if (up === 'SPECIAL PROJECT') return 'Special Project';
+  if (up === 'B2B') return 'B2B';
+  if (up === 'NATIONAL RETAILER') return 'National Retailer';
+  if (up === 'SULAWESI') return 'Sulawesi';
+  if (up === 'KALIMANTAN') return 'Kalimantan';
+  if (up === 'DIGI' || up === 'DIGITAL' || up === 'DIGITAL REGION') return CFG.DEST_SHEET_DIGI;
+
+  // Title-case fallback (keeps multi-word regions readable)
+  var parts = raw.replace(/\s+/g, ' ').trim().split(' ');
+  for (var i = 0; i < parts.length; i++) {
+    var p = parts[i];
+    if (!p) continue;
+    parts[i] = p.charAt(0).toUpperCase() + p.slice(1).toLowerCase();
+  }
+  return parts.join(' ');
+},
+
+  uniqueRegions_: function(regionMap) {
+    var uniq = {};
+    var out = [];
+    for (var k in regionMap) {
+      if (!regionMap.hasOwnProperty(k)) continue;
+      var region = regionMap[k];
+      if (!region) continue;
+      if (!uniq[region]) {
+        uniq[region] = true;
+        out.push(region);
+      }
+    }
+    return out;
+  }
+};
+
+
+/** =============================================================================
+ *  HEADER PLAN: handles duplicate headers by occurrence order
+ *  ===========================================================================*/
+var HeaderPlan = {
+  fromHeader_: function(headerRow, expectedColumns, log) {
+    var header = [];
+    for (var i = 0; i < headerRow.length; i++) header.push(String(headerRow[i] || '').trim());
+
+    // nameLower -> [indices]
+    var occMap = {};
+    for (var j = 0; j < header.length; j++) {
+      var key = String(header[j]).toLowerCase();
+      if (!occMap[key]) occMap[key] = [];
+      occMap[key].push(j);
+    }
+
+    // nameLower -> usedCount
+    var usedOcc = {};
+    var plan = []; // expectedIndex -> sourceColIndex (0-based) or -1
+
+    for (var e = 0; e < expectedColumns.length; e++) {
+      var destName = expectedColumns[e];
+      plan.push(HeaderPlan.resolveSourceIndex_(destName, occMap, usedOcc));
+    }
+
+    var missing = [];
+    for (var m = 0; m < expectedColumns.length; m++) {
+      if (plan[m] === -1) missing.push(expectedColumns[m]);
+    }
+    if (missing.length > 0) {
+      log.warn('Missing expected columns in source header', { missing: missing });
+      Audit.append_(log, { event: 'MISSING_COLUMNS', missing: missing.slice(0, 30) });
+    }
+
+    return new HeaderPlanInstance_(header, expectedColumns, plan, log);
+  },
+
+  resolveSourceIndex_: function(destName, occMap, usedOcc) {
+    var bindings = (CFG.SOURCE_COLUMN_BINDINGS && CFG.SOURCE_COLUMN_BINDINGS[destName]) || null;
+    if (bindings && bindings.length) {
+      for (var i = 0; i < bindings.length; i++) {
+        var rule = bindings[i] || {};
+        var sourceName = String(rule.name || destName).trim();
+        var key = sourceName.toLowerCase();
+        var arr = occMap[key] || [];
+        var pick = -1;
+
+        if (rule.occurrence != null) {
+          var occ = Number(rule.occurrence || 1);
+          if (occ >= 1 && typeof arr[occ - 1] === 'number') pick = arr[occ - 1];
+        } else {
+          var used = usedOcc[key] || 0;
+          if (typeof arr[used] === 'number') pick = arr[used];
+          usedOcc[key] = used + 1;
+        }
+
+        if (pick >= 0) return pick;
+      }
+      return -1;
+    }
+
+    var k = String(destName || '').toLowerCase();
+    var sameArr = occMap[k] || [];
+    var sameUsed = usedOcc[k] || 0;
+    var samePick = (typeof sameArr[sameUsed] === 'number') ? sameArr[sameUsed] : -1;
+    usedOcc[k] = sameUsed + 1;
+    return samePick;
+  }
+};
+
+function HeaderPlanInstance_(header, expected, indexPlan, log) {
+  this.header = header;
+  this.expected = expected;
+  this.indexPlan = indexPlan;
+  this.log = log;
+}
+
+/**
+ * Returns the FIRST occurrence of a column (even if duplicated).
+ */
+HeaderPlanInstance_.prototype.getFirst_ = function(row, colName) {
+  var idx = indexOf_(this.expected, colName);
+  if (idx < 0) return '';
+  var srcIdx = this.indexPlan[idx];
+  return (srcIdx >= 0) ? row[srcIdx] : '';
+};
+
+/**
+ * Builds destination row in expected order, with translated Last Status and PIC appended.
+ */
+HeaderPlanInstance_.prototype.buildDestRow_ = function(row, translatedLastStatus, pic) {
+  var out = [];
+  for (var i = 0; i < this.expected.length; i++) {
+    var colName = this.expected[i];
+    if (colName === 'Last Status') {
+      out.push(translatedLastStatus);
+      continue;
+    }
+
+    var srcIdx = this.indexPlan[i];
+    var value = srcIdx >= 0 ? row[srcIdx] : '';
+
+    if (colName === 'TAT') {
+      value = normalizeTatValue_(value);
+    }
+
+    out.push(value);
+  }
+  out.push(pic);
+  return out;
+};
+
+
+/** =============================================================================
+ *  DESTINATION SHEETS
+ *  ===========================================================================*/
+var DestSheets = {
+  ensureSpecialSheets: function(log) {
+    var ss = SpreadsheetApp.openById(CFG.CLAIM_OUTSTANDING_SS_ID);
+    this.ensureSheetWithHeader_(ss, CFG.DEST_SHEET_DIGI, log);
+    if (CFG.CREATE_UNMAPPED_SHEET) this.ensureSheetWithHeader_(ss, CFG.DEST_SHEET_UNMAPPED, log);
+  },
+
+  ensureRegionSheets: function(log, regionList) {
+    var ss = SpreadsheetApp.openById(CFG.CLAIM_OUTSTANDING_SS_ID);
+    for (var i = 0; i < regionList.length; i++) {
+      var name = regionList[i];
+      if (!name) continue;
+      this.ensureSheetWithHeader_(ss, name, log);
+    }
+  },
+
+  ensureSheetWithHeader_: function(ss, sheetName, log) {
+    var sh = ss.getSheetByName(sheetName);
+    var created = false;
+    if (!sh) {
+      sh = ss.insertSheet(sheetName);
+      created = true;
+      log.info('Created destination sheet', { sheetName: sheetName });
+    }
+
+    var header = CFG.EXPECTED_COLUMNS.slice(0);
+    header.push(CFG.PIC_COLUMN);
+
+    this.ensureColumns_(sh, header.length);
+
+    // enforce schema header
+    sh.getRange(1, 1, 1, header.length).setValues([header]);
+    sh.setFrozenRows(1);
+
+    // If this sheet was just created, best-effort copy formatting + data validation from the template sheet's template row.
+    if (created) {
+      DestSheets._bootstrapTemplateRowFromSheet_(ss, sh, log);
+    }
+
+    return sh;
+  },
+
+_bootstrapTemplateRowFromSheet_: function(ss, targetSheet, log) {
+  try {
+    if (!CFG.FORMAT_TEMPLATE_SHEET) return;
+    var tpl = ss.getSheetByName(CFG.FORMAT_TEMPLATE_SHEET);
+    if (!tpl) return;
+
+    var colCount = CFG.EXPECTED_COLUMNS.length + 1; // + PIC
+    this.ensureColumns_(tpl, colCount);
+    this.ensureColumns_(targetSheet, colCount);
+
+    var tr = Number(CFG.TEMPLATE_ROW_INDEX || 2);
+    if (tr < 2) tr = 2;
+
+    var srcRow = tpl.getRange(tr, 1, 1, colCount);
+    var dstRow = targetSheet.getRange(tr, 1, 1, colCount);
+
+    srcRow.copyTo(dstRow, SpreadsheetApp.CopyPasteType.PASTE_FORMAT, false);
+    srcRow.copyTo(dstRow, SpreadsheetApp.CopyPasteType.PASTE_DATA_VALIDATION, false);
+    log.info('Bootstrapped template row formatting from template sheet', { templateSheet: CFG.FORMAT_TEMPLATE_SHEET, target: targetSheet.getName() });
+  } catch (e) {
+    // non-fatal
+    log.warn('Bootstrap template row failed (non-fatal)', { err: String(e), target: targetSheet.getName() });
+  }
+},
+
+ensureTemplateRowCoverage_: function(sheet, neededDataRows, colCount, log) {
+  // Non-destructive: only formats rows that are newly inserted (to avoid wiping user custom formatting).
+  if (!CFG.APPLY_TEMPLATE_TO_WRITTEN_ROWS) return;
+  if (neededDataRows <= 0) return;
+
+  var tr = Number(CFG.TEMPLATE_ROW_INDEX || 2);
+  if (tr < 2) tr = 2;
+
+  var neededLastRow = tr + neededDataRows - 1; // data starts at template row index
+  var maxRowsBefore = sheet.getMaxRows();
+
+  if (maxRowsBefore >= neededLastRow) return;
+
+  var toInsert = neededLastRow - maxRowsBefore;
+  sheet.insertRowsAfter(maxRowsBefore, toInsert);
+
+  // Apply template formats & DV to ONLY the inserted rows
+  var src = sheet.getRange(tr, 1, 1, colCount);
+  var dst = sheet.getRange(maxRowsBefore + 1, 1, toInsert, colCount);
+
+  src.copyTo(dst, SpreadsheetApp.CopyPasteType.PASTE_FORMAT, false);
+  src.copyTo(dst, SpreadsheetApp.CopyPasteType.PASTE_DATA_VALIDATION, false);
+},
+
+  applyPostWriteFormats_: function(sheet, header, rowCount, log) {
+    if (!rowCount || rowCount <= 0) return;
+
+    var tatIdx = findHeaderIndexByOccurrence_(header, 'TAT', 1);
+    if (tatIdx >= 0) {
+      sheet.getRange(2, tatIdx + 1, rowCount, 1).setNumberFormat('0');
+    }
+
+    var updateStatusIdx = findHeaderIndexByOccurrence_(header, 'Update Status', 1);
+    if (updateStatusIdx >= 0) {
+      sheet.getRange(2, updateStatusIdx + 1, rowCount, 1).setNumberFormat('@');
+    }
+
+    var timestampStatusIdx = findHeaderIndexByOccurrence_(header, 'Timestamp Status', 1);
+    if (timestampStatusIdx >= 0) {
+      sheet.getRange(2, timestampStatusIdx + 1, rowCount, 1).setNumberFormat('dd/MM/yyyy hh:mm:ss');
+    }
+
+    var timestampIdx = findHeaderIndexByOccurrence_(header, 'Timestamp', 1);
+    if (timestampIdx >= 0) {
+      sheet.getRange(2, timestampIdx + 1, rowCount, 1).setNumberFormat('dd/MM/yyyy hh:mm:ss');
+    }
+  },
+
+  ensureColumns_: function(sheet, neededCols) {
+    var current = sheet.getMaxColumns();
+    if (current < neededCols) {
+      sheet.insertColumnsAfter(current, neededCols - current);
+    }
+  },
+
+  clearData_: function(sheet, colCount) {
+    var lastRow = sheet.getLastRow();
+    if (lastRow <= 1) return;
+    sheet.getRange(2, 1, lastRow - 1, colCount).clearContent();
+  }
+};
+
+
+/** =============================================================================
+ *  SYSTEM SHEETS
+ *  ===========================================================================*/
+
+var SysSheets = {
+  ensureAll: function(log) {
+    var ss = SpreadsheetApp.openById(CFG.CLAIM_OUTSTANDING_SS_ID);
+    this.ensureRuns_(ss);
+    this.ensureQueue_(ss);
+    this.ensureStaging_(ss);
+    this.ensureAudit_(ss);
+
+    var names = [CFG.SYS_SHEET_RUNS, CFG.SYS_SHEET_QUEUE, CFG.SYS_SHEET_STAGING, CFG.SYS_SHEET_AUDIT];
+    for (var i = 0; i < names.length; i++) {
+      var sh = ss.getSheetByName(names[i]);
+      if (sh) sh.hideSheet();
+    }
+
+    log.info('System sheets ensured', null);
+  },
+
+  ensureRuns_: function(ss) {
+    var sh = ss.getSheetByName(CFG.SYS_SHEET_RUNS);
+    if (!sh) sh = ss.insertSheet(CFG.SYS_SHEET_RUNS);
+    var header = ['runId', 'hourKey', 'status', 'createdAt', 'totalTasks', 'doneTasks', 'failedTasks', 'notes'];
+    this.ensureHeader_(sh, header);
+  },
+
+  ensureQueue_: function(ss) {
+    var sh = ss.getSheetByName(CFG.SYS_SHEET_QUEUE);
+    if (!sh) sh = ss.insertSheet(CFG.SYS_SHEET_QUEUE);
+    var header = [
+      'taskId', 'runId', 'status', 'sourceSheet', 'startRow', 'numRows',
+      'createdAt', 'updatedAt', 'attempts', 'nextAttemptAtMs', 'lastError'
+    ];
+    this.ensureHeader_(sh, header);
+  },
+
+  ensureStaging_: function(ss) {
+    var sh = ss.getSheetByName(CFG.SYS_SHEET_STAGING);
+    if (!sh) sh = ss.insertSheet(CFG.SYS_SHEET_STAGING);
+    var header = ['runId', 'destSheet', 'claimKey', 'rawLastStatus']
+      .concat(CFG.EXPECTED_COLUMNS)
+      .concat([CFG.PIC_COLUMN]);
+    this.ensureHeader_(sh, header);
+  },
+
+  ensureAudit_: function(ss) {
+    var sh = ss.getSheetByName(CFG.SYS_SHEET_AUDIT);
+    if (!sh) sh = ss.insertSheet(CFG.SYS_SHEET_AUDIT);
+    var header = ['ts', 'runId', 'scope', 'level', 'message', 'contextJson'];
+    this.ensureHeader_(sh, header);
+  },
+
+  ensureHeader_: function(sheet, header) {
+    var maxCols = sheet.getMaxColumns();
+    if (maxCols < header.length) sheet.insertColumnsAfter(maxCols, header.length - maxCols);
+    sheet.getRange(1, 1, 1, header.length).setValues([header]);
+    sheet.setFrozenRows(1);
+  }
+};
+
+
+/** =============================================================================
+ *  RUN STORE (_Runs)
+ *  ===========================================================================*/
+var RunStore = {
+  createRun_: function(run) {
+    var ss = SpreadsheetApp.openById(CFG.CLAIM_OUTSTANDING_SS_ID);
+    var sh = ss.getSheetByName(CFG.SYS_SHEET_RUNS);
+    sh.appendRow([
+      run.runId, run.hourKey, run.status, run.createdAt,
+      run.totalTasks, run.doneTasks, run.failedTasks, run.notes
+    ]);
+  },
+
+  hasRunForHour_: function(hourKey) {
+    var ss = SpreadsheetApp.openById(CFG.CLAIM_OUTSTANDING_SS_ID);
+    var sh = ss.getSheetByName(CFG.SYS_SHEET_RUNS);
+    var lastRow = sh.getLastRow();
+    if (lastRow <= 1) return false;
+
+    var data = sh.getRange(2, 1, lastRow - 1, 8).getValues();
+    for (var i = data.length - 1; i >= 0; i--) {
+      var r = data[i];
+      if (String(r[1]) === String(hourKey)) return true;
+    }
+    return false;
+  },
+
+  findRowByRunId_: function(runId) {
+    var ss = SpreadsheetApp.openById(CFG.CLAIM_OUTSTANDING_SS_ID);
+    var sh = ss.getSheetByName(CFG.SYS_SHEET_RUNS);
+    var lastRow = sh.getLastRow();
+    if (lastRow <= 1) return 0;
+
+    var data = sh.getRange(2, 1, lastRow - 1, 1).getValues();
+    for (var i = data.length - 1; i >= 0; i--) {
+      if (String(data[i][0]) === String(runId)) return i + 2;
+    }
+    return 0;
+  },
+
+  getRunRecord_: function(runId) {
+    var rowN = this.findRowByRunId_(runId);
+    if (!rowN) return null;
+
+    var ss = SpreadsheetApp.openById(CFG.CLAIM_OUTSTANDING_SS_ID);
+    var sh = ss.getSheetByName(CFG.SYS_SHEET_RUNS);
+    var r = sh.getRange(rowN, 1, 1, 8).getValues()[0];
+    return {
+      rowNumber: rowN,
+      runId: r[0],
+      hourKey: r[1],
+      status: String(r[2] || ''),
+      createdAt: r[3],
+      totalTasks: Number(r[4] || 0),
+      doneTasks: Number(r[5] || 0),
+      failedTasks: Number(r[6] || 0),
+      notes: r[7] || ''
+    };
+  },
+
+  getLatestActiveRun_: function() {
+    var ss = SpreadsheetApp.openById(CFG.CLAIM_OUTSTANDING_SS_ID);
+    var sh = ss.getSheetByName(CFG.SYS_SHEET_RUNS);
+    var lastRow = sh.getLastRow();
+    if (lastRow <= 1) return null;
+
+    var data = sh.getRange(2, 1, lastRow - 1, 8).getValues();
+    for (var i = data.length - 1; i >= 0; i--) {
+      var r = data[i];
+      var status = String(r[2] || '');
+      if (status === 'ENQUEUED' || status === 'RUNNING') {
+        return {
+          runId: r[0],
+          hourKey: r[1],
+          status: status,
+          createdAt: r[3],
+          rowNumber: i + 2
+        };
+      }
+    }
+    return null;
+  },
+
+  updateRun_: function(runId, patch) {
+    var rowN = this.findRowByRunId_(runId);
+    if (!rowN) return;
+
+    var ss = SpreadsheetApp.openById(CFG.CLAIM_OUTSTANDING_SS_ID);
+    var sh = ss.getSheetByName(CFG.SYS_SHEET_RUNS);
+
+    if (patch.status != null) sh.getRange(rowN, 3).setValue(patch.status);
+    if (patch.createdAt != null) sh.getRange(rowN, 4).setValue(patch.createdAt);
+    if (patch.totalTasks != null) sh.getRange(rowN, 5).setValue(patch.totalTasks);
+    if (patch.doneTasks != null) sh.getRange(rowN, 6).setValue(patch.doneTasks);
+    if (patch.failedTasks != null) sh.getRange(rowN, 7).setValue(patch.failedTasks);
+    if (patch.notes != null) sh.getRange(rowN, 8).setValue(patch.notes);
+  },
+
+  bumpProgress_: function(runId, inc) {
+    var rowN = this.findRowByRunId_(runId);
+    if (!rowN) return;
+
+    var ss = SpreadsheetApp.openById(CFG.CLAIM_OUTSTANDING_SS_ID);
+    var sh = ss.getSheetByName(CFG.SYS_SHEET_RUNS);
+
+    var done = Number(sh.getRange(rowN, 6).getValue() || 0);
+    var failed = Number(sh.getRange(rowN, 7).getValue() || 0);
+    sh.getRange(rowN, 6).setValue(done + (inc.doneInc || 0));
+    sh.getRange(rowN, 7).setValue(failed + (inc.failedInc || 0));
+
+    var status = String(sh.getRange(rowN, 3).getValue() || '');
+    if (status === 'ENQUEUED') sh.getRange(rowN, 3).setValue('RUNNING');
+  },
+
+  isRunOlderThan_: function(runId, ageMs) {
+    var rec = this.getRunRecord_(runId);
+    if (!rec || !rec.createdAt) return false;
+    return (new Date().getTime() - TimeUtil.toTs_(rec.createdAt)) > Number(ageMs || 0);
+  },
+
+  computeTerminalStatus_: function(runId) {
+    var counts = QueueStore.countStatuses_(runId);
+    if ((counts.DEAD || 0) > 0 || (counts.CANCELED || 0) > 0) return 'PARTIAL';
+    return 'COMPLETED';
+  },
+
+  reset_: function() {
+    var ss = SpreadsheetApp.openById(CFG.CLAIM_OUTSTANDING_SS_ID);
+    var sh = ss.getSheetByName(CFG.SYS_SHEET_RUNS);
+    var lastRow = sh.getLastRow();
+    if (lastRow > 1) sh.getRange(2, 1, lastRow - 1, sh.getLastColumn()).clearContent();
+  }
+};
+
+
+/** =============================================================================
+ *  QUEUE BUILDER
+ *  ===========================================================================*/
+var QueueBuilder = {
+  buildTasks_: function(runId, sourceSheets, pageSize, log) {
+    var overviewSs = SpreadsheetApp.openById(CFG.OVERVIEW_CLAIM_SS_ID);
+
+    var tasks = [];
+    for (var i = 0; i < sourceSheets.length; i++) {
+      var name = sourceSheets[i];
+      var sh = overviewSs.getSheetByName(name);
+      if (!sh) {
+        log.warn('Source sheet missing; skip task build', { sourceSheet: name });
+        Audit.append_(log, { event: 'SOURCE_SHEET_MISSING', sourceSheet: name });
+        continue;
+      }
+
+      var lastRow = sh.getLastRow();
+      if (lastRow <= 1) continue;
+
+      var start = 2;
+      while (start <= lastRow) {
+        var remaining = lastRow - start + 1;
+        var num = Math.min(pageSize, remaining);
+
+        tasks.push({
+          rowNumber: 0,
+          taskId: Utilities.getUuid(),
+          runId: runId,
+          status: 'PENDING',
+          sourceSheet: name,
+          startRow: start,
+          numRows: num,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+          attempts: 0,
+          nextAttemptAtMs: 0,
+          lastError: ''
+        });
+
+        start += num;
+      }
+    }
+
+    log.info('Tasks built', { count: tasks.length });
+    return tasks;
+  }
+};
+
+
+/** =============================================================================
+ *  QUEUE STORE (_Queue)
+ *  ===========================================================================*/
+var QueueStore = {
+  enqueueTasks_: function(tasks, log) {
+    var ss = SpreadsheetApp.openById(CFG.CLAIM_OUTSTANDING_SS_ID);
+    var sh = ss.getSheetByName(CFG.SYS_SHEET_QUEUE);
+    if (!tasks || tasks.length === 0) return;
+
+    var values = [];
+    for (var i = 0; i < tasks.length; i++) {
+      var t = tasks[i];
+      values.push([
+        t.taskId, t.runId, t.status, t.sourceSheet, t.startRow, t.numRows,
+        t.createdAt, t.updatedAt, t.attempts, t.nextAttemptAtMs, t.lastError
+      ]);
+    }
+
+    var startRow = sh.getLastRow() + 1;
+    sh.getRange(startRow, 1, values.length, values[0].length).setValues(values);
+
+    log.info('Tasks enqueued', { count: tasks.length });
+  },
+
+  dequeueAndMarkInProgress_: function(runId, limit, log) {
+    var ss = SpreadsheetApp.openById(CFG.CLAIM_OUTSTANDING_SS_ID);
+    var sh = ss.getSheetByName(CFG.SYS_SHEET_QUEUE);
+    var lastRow = sh.getLastRow();
+    if (lastRow <= 1) return [];
+
+    var data = sh.getRange(2, 1, lastRow - 1, 11).getValues();
+    var now = new Date().getTime();
+
+    var out = [];
+    for (var i = 0; i < data.length && out.length < limit; i++) {
+      var r = data[i];
+      if (String(r[1]) !== String(runId)) continue;
+
+      var status = String(r[2] || '');
+      var nextAttemptAtMs = Number(r[9] || 0);
+      var runnable = (status === 'PENDING') || (status === 'RETRY' && nextAttemptAtMs <= now);
+      if (!runnable) continue;
+
+      var rowN = i + 2;
+      sh.getRange(rowN, 3).setValue('IN_PROGRESS');
+      sh.getRange(rowN, 8).setValue(new Date());
+
+      out.push({
+        rowNumber: rowN,
+        taskId: r[0],
+        runId: r[1],
+        status: 'IN_PROGRESS',
+        sourceSheet: r[3],
+        startRow: Number(r[4]),
+        numRows: Number(r[5]),
+        attempts: Number(r[8] || 0),
+        nextAttemptAtMs: nextAttemptAtMs,
+        lastError: r[10] || ''
+      });
+    }
+
+    log.info('Dequeued tasks', { runId: runId, count: out.length });
+    return out;
+  },
+
+  markDone_: function(task, log) {
+    var ss = SpreadsheetApp.openById(CFG.CLAIM_OUTSTANDING_SS_ID);
+    var sh = ss.getSheetByName(CFG.SYS_SHEET_QUEUE);
+    sh.getRange(task.rowNumber, 3).setValue('DONE');
+    sh.getRange(task.rowNumber, 8).setValue(new Date());
+    sh.getRange(task.rowNumber, 11).setValue('');
+  },
+
+  markFailedOrRetry_: function(task, err, log) {
+    var ss = SpreadsheetApp.openById(CFG.CLAIM_OUTSTANDING_SS_ID);
+    var sh = ss.getSheetByName(CFG.SYS_SHEET_QUEUE);
+
+    var message = err && err.stack ? String(err.stack) : String(err);
+    var attempts = Number(task.attempts || 0) + 1;
+
+    if (attempts >= CFG.MAX_RETRY_ATTEMPTS) {
+      sh.getRange(task.rowNumber, 3).setValue('DEAD');
+      sh.getRange(task.rowNumber, 8).setValue(new Date());
+      sh.getRange(task.rowNumber, 9).setValue(attempts);
+      sh.getRange(task.rowNumber, 11).setValue(message.slice(0, 5000));
+
+      CircuitBreaker.onFailure_();
+      Audit.append_(log, { event: 'TASK_DEAD', taskId: task.taskId, attempts: attempts });
+      log.error('Task moved to DEAD', { taskId: task.taskId, attempts: attempts, err: message });
+      return;
+    }
+
+    var backoff = Retry.computeBackoffMs_(attempts);
+    var nextAttemptAtMs = new Date().getTime() + backoff;
+
+    sh.getRange(task.rowNumber, 3).setValue('RETRY');
+    sh.getRange(task.rowNumber, 8).setValue(new Date());
+    sh.getRange(task.rowNumber, 9).setValue(attempts);
+    sh.getRange(task.rowNumber, 10).setValue(nextAttemptAtMs);
+    sh.getRange(task.rowNumber, 11).setValue(message.slice(0, 5000));
+
+    CircuitBreaker.onFailure_();
+    Audit.append_(log, { event: 'TASK_RETRY', taskId: task.taskId, attempts: attempts, nextAttemptAtMs: nextAttemptAtMs });
+    log.warn('Task scheduled for retry', { taskId: task.taskId, attempts: attempts, backoffMs: backoff });
+  },
+
+  recoverStaleInProgress_: function(runId, log) {
+    var ss = SpreadsheetApp.openById(CFG.CLAIM_OUTSTANDING_SS_ID);
+    var sh = ss.getSheetByName(CFG.SYS_SHEET_QUEUE);
+    var lastRow = sh.getLastRow();
+    if (lastRow <= 1) return 0;
+
+    var data = sh.getRange(2, 1, lastRow - 1, 11).getValues();
+    var now = new Date().getTime();
+    var fixed = 0;
+
+    for (var i = 0; i < data.length; i++) {
+      var r = data[i];
+      if (String(r[1]) !== String(runId)) continue;
+
+      var status = String(r[2] || '');
+      var updatedAtMs = TimeUtil.toTs_(r[7]);
+      if (status !== 'IN_PROGRESS') continue;
+      if (!updatedAtMs) updatedAtMs = TimeUtil.toTs_(r[6]);
+      if (!updatedAtMs) continue;
+      if ((now - updatedAtMs) <= CFG.TASK_STALE_MS) continue;
+
+      var rowN = i + 2;
+      var attempts = Number(r[8] || 0) + 1;
+
+      if (attempts >= CFG.MAX_RETRY_ATTEMPTS) {
+        sh.getRange(rowN, 3).setValue('DEAD');
+        sh.getRange(rowN, 8).setValue(new Date());
+        sh.getRange(rowN, 9).setValue(attempts);
+        sh.getRange(rowN, 11).setValue('Recovered stale IN_PROGRESS -> DEAD');
+      } else {
+        var nextAttemptAtMs = new Date().getTime() + Retry.computeBackoffMs_(attempts);
+        sh.getRange(rowN, 3).setValue('RETRY');
+        sh.getRange(rowN, 8).setValue(new Date());
+        sh.getRange(rowN, 9).setValue(attempts);
+        sh.getRange(rowN, 10).setValue(nextAttemptAtMs);
+        sh.getRange(rowN, 11).setValue('Recovered stale IN_PROGRESS -> RETRY');
+      }
+      fixed++;
+    }
+
+    if (fixed > 0) {
+      log.warn('Recovered stale IN_PROGRESS tasks', { runId: runId, count: fixed });
+      Audit.append_(log, { event: 'RECOVER_STALE_IN_PROGRESS', runId: runId, count: fixed });
+    }
+    return fixed;
+  },
+
+  countStatuses_: function(runId) {
+    var ss = SpreadsheetApp.openById(CFG.CLAIM_OUTSTANDING_SS_ID);
+    var sh = ss.getSheetByName(CFG.SYS_SHEET_QUEUE);
+    var lastRow = sh.getLastRow();
+    var out = {};
+    if (lastRow <= 1) return out;
+
+    var data = sh.getRange(2, 1, lastRow - 1, 3).getValues();
+    for (var i = 0; i < data.length; i++) {
+      if (String(data[i][1]) !== String(runId)) continue;
+      var status = String(data[i][2] || '');
+      if (!out[status]) out[status] = 0;
+      out[status]++;
+    }
+    return out;
+  },
+
+  cancelOpenTasks_: function(runId, reason, log) {
+    var ss = SpreadsheetApp.openById(CFG.CLAIM_OUTSTANDING_SS_ID);
+    var sh = ss.getSheetByName(CFG.SYS_SHEET_QUEUE);
+    var lastRow = sh.getLastRow();
+    if (lastRow <= 1) return 0;
+
+    var data = sh.getRange(2, 1, lastRow - 1, 11).getValues();
+    var changed = 0;
+
+    for (var i = 0; i < data.length; i++) {
+      var r = data[i];
+      if (String(r[1]) !== String(runId)) continue;
+
+      var status = String(r[2] || '');
+      if (status !== 'PENDING' && status !== 'RETRY' && status !== 'IN_PROGRESS') continue;
+
+      var rowN = i + 2;
+      sh.getRange(rowN, 3).setValue('CANCELED');
+      sh.getRange(rowN, 8).setValue(new Date());
+      sh.getRange(rowN, 11).setValue(String(reason || 'Canceled'));
+      changed++;
+    }
+
+    if (changed > 0) {
+      log.warn('Canceled open tasks for run', { runId: runId, count: changed, reason: reason || '' });
+      Audit.append_(log, { event: 'CANCEL_OPEN_TASKS', runId: runId, count: changed, reason: reason || '' });
+    }
+    return changed;
+  },
+
+  isRunDrained_: function(runId) {
+    var counts = this.countStatuses_(runId);
+    if ((counts.PENDING || 0) > 0) return false;
+    if ((counts.IN_PROGRESS || 0) > 0) return false;
+    if ((counts.RETRY || 0) > 0) return false;
+    return true;
+  },
+
+  reset_: function() {
+    var ss = SpreadsheetApp.openById(CFG.CLAIM_OUTSTANDING_SS_ID);
+    var sh = ss.getSheetByName(CFG.SYS_SHEET_QUEUE);
+    var lastRow = sh.getLastRow();
+    if (lastRow > 1) sh.getRange(2, 1, lastRow - 1, sh.getLastColumn()).clearContent();
+  }
+};
+
+
+/** =============================================================================
+ *  SYSTEM MAINTENANCE
+ *  ===========================================================================*/
+var SystemMaintenance = {
+  beforeNewRun_: function(opts, log) {
+    opts = opts || {};
+
+    if (opts.forceFresh || CFG.SYSTEM_SHEETS_MODE === 'RESET_EACH_RUN') {
+      this.resetSystemState_(log, { clearCircuitBreaker: true, preserveAuditHeaderOnly: true });
+      return;
+    }
+
+    this.pruneSystemSheets_(log);
+    this.resolveActiveRun_(log);
+  },
+
+  resolveActiveRun_: function(log) {
+    var active = RunStore.getLatestActiveRun_();
+    if (!active) return;
+
+    QueueStore.recoverStaleInProgress_(active.runId, log);
+
+    if (QueueStore.isRunDrained_(active.runId)) {
+      var status = RunStore.computeTerminalStatus_(active.runId);
+      RunStore.updateRun_(active.runId, {
+        status: status,
+        notes: 'Auto-closed drained run before enqueue'
+      });
+      Audit.append_(log, { event: 'AUTO_CLOSE_DRAINED_RUN', runId: active.runId, status: status });
+      return;
+    }
+
+    if (RunStore.isRunOlderThan_(active.runId, CFG.RUN_STALE_MS)) {
+      QueueStore.cancelOpenTasks_(active.runId, 'Auto-canceled stale active run', log);
+      RunStore.updateRun_(active.runId, {
+        status: 'FAILED',
+        notes: 'Auto-canceled stale active run'
+      });
+      Audit.append_(log, { event: 'AUTO_CANCEL_STALE_RUN', runId: active.runId });
+    }
+  },
+
+  pruneSystemSheets_: function(log) {
+    this.pruneSheet_(CFG.SYS_SHEET_RUNS, CFG.KEEP_RUN_ROWS);
+    this.pruneSheet_(CFG.SYS_SHEET_QUEUE, CFG.KEEP_QUEUE_ROWS);
+    this.pruneSheet_(CFG.SYS_SHEET_AUDIT, CFG.KEEP_AUDIT_ROWS);
+    this.pruneSheet_(CFG.SYS_SHEET_STAGING, CFG.KEEP_STAGING_ROWS);
+    log.info('System sheets pruned', {
+      keepRuns: CFG.KEEP_RUN_ROWS,
+      keepQueue: CFG.KEEP_QUEUE_ROWS,
+      keepAudit: CFG.KEEP_AUDIT_ROWS,
+      keepStaging: CFG.KEEP_STAGING_ROWS
+    });
+  },
+
+  pruneSheet_: function(sheetName, keepRows) {
+    var ss = SpreadsheetApp.openById(CFG.CLAIM_OUTSTANDING_SS_ID);
+    var sh = ss.getSheetByName(sheetName);
+    if (!sh) return;
+
+    var bodyRows = sh.getLastRow() - 1;
+    var keep = Number(keepRows || 0);
+    if (bodyRows <= keep) return;
+
+    var deleteCount = bodyRows - keep;
+    sh.deleteRows(2, deleteCount);
+  },
+
+  resetSystemState_: function(log, opts) {
+    opts = opts || {};
+    RunStore.reset_();
+    QueueStore.reset_();
+    Staging.resetAll_();
+    Audit.reset_();
+
+    if (opts.clearCircuitBreaker) this.clearScriptFlags_();
+
+    Audit.append_(log, { event: 'SYSTEM_STATE_RESET' });
+  },
+
+  clearScriptFlags_: function() {
+    var props = PropertiesService.getScriptProperties();
+    props.deleteProperty('CB_FAIL_COUNT');
+    props.deleteProperty('CB_OPEN_UNTIL_MS');
+  }
+};
+
+
+/** =============================================================================
+ *  STAGING (_Staging)
+ *  ===========================================================================*/
+var Staging = {
+  resetForRun_: function(runId, log) {
+    this.resetAll_();
+    log.info('Staging reset', { runId: runId });
+  },
+
+  resetAll_: function() {
+    var ss = SpreadsheetApp.openById(CFG.CLAIM_OUTSTANDING_SS_ID);
+    var sh = ss.getSheetByName(CFG.SYS_SHEET_STAGING);
+    if (!sh) throw new Error('Missing ' + CFG.SYS_SHEET_STAGING);
+
+    var lastRow = sh.getLastRow();
+    if (lastRow > 1) sh.getRange(2, 1, lastRow - 1, sh.getLastColumn()).clearContent();
+  },
+
+  appendRows_: function(rows, log) {
+    var ss = SpreadsheetApp.openById(CFG.CLAIM_OUTSTANDING_SS_ID);
+    var sh = ss.getSheetByName(CFG.SYS_SHEET_STAGING);
+    var startRow = sh.getLastRow() + 1;
+    sh.getRange(startRow, 1, rows.length, rows[0].length).setValues(rows);
+  }
+};
+
+
+/** =============================================================================
+ *  AUDIT LOG (_Audit)
+ *  ===========================================================================*/
+var Audit = {
+  append_: function(log, obj) {
+    try {
+      var ss = SpreadsheetApp.openById(CFG.CLAIM_OUTSTANDING_SS_ID);
+      var sh = ss.getSheetByName(CFG.SYS_SHEET_AUDIT);
+      var row = [
+        new Date(),
+        log.runId,
+        log.scope,
+        log.level || 'INFO',
+        obj && obj.event ? obj.event : '',
+        JSON.stringify(obj || {})
+      ];
+      sh.appendRow(row);
+    } catch (e) {
+      Logger.log('AUDIT_APPEND_FAILED: ' + e);
+    }
+  },
+
+  reset_: function() {
+    var ss = SpreadsheetApp.openById(CFG.CLAIM_OUTSTANDING_SS_ID);
+    var sh = ss.getSheetByName(CFG.SYS_SHEET_AUDIT);
+    var lastRow = sh.getLastRow();
+    if (lastRow > 1) sh.getRange(2, 1, lastRow - 1, sh.getLastColumn()).clearContent();
+  }
+};
+
+
+/** =============================================================================
+ *  TRIGGERS
+ *  ===========================================================================*/
+var Triggers = {
+  ensureTriggers: function(log) {
+    var triggers = ScriptApp.getProjectTriggers();
+    for (var i = 0; i < triggers.length; i++) {
+      var t = triggers[i];
+      var fn = t.getHandlerFunction();
+      if (fn === CFG.HOURLY_TRIGGER_FUNCTION || fn === CFG.WORKER_TRIGGER_FUNCTION) {
+        ScriptApp.deleteTrigger(t);
+      }
+    }
+
+    ScriptApp.newTrigger(CFG.HOURLY_TRIGGER_FUNCTION).timeBased().everyHours(1).create();
+    ScriptApp.newTrigger(CFG.WORKER_TRIGGER_FUNCTION).timeBased().everyMinutes(CFG.WORKER_TRIGGER_EVERY_MINUTES).create();
+
+    log.info('Triggers created', {
+      hourlyFn: CFG.HOURLY_TRIGGER_FUNCTION,
+      workerFn: CFG.WORKER_TRIGGER_FUNCTION,
+      workerEveryMinutes: CFG.WORKER_TRIGGER_EVERY_MINUTES
+    });
+  }
+};
+
+
+/** =============================================================================
+ *  MENUS
+ *  ===========================================================================*/
+var Menus = {
+  ensureMenu_: function() {
+    try {
+      SpreadsheetApp.getUi()
+        .createMenu('Claim Mirror')
+        .addItem('Run Now', 'runNow')
+        .addItem('Run Now (Fresh Reset)', 'runNowFresh')
+        .addItem('Install / Repair', 'install')
+        .addItem('Worker (Debug)', 'runWorker')
+        .addSeparator()
+        .addItem('Reset System State', 'resetSystemState')
+        .addToUi();
+    } catch (e) {
+      // On triggers, UI not available
+    }
+  }
+};
+
+
+/** =============================================================================
+ *  RETRY + CIRCUIT BREAKER
+ *  ===========================================================================*/
+var Retry = {
+  computeBackoffMs_: function(attempts) {
+    var exp = attempts;
+    if (exp < 1) exp = 1;
+    if (exp > 8) exp = 8;
+
+    var base = CFG.BASE_BACKOFF_MS * Math.pow(2, exp - 1);
+    var jitter = Math.floor(Math.random() * 250);
+    var v = base + jitter;
+    return v > CFG.MAX_BACKOFF_MS ? CFG.MAX_BACKOFF_MS : v;
+  }
+};
+
+var CircuitBreaker = {
+  isOpen_: function() {
+    var props = PropertiesService.getScriptProperties();
+    var openUntil = Number(props.getProperty('CB_OPEN_UNTIL_MS') || '0');
+    return new Date().getTime() < openUntil;
+  },
+
+  onFailure_: function() {
+    var props = PropertiesService.getScriptProperties();
+    var n = Number(props.getProperty('CB_FAIL_COUNT') || '0') + 1;
+    props.setProperty('CB_FAIL_COUNT', String(n));
+    if (n >= CFG.CB_OPEN_AFTER_CONSEC_FAILURES) {
+      props.setProperty('CB_OPEN_UNTIL_MS', String(new Date().getTime() + CFG.CB_OPEN_MS));
+    }
+  },
+
+  onSuccess_: function() {
+    var props = PropertiesService.getScriptProperties();
+    props.setProperty('CB_FAIL_COUNT', '0');
+    props.setProperty('CB_OPEN_UNTIL_MS', '0');
+  },
+
+  onError_: function() {
+    this.onFailure_();
+  }
+};
+
+
+/** =============================================================================
+ *  LOGGER (structured JSON in Logger)
+ *  ===========================================================================*/
+var LoggerFactory = {
+  scoped: function(runId, scope, baseCtx) {
+    return new ScopedLogger_(runId, scope, baseCtx || {});
+  }
+};
+
+function ScopedLogger_(runId, scope, baseCtx) {
+  this.runId = runId;
+  this.scope = scope;
+  this.baseCtx = baseCtx || {};
+  this.level = 'INFO';
+}
+
+ScopedLogger_.prototype.info = function(msg, ctx) { this._log_('INFO', msg, ctx); };
+ScopedLogger_.prototype.warn = function(msg, ctx) { this._log_('WARN', msg, ctx); };
+ScopedLogger_.prototype.error = function(msg, ctx) { this._log_('ERROR', msg, ctx); };
+
+ScopedLogger_.prototype._log_ = function(level, msg, ctx) {
+  this.level = level;
+  var payload = {
+    ts: new Date().toISOString(),
+    level: level,
+    runId: this.runId,
+    scope: this.scope,
+    msg: msg
+  };
+
+  // merge contexts
+  var k;
+  for (k in this.baseCtx) {
+    if (this.baseCtx.hasOwnProperty(k)) payload[k] = this.baseCtx[k];
+  }
+  if (ctx) {
+    for (k in ctx) {
+      if (ctx.hasOwnProperty(k)) payload[k] = ctx[k];
+    }
+  }
+
+  Logger.log(JSON.stringify(payload));
+};
+
+
+/** =============================================================================
+ *  UTILITIES
+ *  ===========================================================================*/
+var RunIds = {
+  newId: function() {
+    return 'run_' +
+      Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyyMMdd_HHmmss') +
+      '_' +
+      Math.floor(Math.random() * 1000000);
+  }
+};
+
+var TimeUtil = {
+  hourKey_: function(d) {
+    return Utilities.formatDate(d, Session.getScriptTimeZone(), 'yyyyMMdd_HH');
+  },
+
+  toTs_: function(v) {
+    if (!v) return 0;
+    if (v instanceof Date) return v.getTime();
+    if (typeof v === 'number') {
+      // Apps Script usually returns Date objects; keep conservative
+      if (v > 1000000000000) return v;
+      return 0;
+    }
+    var s = String(v).trim();
+    var t = Date.parse(s);
+    return isNaN(t) ? 0 : t;
+  }
+};
+
+var Norm = {
+  textKey_: function(s) {
+    return String(s || '')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .toLowerCase();
+  },
+
+  partnerKey_: function(s) {
+    return String(s || '')
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '');
+  }
+};
+
+function normalizeTatValue_(v) {
+  if (v === null || typeof v === 'undefined') return '';
+  if (typeof v === 'number') return v;
+
+  if (v instanceof Date) {
+    var epoch = new Date(1899, 11, 30);
+    var ms = v.getTime() - epoch.getTime();
+    return Math.round(ms / 86400000);
+  }
+
+  var s = String(v || '').trim();
+  if (!s) return '';
+  s = s.replace(/,/g, '');
+
+  if (/^-?\d+(\.\d+)?$/.test(s)) return Number(s);
+
+  return s;
+}
+
+
+/** =============================================================================
+ *  LOCK WRAPPER
+ *  ===========================================================================*/
+function withLock_(timeoutMs, fn) {
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(timeoutMs)) throw new Error('Could not acquire script lock (concurrent execution)');
+  try {
+    return fn();
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+
+/** =============================================================================
+ *  SMALL HELPERS (ES5 safe)
+ *  ===========================================================================*/
+function toLookup_(arr) {
+  var o = {};
+  for (var i = 0; i < arr.length; i++) o[arr[i]] = true;
+  return o;
+}
+
+function indexOf_(arr, s) {
+  for (var i = 0; i < arr.length; i++) if (String(arr[i]) === String(s)) return i;
+  return -1;
+}
+
+
+function isSystemSheetName_(sheetName) {
+  var n = String(sheetName || '').trim();
+  if (!n) return false;
+  if (n === CFG.SYS_SHEET_RUNS) return true;
+  if (n === CFG.SYS_SHEET_QUEUE) return true;
+  if (n === CFG.SYS_SHEET_STAGING) return true;
+  if (n === CFG.SYS_SHEET_AUDIT) return true;
+  return false;
+}
+
+
+function findHeaderIndexByOccurrence_(headerArr, name, occurrence) {
+  var target = String(name || '').trim().toLowerCase();
+  var occ = Number(occurrence || 1);
+  var found = 0;
+  for (var i = 0; i < headerArr.length; i++) {
+    if (String(headerArr[i] || '').trim().toLowerCase() === target) {
+      found++;
+      if (found === occ) return i;
+    }
+  }
+  return -1;
+}
+
+
+function containsAny_(haystackLower, needlesLowerArr) {
+  for (var i = 0; i < needlesLowerArr.length; i++) {
+    if (haystackLower.indexOf(String(needlesLowerArr[i]).toLowerCase()) >= 0) return true;
+  }
+  return false;
+}
+
+function mapToTrimStrings_(row) {
+  var out = [];
+  for (var i = 0; i < row.length; i++) out.push(String(row[i] || '').trim());
+  return out;
+}
+
+/**
+ * Returns true if two header rows match in a case/whitespace-insensitive way.
+ * - Compares the first expected.length cells of actual.
+ * - Treats null/undefined as ''.
+ */
+function headersMatch_(actualHeaderRow, expectedHeaderRow) {
+  if (!actualHeaderRow || !expectedHeaderRow) return false;
+  var a = actualHeaderRow;
+  var b = expectedHeaderRow;
+  if (a.length < b.length) return false;
+
+  for (var i = 0; i < b.length; i++) {
+    var av = String(a[i] || '').trim().replace(/\s+/g, ' ');
+    var bv = String(b[i] || '').trim().replace(/\s+/g, ' ');
+    if (av.toLowerCase() !== bv.toLowerCase()) return false;
+  }
+  return true;
+}
+
+function isBlank_(v) {
+  // Treat null/undefined/empty-string/whitespace as blank. Other falsy values like 0 are NOT blank.
+  if (v === null || typeof v === 'undefined') return true;
+  if (typeof v === 'string') return v.trim() === '';
+  return String(v).trim() === '';
+}
+
+
+/** =============================================================================
+ *  OPTIONAL SELF-TESTS (do not hit spreadsheets)
+ *  ===========================================================================*/
+function test_statusTranslation() {
+  if (StatusTranslator.translate_('SUBMITTED') !== 'Claim Submitted') throw new Error('Translation failed');
+  if (StatusTranslator.translate_('UNKNOWN_X') !== 'UNKNOWN_X') throw new Error('Fallback failed');
+  if (!StatusTranslator.shouldExclude_('CLAIM_EXPIRE', 'Claim Expired')) throw new Error('Exclude Claim Expired failed');
+}
+
+function test_picResolver() {
+  if (PicResolver.resolve_('SUBMITTED', '') !== 'Adi & Adit') throw new Error('PIC group Adi & Adit failed');
+  if (PicResolver.resolve_('ON_PROGRESS', 'iBox Service') !== 'Farhan') throw new Error('Middle Farhan keyword failed');
+  if (PicResolver.resolve_('DONE', '') !== 'Suci & Yudha') throw new Error('Suci & Yudha failed');
+}
+
+function test_partnerKey() {
+  if (Norm.partnerKey_('Mega Digital') !== Norm.partnerKey_('MEGADIGITAL')) throw new Error('Partner key normalization failed');
+}
+
+function test_tatNormalization() {
+  if (normalizeTatValue_(47) !== 47) throw new Error('Numeric TAT normalization failed');
+  if (normalizeTatValue_('47') !== 47) throw new Error('String TAT normalization failed');
+
+  var d = new Date(1900, 1, 15); // 15/02/1900 -> expected serial 47 in Sheets
+  if (normalizeTatValue_(d) !== 47) throw new Error('Date TAT normalization failed');
+}
