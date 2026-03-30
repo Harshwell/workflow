@@ -299,23 +299,6 @@ function buildHeaderIndex_(headerRowValues) {
 }
 
 /**
- * Resolve first matching header index by candidate names.
- * - Supports exact (case-insensitive normalized) lookup.
- * - Returns -1 when no candidate matches.
- */
-function findHeaderIndexByCandidates_(headerRowValues, candidates) {
-  const hdr = Array.isArray(headerRowValues) ? headerRowValues : [];
-  const idx = buildHeaderIndex_(hdr);
-  const list = Array.isArray(candidates) ? candidates : [candidates];
-  for (let i = 0; i < list.length; i++) {
-    const key = normalizeHeaderKey_(list[i]);
-    if (!key) continue;
-    if (idx[key] != null) return idx[key];
-  }
-  return -1;
-}
-
-/**
  * Build a case-insensitive header index.
  * - Trims, normalizes whitespace/NBSP, lowercases
  * - Keeps the first occurrence when duplicates exist
