@@ -502,6 +502,51 @@ function applyTemplateRowToOperationalSheets_(ss, pic) {
 }
 
 /**
+ * Defensive validation sanitizer for known problematic columns.
+ * - Submission Date: must never carry checkbox/dropdown validation.
+ * - EV-Bike.Last Status: user-managed free text; ignore dropdown validation.
+ */
+function sanitizeProblematicDataValidations06_(ss, pic) {
+  if (DRY_RUN) return;
+  if (!ss) return;
+
+  const isAdmin = (pic === 'Admin');
+  const opsSheets = isAdmin ? (CONFIG.sheetsByPic.adminOperational || []) : (CONFIG.sheetsByPic.picOperational || []);
+
+  // 1) Operational sheets: clear DV on Submission Date
+  opsSheets.forEach(name => {
+    const sh = ss.getSheetByName(name);
+    if (!sh) return;
+    const lastCol = sh.getLastColumn();
+    const maxRows = sh.getMaxRows();
+    if (lastCol <= 0 || maxRows <= 1) return;
+
+    try {
+      const header = sh.getRange(1, 1, 1, lastCol).getValues()[0];
+      const idxSubmissionDate = __findHeaderIndexFlexible06_(header, 'Submission Date');
+      if (idxSubmissionDate !== -1) {
+        sh.getRange(2, idxSubmissionDate + 1, maxRows - 1, 1).clearDataValidations();
+      }
+    } catch (e0) {}
+  });
+
+  // 2) EV-Bike: clear DV on Last Status to avoid validation violations when writing statuses
+  try {
+    const ev = ss.getSheetByName('EV-Bike');
+    if (!ev) return;
+    const lc = ev.getLastColumn();
+    const mr = ev.getMaxRows();
+    if (lc <= 0 || mr <= 1) return;
+
+    const headerEv = ev.getRange(1, 1, 1, lc).getValues()[0];
+    const idxLastStatusEv = __findHeaderIndexFlexible06_(headerEv, 'Last Status');
+    if (idxLastStatusEv !== -1) {
+      ev.getRange(2, idxLastStatusEv + 1, mr - 1, 1).clearDataValidations();
+    }
+  } catch (e1) {}
+}
+
+/**
  * Restore operational fields from Raw backup after CLR + ROUTE.
  * Restores:
  * - Status (values)

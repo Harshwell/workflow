@@ -420,6 +420,11 @@ function runPipeline_(pic, fileIds, opts) {
     }
   }
 
+  // Defensive sanitizer for known validation regressions:
+  // - Submission Date turning into checkbox
+  // - EV-Bike Last Status validation violation
+  try { sanitizeProblematicDataValidations06_(ss, profileName); } catch (eSan) {}
+
   endSegment_(segOpt, 'b2b=' + b2bCount + ' sc=' + scCount + ' ev=' + evCount, scMetrics || '', 'INFO');
 
   // Finalize Raw Data column order
