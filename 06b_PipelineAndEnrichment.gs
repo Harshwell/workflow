@@ -947,7 +947,7 @@ function getOperationalSheetNames06b_(pic) {
     : (CONFIG && CONFIG.sheetsByPic && CONFIG.sheetsByPic.picOperational ? CONFIG.sheetsByPic.picOperational : []);
 
   if (!Array.isArray(sheets) || !sheets.length) {
-    sheets = ['Submission','Ask Detail','OR - OLD','Start','Finish','SC - Farhan','SC - Meilani','SC - Ivan','PO','Exclusion'];
+    sheets = ['Submission','Ask Detail','OR - OLD','Start','Finish','SC - Farhan','SC - Meilani','SC - Meindar','PO','Exclusion'];
   }
   // Only core operational sheets (exclude optional modules)
   return sheets.filter(n => n && n !== 'B2B' && n !== 'EV-Bike' && n !== 'Special Case' && n !== 'Raw Data');
