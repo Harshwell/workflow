@@ -147,6 +147,67 @@ var CFG = {
 
 };
 
+var COMPILED_CFG = (function(cfg) {
+  function partnerKeyLocal_(s) {
+    return String(s || '').trim().toLowerCase().replace(/\s+/g, ' ');
+  }
+
+  function toLowerList_(list) {
+    var out = [];
+    for (var i = 0; i < list.length; i++) {
+      out.push(String(list[i] || '').toLowerCase());
+    }
+    return out;
+  }
+
+  var digiPartnerLookup = {};
+  for (var i = 0; i < cfg.DIGI_PARTNERS.length; i++) {
+    digiPartnerLookup[partnerKeyLocal_(cfg.DIGI_PARTNERS[i])] = true;
+  }
+
+  var excludedStatusLookup = {};
+  var excluded = cfg.EXCLUDED_LAST_STATUS_TEXTS || [];
+  for (var j = 0; j < excluded.length; j++) {
+    excludedStatusLookup[String(excluded[j] || '').trim().toLowerCase()] = true;
+  }
+
+  return {
+    DIGI_PARTNER_LOOKUP: digiPartnerLookup,
+    MIDDLE_SC_KEYWORDS_LOWER: {
+      Farhan: toLowerList_(cfg.MIDDLE_SC_KEYWORDS.Farhan || []),
+      Meilani: toLowerList_(cfg.MIDDLE_SC_KEYWORDS.Meilani || []),
+      Ivan: toLowerList_(cfg.MIDDLE_SC_KEYWORDS.Ivan || [])
+    },
+    EXCLUDED_STATUS_LOOKUP: excludedStatusLookup
+  };
+})(CFG);
+
+function validateCfg_() {
+  var required = [
+    'OVERVIEW_CLAIM_SS_ID',
+    'CLAIM_OUTSTANDING_SS_ID',
+    'STORE_REGION_SS_ID',
+    'STORE_REGION_SHEET',
+    'DEST_SHEET_DIGI',
+    'EXPECTED_COLUMNS',
+    'SOURCE_SHEETS'
+  ];
+  for (var i = 0; i < required.length; i++) {
+    var key = required[i];
+    if (!CFG[key] || (CFG[key].length !== undefined && CFG[key].length === 0)) {
+      throw new Error('Invalid CFG: required key is empty -> ' + key);
+    }
+  }
+
+  var seen = {};
+  for (var j = 0; j < CFG.SOURCE_SHEETS.length; j++) {
+    var sheetName = String(CFG.SOURCE_SHEETS[j] || '').trim();
+    if (!sheetName) throw new Error('Invalid CFG: SOURCE_SHEETS contains empty value.');
+    if (seen[sheetName]) throw new Error('Invalid CFG: duplicate SOURCE_SHEETS entry -> ' + sheetName);
+    seen[sheetName] = true;
+  }
+}
+
 
 /** =============================================================================
  *  STATUS TRANSLATION (raw -> friendly)
@@ -363,6 +424,7 @@ var PIC_GROUPS = {
  *  ENTRYPOINTS
  *  ===========================================================================*/
 function install() {
+  validateCfg_();
   var runId = RunIds.newId();
   var log = LoggerFactory.scoped(runId, 'install', null);
   log.info('Start install', null);
@@ -442,6 +504,7 @@ function resetSystemState() {
 }
 
 function startRun_(opts) {
+  validateCfg_();
   opts = opts || {};
 
   var runId = RunIds.newId();
@@ -522,6 +585,7 @@ function startRun_(opts) {
  * Worker trigger: process some tasks; finalize if queue drained.
  */
 function runWorker() {
+  validateCfg_();
   var runId = RunIds.newId();
   var log = LoggerFactory.scoped(runId, 'runWorker', null);
 
@@ -642,6 +706,7 @@ var TaskProcessor = {
     var regionMap = StoreRegionRepo.loadPartnerToRegionMap_(log);
 
     var stagingRows = [];
+    var skippedNoDestination = 0;
     for (var i = 0; i < values.length; i++) {
       var row = values[i];
 
@@ -653,6 +718,10 @@ var TaskProcessor = {
       var serviceCenter = String(plan.getFirst_(row, 'Service Center') || '').trim();
 
       var destSheet = Router.route_(partnerName, regionMap);
+      if (!destSheet) {
+        skippedNoDestination++;
+        continue;
+      }
       var pic = PicResolver.resolve_(rawStatus, serviceCenter);
       var translatedStatus = StatusTranslator.translate_(rawStatus);
 
@@ -674,6 +743,11 @@ var TaskProcessor = {
       log.info('Appended to staging', { rows: stagingRows.length });
     } else {
       log.info('No rows appended (empty / filtered)', null);
+    }
+
+    if (skippedNoDestination > 0) {
+      log.warn('Rows skipped due to unresolved destination routing', { skippedNoDestination: skippedNoDestination });
+      Audit.append_(log, { event: 'SKIPPED_NO_DESTINATION', skipped: skippedNoDestination, sourceSheet: task.sourceSheet });
     }
   }
 };
@@ -969,9 +1043,7 @@ var Router = {
     var partnerKey = Norm.partnerKey_(pn);
 
     // Digi override
-    for (var i = 0; i < CFG.DIGI_PARTNERS.length; i++) {
-      if (Norm.partnerKey_(CFG.DIGI_PARTNERS[i]) === partnerKey) return CFG.DEST_SHEET_DIGI;
-    }
+    if (COMPILED_CFG.DIGI_PARTNER_LOOKUP[partnerKey]) return CFG.DEST_SHEET_DIGI;
 
     var region = regionMap[partnerKey];
     if (region) return region;
@@ -1003,9 +1075,9 @@ var PicResolver = {
     var sc = String(serviceCenter || '').toLowerCase();
     if (!sc) return 'Unknown';
 
-    if (containsAny_(sc, CFG.MIDDLE_SC_KEYWORDS.Farhan)) return 'Farhan';
-    if (containsAny_(sc, CFG.MIDDLE_SC_KEYWORDS.Meilani)) return 'Meilani';
-    if (containsAny_(sc, CFG.MIDDLE_SC_KEYWORDS.Ivan)) return 'Ivan';
+    if (containsAny_(sc, COMPILED_CFG.MIDDLE_SC_KEYWORDS_LOWER.Farhan)) return 'Farhan';
+    if (containsAny_(sc, COMPILED_CFG.MIDDLE_SC_KEYWORDS_LOWER.Meilani)) return 'Meilani';
+    if (containsAny_(sc, COMPILED_CFG.MIDDLE_SC_KEYWORDS_LOWER.Ivan)) return 'Ivan';
 
     return 'Unknown';
   }
@@ -1024,11 +1096,7 @@ var StatusTranslator = {
 
   shouldExclude_: function(rawStatus, translatedStatus) {
     var translated = String(translatedStatus || this.translate_(rawStatus) || '').trim().toLowerCase();
-    var list = CFG.EXCLUDED_LAST_STATUS_TEXTS || [];
-    for (var i = 0; i < list.length; i++) {
-      if (translated === String(list[i] || '').trim().toLowerCase()) return true;
-    }
-    return false;
+    return !!COMPILED_CFG.EXCLUDED_STATUS_LOOKUP[translated];
   }
 };
 
