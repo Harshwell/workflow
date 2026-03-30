@@ -878,6 +878,15 @@ function runEmailIngest(maxThreads) {
         logLine_('MAIL', 'Queued thread has no messages', '', '', 'WARN');
         return { severity: 'WARN', message: 'Queued thread has no messages.', processed: 0, failed: 1 };
       }
+      try {
+        if (typeof setLogEventContext_ === 'function') {
+          setLogEventContext_({
+            emailFrom: (msg && msg.getFrom) ? msg.getFrom() : '',
+            emailSubject: (msg && msg.getSubject) ? msg.getSubject() : '',
+            threadId: (thread && thread.getId) ? thread.getId() : ''
+          });
+        }
+      } catch (eCtx0) {}
 
       const att = pickDashboardXlsxAttachment_(msg, policy);
       if (!att) {
@@ -885,6 +894,15 @@ function runEmailIngest(maxThreads) {
         logLine_('MAIL', 'No XLSX attachment found (leave queued)', msg.getSubject(), '', 'ERROR');
         return { severity: 'ERROR', message: 'No XLSX attachment found.', processed: 0, failed: failed };
       }
+      try {
+        if (typeof setLogEventContext_ === 'function') {
+          setLogEventContext_({
+            attachmentName: att.getName(),
+            attachmentSize: (att.getSize ? att.getSize() : ''),
+            attachmentType: (att.getContentType ? att.getContentType() : '')
+          });
+        }
+      } catch (eCtx1) {}
       // Idempotency: prevent duplicate processing of the same queued email.
       try {
         const tok = ['MAIN', thread.getId(), msg.getId(), att.getName(), att.getSize()].join('|');
@@ -907,6 +925,14 @@ function runEmailIngest(maxThreads) {
 
         setProgress_(0.35, 'Processing pipeline...');
         const res = runPipeline_('Master', [tmpFileId], { flow: 'main', source: 'EMAIL_MAIN', subject: msg.getSubject() });
+        try {
+          if (typeof setLogEventContext_ === 'function' && res) {
+            setLogEventContext_({
+              opsUpdated: (res.routedTotal != null ? res.routedTotal : ''),
+              rawRows: (res.rawRows != null ? res.rawRows : '')
+            });
+          }
+        } catch (eCtx2) {}
 
         // Determine success strictly: no exception + not severity ERROR
         const sev = String((res && res.severity) ? res.severity : 'INFO').toUpperCase();
@@ -1044,10 +1070,31 @@ function runSubEmailIngest(maxThreads) {
     if (!msg) msg = messages[messages.length - 1];
 
     const subject = String((msg && msg.getSubject) ? msg.getSubject() : '');
+    try {
+      if (typeof setLogEventContext_ === 'function') {
+        setLogEventContext_({
+          emailFrom: (msg && msg.getFrom) ? msg.getFrom() : '',
+          emailSubject: subject,
+          threadId: (thread && thread.getId) ? thread.getId() : ''
+        });
+      }
+    } catch (eCtx3) {}
     try { logLine_('SUB_EMAIL', 'Picked SUB email', subject, '', 'INFO'); } catch (e5) {}
 
     const atts = msg.getAttachments({ includeInlineImages: false, includeAttachments: true });
     const picked = __pickSubOldNewAttachments06a_(atts);
+    try {
+      if (typeof setLogEventContext_ === 'function') {
+        const names = [picked && picked.oldAtt ? picked.oldAtt.getName() : '', picked && picked.newAtt ? picked.newAtt.getName() : ''].filter(Boolean).join(' | ');
+        const sizeOld = (picked && picked.oldAtt && picked.oldAtt.getSize) ? Number(picked.oldAtt.getSize() || 0) : 0;
+        const sizeNew = (picked && picked.newAtt && picked.newAtt.getSize) ? Number(picked.newAtt.getSize() || 0) : 0;
+        setLogEventContext_({
+          attachmentName: names,
+          attachmentSize: (sizeOld + sizeNew) || '',
+          attachmentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        });
+      }
+    } catch (eCtx4) {}
 
     if (!picked.oldAtt || !picked.newAtt) {
       const names = (atts || []).map(a => (a && a.getName) ? a.getName() : '').join(' | ');
@@ -1157,10 +1204,15 @@ try {
       try { logLine_('SUB_FAIL', 'NEW processing failed; leave email queued', '', '', 'ERROR'); } catch (e8) {}
       return { severity: 'ERROR', message: 'SUB NEW failed', processed: 0, failed: 1, details: rNew };
     }
-
     // Relocate rows by Last Status mapping (move FULL row, dedupe by Claim Number).
     try { setProgressForFlow_('SUB', 0.80, 'Relocate + sort...', { prefixFlowInStep: true }); } catch (eP9) {}
     const relocateRes = __relocateOperationalRowsByLastStatusSub06a_(masterSs, opSheets);
+    try {
+      if (typeof setLogEventContext_ === 'function') {
+        const moved = (relocateRes && relocateRes.moved != null) ? relocateRes.moved : '';
+        setLogEventContext_({ opsUpdated: moved, subInserted: moved });
+      }
+    } catch (eCtx5) {}
     try { logLine_('SUB_MOVE', 'Relocated rows after SUB updates', JSON.stringify(relocateRes || {}), '', 'INFO'); } catch (e9a) {}
 
     // Final: sort operational sheets (Submission Date -> Last Status Date -> Last Status) preserving filters.

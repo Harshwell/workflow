@@ -48,8 +48,8 @@ const LOG_COLUMNS = Object.freeze({
  * LOG v2 (Structured stage log for MAIN/SUB)
  *
  * Note: This is designed to be backward compatible with the legacy Log table.
- * - Legacy table stays at columns B:H
- * - v2 table is placed starting at column J to avoid breaking existing formulas
+ * - Legacy table can be disabled via compaction mode
+ * - v2 table is the canonical reporting table
  *
  * v2 columns match the spec (Flow/RunID/Stage/Email/Attachment/Counts/Status).
  * Call-sites can gradually migrate to logStageV2_() without breaking old logLine_().
@@ -57,7 +57,7 @@ const LOG_COLUMNS = Object.freeze({
 const LOGV2_LAYOUT = Object.freeze({
   HEADER_ROW: LOG_LAYOUT.DETAIL_HEADER_ROW, // align with legacy header row
   START_ROW: LOG_LAYOUT.DETAIL_START_ROW,
-  START_COL: 10, // J
+  START_COL: 2, // B
   COLS: 21
 });
 // Compaction mode:
@@ -176,6 +176,7 @@ function resetLogState_() {
   // context (re-initialized per run; generated lazily)
   CACHE.log.runId = '';
   CACHE.log.flow = '';
+  CACHE.log.ctx = {};
   try { CACHE.log.mappingKeySet = new Set(); } catch (e) {}
 }
 function resetDetailsState_() {
@@ -255,6 +256,27 @@ function msFromSec_(sec) {
   const n = Number(sec);
   if (!isFinite(n)) return '';
   return Math.round(n * 1000);
+}
+function setLogEventContext_(ctx) {
+  const c = ctx || {};
+  if (!CACHE.log.ctx || typeof CACHE.log.ctx !== 'object') CACHE.log.ctx = {};
+  const keys = ['emailFrom','emailSubject','threadId','attachmentName','attachmentSize','attachmentType','rawRows','opsUpdated','subInserted'];
+  for (let i = 0; i < keys.length; i++) {
+    const k = keys[i];
+    if (c[k] != null && c[k] !== '') CACHE.log.ctx[k] = c[k];
+  }
+}
+function __extractCountFromMetrics02_(metrics, candidates) {
+  const s = String(metrics || '');
+  const keys = Array.isArray(candidates) ? candidates : [candidates];
+  for (let i = 0; i < keys.length; i++) {
+    const k = String(keys[i] || '').trim();
+    if (!k) continue;
+    const re = new RegExp(k + '\\s*[=:]\\s*(\\d+)', 'i');
+    const m = s.match(re);
+    if (m && m[1] != null) return Number(m[1]);
+  }
+  return '';
 }
 function joinNotes_(metrics, notes) {
   const a = String(metrics || '').trim();
@@ -554,17 +576,7 @@ function clearLogSheet_() {
   const pr = sh.getRange(LOG_LAYOUT.PROGRESS_VALUE_ROW, 2, 1, 4);
   safeClearContents_(pr);
   safeClearNotes_(pr);
-  // Clear detail table body
-  const maxRows = sh.getMaxRows();
-  const detailRows = maxRows - (LOG_LAYOUT.DETAIL_START_ROW - 1);
-  if (detailRows > 0) {
-    const rng = sh.getRange(LOG_LAYOUT.DETAIL_START_ROW, LOG_COLUMNS.NUMBER, detailRows, 7);
-    safeClearContents_(rng);
-    safeClearNotes_(rng);
-    // Keep format to preserve visual style (per spec)
-    // safeClearFormat_(rng);
-  }
-  // Clear v2 structured log table body (cols J..)
+  // Clear v2 structured log table body (canonical table)
   try {
     const maxRows = sh.getMaxRows();
     const rows = maxRows - (LOGV2_LAYOUT.START_ROW - 1);
@@ -660,6 +672,10 @@ function pushLogRow_(segId, segName, durationSec, metrics, notes, severity) {
   }
   // Mirror into structured log v2 (best-effort, backward compatible)
   try {
+    const ctx = (CACHE.log && CACHE.log.ctx && typeof CACHE.log.ctx === 'object') ? CACHE.log.ctx : {};
+    const mRaw = __extractCountFromMetrics02_(metrics, ['rawRows', 'raw_rows', 'rows']);
+    const mOps = __extractCountFromMetrics02_(metrics, ['opsUpdated', 'ops_updated']);
+    const mSub = __extractCountFromMetrics02_(metrics, ['subInserted', 'sub_inserted', 'inserted']);
     pushLogV2Row_({
       timestamp: new Date(),
       flow: (function(){ const rid = getRunId_(); const f0 = getLogFlow_(); const f = f0 || inferFlowFromSegId_(segId); try { if (!f0 && f) setLogRunContext_(f, rid); } catch (e0) {} return f; })(),
@@ -668,6 +684,15 @@ function pushLogRow_(segId, segName, durationSec, metrics, notes, severity) {
       timeSegment: String(segName || ''),
       durationSec: (durationSec != null && durationSec !== '') ? durationSec : '',
       durationMs: (durationSec != null && durationSec !== '') ? msFromSec_(durationSec) : '',
+      emailFrom: ctx.emailFrom || '',
+      emailSubject: ctx.emailSubject || '',
+      threadId: ctx.threadId || '',
+      attachmentName: ctx.attachmentName || '',
+      attachmentSize: (ctx.attachmentSize != null ? ctx.attachmentSize : ''),
+      attachmentType: ctx.attachmentType || '',
+      rawRows: (ctx.rawRows != null && ctx.rawRows !== '') ? ctx.rawRows : mRaw,
+      opsUpdated: (ctx.opsUpdated != null && ctx.opsUpdated !== '') ? ctx.opsUpdated : mOps,
+      subInserted: (ctx.subInserted != null && ctx.subInserted !== '') ? ctx.subInserted : mSub,
       status: String(sev || 'INFO'),
       error: ((String(sev).toUpperCase() === 'ERROR' || String(sev).toUpperCase() === 'FATAL') ? String(notes || '') : ''),
       metrics: String(metrics || ''),
