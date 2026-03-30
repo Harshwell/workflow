@@ -312,6 +312,13 @@ function applyOperationalColumnSchema_(sh, header, startRow, nRows, opts) {
 
   // Dates
   fmt('Submission Date', __FORMATS.DATE, 'center');
+  // Defensive: Submission Date must never be checkbox-validated.
+  try {
+    const cSub = idx['Submission Date'];
+    if (cSub != null && !DRY_RUN) {
+      sh.getRange(startRow, cSub + 1, nRows, 1).clearDataValidations();
+    }
+  } catch (eSubDv) {}
   fmt('Last Status Date', __FORMATS.DATE, 'center');
   fmt('Last Status Datetime', __FORMATS.DATETIME, 'center');
   fmt('Timestamp', __FORMATS.TIMESTAMP, 'center');
@@ -1063,6 +1070,9 @@ function buildSheetWriters_(ss, routingMap, headerIndexRaw, pic) {
         set('Partner Name', getRaw(rawRow, h.businessPartner));
         set('Insurance', normalizeInsuranceShort05b_(getRawAny(rawRow, [h.insuranceName, h.insurance, 'insurance_name', 'insurance'])));
         set('Device Type', getRawAny(rawRow, [h.deviceType, 'device_type', 'deviceType']));
+        set('Store Name', getRawAny(rawRow, ['3. All Transaction - qoala_policy_number → outlet_name', 'outlet_name', 'store_name', 'Store Name']));
+        set('PA Name', getRawAny(rawRow, ['3. All Transaction - qoala_policy_number → pa_name', 'pa_name', 'PA Name']));
+        set('SPA Name', getRawAny(rawRow, ['3. All Transaction - qoala_policy_number → spa_name', 'spa_name', 'SPA Name']));
         set('Service Center', getRawAny(rawRow, [h.serviceCenter, h.serviceCenterName, h.scName, 'service_center', 'service_center_name', 'sc_name']));
         set('Service Center Name', getRawAny(rawRow, [h.serviceCenterName, h.serviceCenter, h.scName, 'service_center_name', 'service_center', 'sc_name']));
         // - Device Brand / IMEI

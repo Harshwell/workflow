@@ -58,7 +58,7 @@ const LOGV2_LAYOUT = Object.freeze({
   HEADER_ROW: LOG_LAYOUT.DETAIL_HEADER_ROW, // align with legacy header row
   START_ROW: LOG_LAYOUT.DETAIL_START_ROW,
   START_COL: 2, // B
-  COLS: 21
+  COLS: 14
 });
 // Compaction mode:
 // - true  => write stage lines only to LOG v2 table (compact, non-duplicate)
@@ -68,16 +68,9 @@ const LOGV2_HEADER = Object.freeze([
   'No',
   'Timestamp',
   'Flow',
-  'Run ID',
   'Stage',
   'Time Segment',
   'Duration(ms)/(s)',
-  'Email From',
-  'Email Subject',
-  'Thread ID',
-  'Attachment Name',
-  'Attachment Size',
-  'Attachment Type',
   'Raw Rows',
   'Ops Updated',
   'Sub Inserted',
@@ -429,14 +422,14 @@ function ensureLogLayout_(sh) {
   if (isDryRun_()) return;
   // Minimal + idempotent: don't wipe formatting unless missing
   try {
-    const headerRange = sh.getRange(LOG_LAYOUT.PROGRESS_HEADER_ROW, 2, 1, 4);
-    const h = headerRange.getValues()[0];
-    const expected = ['Progress', '%', 'Current Step', 'Updated At'];
+    const h = sh.getRange(LOG_LAYOUT.PROGRESS_HEADER_ROW, 2, 1, 8).getValues()[0];
+    const expected = ['Progress', '%', 'Current Step', 'Updated At', 'Email From', 'Email Subject', 'Attachment Size', 'Attachment Type'];
     let needs = false;
     for (let i = 0; i < expected.length; i++) {
       if (String(h[i] || '').trim() !== expected[i]) { needs = true; break; }
     }
     if (needs) {
+      const headerRange = sh.getRange(LOG_LAYOUT.PROGRESS_HEADER_ROW, 2, 1, expected.length);
       safeSetValues_(headerRange, [expected]);
       try { headerRange.setFontWeight('bold'); } catch (e0) {}
     }
@@ -512,17 +505,10 @@ function pushLogV2Row_(entry) {
     no,
     ts,
     e.flow || getLogFlow_() || '',
-    e.runId || getRunId_() || '',
     e.stage || '',
     e.timeSegment || '',
     (e.durationMs != null && e.durationMs !== '') ? e.durationMs :
       (e.durationSec != null && e.durationSec !== '' ? msFromSec_(e.durationSec) : ''),
-    e.emailFrom || '',
-    e.emailSubject || '',
-    e.threadId || '',
-    e.attachmentName || '',
-    (e.attachmentSize != null && e.attachmentSize !== '') ? e.attachmentSize : '',
-    e.attachmentType || '',
     (e.rawRows != null && e.rawRows !== '') ? e.rawRows : '',
     (e.opsUpdated != null && e.opsUpdated !== '') ? e.opsUpdated : '',
     (e.subInserted != null && e.subInserted !== '') ? e.subInserted : '',
@@ -573,7 +559,7 @@ function clearLogSheet_() {
   const sh = getLogSheet_();
   ensureLogLayout_(sh);
   // Clear progress values (content only; keep header)
-  const pr = sh.getRange(LOG_LAYOUT.PROGRESS_VALUE_ROW, 2, 1, 4);
+  const pr = sh.getRange(LOG_LAYOUT.PROGRESS_VALUE_ROW, 2, 1, 8);
   safeClearContents_(pr);
   safeClearNotes_(pr);
   // Clear v2 structured log table body (canonical table)
@@ -601,7 +587,16 @@ const spark = buildSparklineFormula_(ss, r);
 const progressCell = sh.getRange('B3');
 safeSetFormula_(progressCell, spark);
 const updatedAt = nowStr_('dd MMM yyyy, HH:mm:ss');
-safeSetValues_(sh.getRange('C3:E3'), [[pct + '%', stepLabel || '', updatedAt]]);
+const ctx = (CACHE.log && CACHE.log.ctx && typeof CACHE.log.ctx === 'object') ? CACHE.log.ctx : {};
+safeSetValues_(sh.getRange('C3:I3'), [[
+  pct + '%',
+  stepLabel || '',
+  updatedAt,
+  ctx.emailFrom || '',
+  ctx.emailSubject || '',
+  (ctx.attachmentSize != null ? ctx.attachmentSize : ''),
+  ctx.attachmentType || ''
+]]);
 try {
   const flow = getLogFlow_() || '';
   const runId = getRunId_() || '';

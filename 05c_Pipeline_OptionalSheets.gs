@@ -1246,7 +1246,21 @@ function processEVBike_(ss, rawValues, headerIndexRaw, pic) { // `pic` kept for 
   } catch (e) {}
 
   if (!values.length) return 0;
-  safeSetValues_(sh.getRange(2, 1, values.length, header.length), values);
+  // Never overwrite manual Status dropdown column on EV-Bike.
+  // Write left/right segments around "Status" when column exists.
+  const idxStatus = (idxH['Status'] != null) ? idxH['Status'] : -1;
+  if (idxStatus === -1) {
+    safeSetValues_(sh.getRange(2, 1, values.length, header.length), values);
+  } else {
+    if (idxStatus > 0) {
+      const left = values.map(r => r.slice(0, idxStatus));
+      safeSetValues_(sh.getRange(2, 1, values.length, idxStatus), left);
+    }
+    if (idxStatus < header.length - 1) {
+      const right = values.map(r => r.slice(idxStatus + 1));
+      safeSetValues_(sh.getRange(2, idxStatus + 2, values.length, header.length - idxStatus - 1), right);
+    }
+  }
 
   // Apply RichText hyperlink only for touched rows
   if (dbLinkCol0 != null && touchedRowNums.length) __setDbLinkRichTextSegments_(sh, dbLinkCol0, touchedRowNums, urlMap);

@@ -1627,9 +1627,9 @@ function __buildSubRawIndex06a_(values) {
   const idxInsurance = idxOfAny(['insurance_partner_code', 'insurance', 'insurance_code', 'insurance partner code']);
   const idxDeviceType = idxOfAny(['device_type', 'device type']);
   const idxImei = idxOfAny(['device_imei', 'imei/sn', 'imei', 'sn', 'imei/sn']);
-  const idxStoreName = idxOfAny(['outlet_name', 'outlet name', 'store_name', 'store name']);
-  const idxPaName = idxOfAny(['pa_name', 'pa name']);
-  const idxSpaName = idxOfAny(['spa_name', 'spa name']);
+  const idxStoreName = idxOfAny(['3. all transaction - qoala_policy_number → outlet_name', 'outlet_name', 'outlet name', 'store_name', 'store name']);
+  const idxPaName = idxOfAny(['3. all transaction - qoala_policy_number → pa_name', 'pa_name', 'pa name']);
+  const idxSpaName = idxOfAny(['3. all transaction - qoala_policy_number → spa_name', 'spa_name', 'spa name']);
 
   const map = new Map();
   for (let r = 1; r < v.length; r++) {
@@ -1931,6 +1931,11 @@ function __updateOperationalSheetsFromRaw06a_(ss, sheetNames, rawMap, ctx) {
       writeCol(idxTimestamp, outTimestamp);
       writeCol(idxStatus, outStatus);
       writeCol(idxRemarks, outRemarks);
+
+      // Defensive: Submission Date must stay date-type, not checkbox.
+      if (idxSubmissionDate >= 0) {
+        try { sh.getRange(2, idxSubmissionDate + 1, numDataRows, 1).clearDataValidations(); } catch (eDvSub) {}
+      }
 
       // Enforce SUB datetime format if Last Status Date exists.
       if (idxLastStatusDate >= 0) {
