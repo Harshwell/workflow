@@ -29,16 +29,16 @@ Struktur dokumentasi yang dipakai:
 
 | File | Peran utama | Ubah di sini ketika... |
 |---|---|---|
-| `00_Config` | source of truth untuk policy, mapping, konstanta, flags, routing, workbook/sheet config | menambah status, ubah routing, ubah policy bisnis, ubah IDs/sheet names, ubah feature flags |
-| `01_Utils` | utility layer: safe I/O, coercion, date parsing, header matching, retry, idempotency, gmail/drive helpers | butuh helper generik reusable, bukan business rule |
-| `02_LogAndDetails` | logging dan details reporting | ubah perilaku log/detail, struktur audit output |
-| `03_SheetsAndValidation` | sheet assurance, template header, dropdown propagation, layout enforcement | ubah template sheet, schema heal, dropdown/checkbox/layout |
-| `04_ParseAndAging` | parsing input dan aging derivation | ubah cara membaca file sumber / parsing dataset |
-| `05a_Pipeline_RawMutate_Backup` | raw mutation / backup stage | ubah tahap transform raw sebelum routing lanjutan |
-| `05c_Pipeline_OptionalSheets` | optional sheet processors | ubah logika B2B / EV-Bike / Special Case |
-| `06a_EntryPoints` | trigger entrypoints dan flow orchestration MAIN / SUB / FORM | ubah trigger, orchestration flow, queue consumer, attachment process orchestration |
-| `06b_PipelineAndEnrichment` | enrichment / main pipeline logic | ubah enrichment atau tahap pipeline utama |
-| `06c_PostProcessAndUtils` | post-process, status type, movement/webapp helpers, final utilities | ubah finalization, movement tracking, atau util pasca pipeline |
+| `00_Config.gs` | source of truth untuk policy, mapping, konstanta, flags, routing, workbook/sheet config | menambah status, ubah routing, ubah policy bisnis, ubah IDs/sheet names, ubah feature flags |
+| `01_Utils.gs` | utility layer: safe I/O, coercion, date parsing, header matching, retry, idempotency, gmail/drive helpers | butuh helper generik reusable, bukan business rule |
+| `02_LogAndDetails.gs` | logging dan details reporting | ubah perilaku log/detail, struktur audit output |
+| `03_SheetsAndValidation.gs` | sheet assurance, template header, dropdown propagation, layout enforcement | ubah template sheet, schema heal, dropdown/checkbox/layout |
+| `04_ParseAndAging.gs` | parsing input dan aging derivation | ubah cara membaca file sumber / parsing dataset |
+| `05a_Pipeline_RawMutate_Backup.gs` | raw mutation / backup stage | ubah tahap transform raw sebelum routing lanjutan |
+| `05c_Pipeline_OptionalSheets.gs` | optional sheet processors | ubah logika B2B / EV-Bike / Special Case |
+| `06a_EntryPoints.gs` | trigger entrypoints dan flow orchestration MAIN / SUB / FORM | ubah trigger, orchestration flow, queue consumer, attachment process orchestration |
+| `06b_PipelineAndEnrichment.gs` | enrichment / main pipeline logic | ubah enrichment atau tahap pipeline utama |
+| `06c_PostProcessAndUtils.gs` | post-process, status type, movement/webapp helpers, final utilities | ubah finalization, movement tracking, atau util pasca pipeline |
 
 ---
 
@@ -47,7 +47,7 @@ Struktur dokumentasi yang dipakai:
 Secara konseptual repo ini terdiri dari 4 layer:
 
 ### 1. Policy layer
-Berada terutama di `00_Config`.
+Berada terutama di `00_Config.gs`.
 
 Isi layer ini:
 - status routing
@@ -60,7 +60,7 @@ Isi layer ini:
 - runtime knobs
 
 ### 2. Utility layer
-Berada terutama di `01_Utils`.
+Berada terutama di `01_Utils.gs`.
 
 Isi layer ini:
 - safe write helpers
@@ -71,7 +71,7 @@ Isi layer ini:
 - generic Gmail / Drive helpers
 
 ### 3. Schema & presentation layer
-Berada terutama di `03_SheetsAndValidation`.
+Berada terutama di `03_SheetsAndValidation.gs`.
 
 Isi layer ini:
 - ensure sheet
@@ -137,7 +137,7 @@ Detail diagram dan impact map ada di `docs/WORKFLOW_MAP.md`.
 ## Aturan maintenance
 
 ### Ubah status atau routing?
-Mulai dari `00_Config`.
+Mulai dari `00_Config.gs`.
 
 Cek minimal bagian berikut:
 - `OPS_ROUTING_POLICY`
@@ -147,7 +147,7 @@ Cek minimal bagian berikut:
 - policy sheet khusus seperti SC / PO / Exclusion / Special Case
 
 ### Ubah template kolom sheet?
-Mulai dari `03_SheetsAndValidation`.
+Mulai dari `03_SheetsAndValidation.gs`.
 
 Cek minimal bagian berikut:
 - `SV03_TEMPLATES`
@@ -156,13 +156,13 @@ Cek minimal bagian berikut:
 - `sv03_enforceStandardLayoutForSheet_`
 
 ### Ubah parsing / datetime / header matching?
-Mulai dari `01_Utils` dan `04_ParseAndAging`.
+Mulai dari `01_Utils.gs` dan `04_ParseAndAging.gs`.
 
 ### Ubah trigger atau orchestration flow?
-Mulai dari `06a_EntryPoints`.
+Mulai dari `06a_EntryPoints.gs`.
 
 ### Ubah optional sheet behavior?
-Mulai dari `05c_Pipeline_OptionalSheets` dan policy pendukung di `00_Config`.
+Mulai dari `05c_Pipeline_OptionalSheets.gs` dan policy pendukung di `00_Config.gs`.
 
 ---
 
@@ -218,7 +218,7 @@ Berikut temuan paling penting dari review awal repo ini.
 Putaran hardening terbaru sudah menutup beberapa sumber masalah yang paling berbahaya:
 
 - konstruksi `CONFIG` tidak lagi memicu load-time crash karena referensi konstanta yang belum siap
-- bootstrap patch di `06d_IntegratedMaintenance` tidak lagi men-shadow helper utama
+- bootstrap patch di `06d_IntegratedMaintenance.gs` tidak lagi men-shadow helper utama
 - self-check sekarang membaca simbol global `const` / `let` dengan benar
 - parsing datetime dan sort-under-filter diperketat di area operasional yang paling rawan drift
 - repo sekarang punya `appsscript.json` eksplisit dan `tools/static_smoke_check.js` untuk smoke-check lokal
@@ -240,7 +240,7 @@ Perubahan lanjutan yang sudah diterapkan setelah patch critical sebelumnya:
 
 ### Update konsolidasi helper (2026-03-29, phase 3)
 
-- Helper DB classifier dan parser datetime claim dipusatkan ke `01_Utils` untuk memangkas duplikasi lintas modul.
+- Helper DB classifier dan parser datetime claim dipusatkan ke `01_Utils.gs` untuk memangkas duplikasi lintas modul.
 - Helper map insurance di modul operasional diarahkan ke `mapInsuranceShort_()` yang sudah jadi source bersama.
 - `getStatusTypeMap06c_` sekarang strict ke source-of-truth config (tanpa hardcoded fallback map lokal).
 - `enrichOperationalSheetsFromRaw06_` mulai dipisah bertahap dengan resolver indeks raw terpusat agar maintenance lebih aman.
@@ -250,11 +250,8 @@ Perubahan lanjutan yang sudah diterapkan setelah patch critical sebelumnya:
 ### Update struktur SUB helper (2026-03-29, phase 4A)
 
 - Implementasi helper SUB untuk append ke `Submission` dan sort operational dipindahkan ke `06e_SubHelpers.gs`.
-- `06a_EntryPoints` tetap mempertahankan nama fungsi existing sebagai delegator supaya caller lama tidak pecah.
+- `06a_EntryPoints.gs` tetap mempertahankan nama fungsi existing sebagai delegator supaya caller lama tidak pecah.
 - Ditambahkan runtime preflight non-fatal (`06f_RuntimeAssertions.gs`) di flow MAIN/SUB untuk deteksi dini missing symbol tanpa memutus run.
-- Implementasi helper SUB untuk append ke `Submission` dan sort operational dipindahkan ke `06e_SubHelpers`.
-- `06a_EntryPoints` tetap mempertahankan nama fungsi existing sebagai delegator supaya caller lama tidak pecah.
-- Ditambahkan runtime preflight non-fatal (`06f_RuntimeAssertions`) di flow MAIN/SUB untuk deteksi dini missing symbol tanpa memutus run.
 
 ### Yang sudah bagus
 
@@ -277,14 +274,14 @@ Ada indikasi sebagian kode membaca policy lewat `CONFIG.*`, sementara source of 
 
 **Prioritas:** tinggi
 
-#### 3. `00_Config` terlalu besar untuk discovery cepat
+#### 3. `00_Config.gs` terlalu besar untuk discovery cepat
 Sebagai source of truth, file ini kuat. Sebagai file yang harus dipahami manusia, file ini terlalu padat. Mencari satu aturan terasa seperti audit forensik kecil-kecilan.
 
 **Prioritas:** menengah
 
 **Saran minimal:** jangan langsung pecah jadi banyak file. Mulai dengan section index yang stabil, naming convention yang lebih tegas, dan blok “change here when...” di setiap domain config.
 
-#### 4. `06a_EntryPoints` masih terlalu gemuk
+#### 4. `06a_EntryPoints.gs` masih terlalu gemuk
 File entrypoint ini tidak lagi murni entrypoint. Ia juga menampung cukup banyak orchestration detail, helper flow, sorting, relocation, dan beberapa concern operasional lain.
 
 **Prioritas:** menengah
@@ -335,8 +332,8 @@ Pakai strategi 3 tahap berikut:
 
 ### Tahap 3 — split hanya yang paling padat
 Prioritas split nanti:
-1. `06a_EntryPoints`
-2. `00_Config`
+1. `06a_EntryPoints.gs`
+2. `00_Config.gs`
 3. baru area lain jika memang masih sakit dibaca
 
 ---
@@ -360,8 +357,8 @@ Prioritas paling masuk akal setelah dokumentasi ini:
 
 1. perbaiki bug header validation di utility layer
 2. rapikan lookup policy details log supaya source of truth konsisten
-3. tambahkan section index di `00_Config`
-4. kurangi kepadatan `06a_EntryPoints` tanpa meledakkan jumlah file
+3. tambahkan section index di `00_Config.gs`
+4. kurangi kepadatan `06a_EntryPoints.gs` tanpa meledakkan jumlah file
 
 ---
 
