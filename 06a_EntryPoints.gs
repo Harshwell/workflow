@@ -394,6 +394,7 @@ function onFormSubmit(e) {
       }
     } catch (e2) {}
 
+    try { setProgressForFlow_(flowLabel, 0, 'Starting...', { runId: runId, prefixFlowInStep: true }); } catch (e3) {}
     try { setProgressForFlow_(flowLabel, 0, 'Starting…', { runId: runId, prefixFlowInStep: true }); } catch (e3) {}
     try { logLine_('FORM', 'Trigger received', 'flow=' + flowLabel + ' runId=' + runId, 'files=' + (req.allFileIds ? req.allFileIds.length : 0), 'INFO'); } catch (e4) {}
 
@@ -598,6 +599,7 @@ function __runSubCore06a_(masterSs, oldBlob, newBlob, opt) {
   const doTrashFlush = !!o.doTrashFlush;
 
   const startedAt = new Date();
+  try { setProgressForFlow_('SUB', 0.05, 'Snapshot PREV...', { prefixFlowInStep: true }); } catch (e0) {}
   try { setProgressForFlow_('SUB', 0.05, 'Snapshot PREV…', { prefixFlowInStep: true }); } catch (e0) {}
 
   // WebApp snapshots (best effort)
@@ -609,6 +611,7 @@ function __runSubCore06a_(masterSs, oldBlob, newBlob, opt) {
     try { logLine_('WEBAPP_SNAP_PREV_ERR', 'Snapshot PREV failed (non-fatal)', String(eWp0), '', 'WARN'); } catch (eWp2) {}
   }
 
+  try { setProgressForFlow_('SUB', 0.20, 'Process OLD...', { prefixFlowInStep: true }); } catch (e1) {}
   try { setProgressForFlow_('SUB', 0.20, 'Process OLD…', { prefixFlowInStep: true }); } catch (e1) {}
 
   const rOld = __processSubAttachment06a_(masterSs, oldBlob, {
@@ -621,6 +624,7 @@ function __runSubCore06a_(masterSs, oldBlob, newBlob, opt) {
     return { severity: 'ERROR', message: 'SUB OLD failed', old: rOld };
   }
 
+  try { setProgressForFlow_('SUB', 0.55, 'Process NEW...', { prefixFlowInStep: true }); } catch (e3) {}
   try { setProgressForFlow_('SUB', 0.55, 'Process NEW…', { prefixFlowInStep: true }); } catch (e3) {}
 
   const rNew = __processSubAttachment06a_(masterSs, newBlob, {
@@ -633,6 +637,7 @@ function __runSubCore06a_(masterSs, oldBlob, newBlob, opt) {
     return { severity: 'ERROR', message: 'SUB NEW failed', old: rOld, new: rNew };
   }
 
+  try { setProgressForFlow_('SUB', 0.78, 'Relocate + sort...', { prefixFlowInStep: true }); } catch (e5) {}
   try { setProgressForFlow_('SUB', 0.78, 'Relocate + sort…', { prefixFlowInStep: true }); } catch (e5) {}
 
   const relocateRes = __relocateOperationalRowsByLastStatusSub06a_(masterSs, opSheets);
@@ -765,6 +770,7 @@ function ensureRawTailColumns06_(rawSheet) {
 
 
 /** =========================
+ * Email ingest flow (Dashboard -> Raw Data)
  * Email ingest flow (Dashboard → Raw Data)
  * ========================= */
 function buildDashboardEmailQuery_(policy) {
@@ -833,6 +839,7 @@ function runEmailIngest(maxThreads) {
       // Hard rule: 1 email per run (override any provided maxThreads)
       const limit = 1;
 
+      setProgress_(0, 'Searching queued email...');
       setProgress_(0, 'Searching queued email…');
       logLine_('MAIL', 'MAIN ingest started', 'query=' + query, 'limit=' + limit, 'INFO');
 
@@ -891,6 +898,11 @@ function runEmailIngest(maxThreads) {
 
       let tmpFileId = null;
       try {
+        setProgress_(0.15, 'Converting XLSX...');
+        const conv = convertXlsxBlobToTempSpreadsheet_(att.copyBlob(), att.getName());
+        tmpFileId = conv.fileId;
+
+        setProgress_(0.35, 'Processing pipeline...');
         setProgress_(0.15, 'Converting XLSX…');
         const conv = convertXlsxBlobToTempSpreadsheet_(att.copyBlob(), att.getName());
         tmpFileId = conv.fileId;
@@ -909,6 +921,7 @@ function runEmailIngest(maxThreads) {
         processed++;
 
         // Cleanup success (per spec)
+        setProgress_(0.85, 'Cleaning up email...');
         setProgress_(0.85, 'Cleaning up email…');
         try { msg.markRead(); } catch (e1) {}
         try { thread.markRead(); } catch (e2) {}
@@ -2441,6 +2454,7 @@ function runManual(picOrFileIdsCsv, fileIdsCsvMaybe) {
     let ssTiming = null;
     try { ssTiming = __logOverviewStart06_(key, startedAt); } catch (e) {}
 
+    setProgress_(0, 'Starting (manual)...');
     setProgress_(0, 'Starting (manual)…');
     logLine_('BOOT', 'Manual run started', 'version=' + APP_VERSION, 'profile=' + key, 'INFO');
 
