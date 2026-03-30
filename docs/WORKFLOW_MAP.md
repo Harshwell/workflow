@@ -49,10 +49,6 @@ flowchart LR
     A --> D[04_ParseAndAging]
     A --> E[05* Pipeline Stages]
     A --> F[06* Entry / Post Process]
-    F --> G[06e_SubHelpers.gs (SUB internals)]
-    F --> H[06f_RuntimeAssertions.gs (preflight checks)]
-    F --> G[06e_SubHelpers (SUB internals)]
-    F --> H[06f_RuntimeAssertions (preflight checks)]
 
     B --> D
     B --> E
@@ -67,10 +63,10 @@ flowchart LR
 
 Interpretasi praktis:
 
-- `00_Config` adalah policy backbone
-- `01_Utils` adalah utility backbone (termasuk helper header matching bersama seperti `findHeaderIndexByCandidates_`)
-- `03_SheetsAndValidation` adalah schema/layout backbone
-- `06a_EntryPoints` adalah orchestration entry backbone
+- `00_Config.gs` adalah policy backbone
+- `01_Utils.gs` adalah utility backbone (termasuk helper header matching bersama seperti `findHeaderIndexByCandidates_`)
+- `03_SheetsAndValidation.gs` adalah schema/layout backbone
+- `06a_EntryPoints.gs` adalah orchestration entry backbone
 
 Kalau salah satu dari empat titik ini berubah, biasanya dampaknya lintas modul.
 
@@ -96,9 +92,9 @@ flowchart TD
 ### MAIN touchpoints
 
 Kalau ingin mengubah MAIN, biasanya area yang terdampak:
-- email query / queue policy → `00_Config`, `06a_EntryPoints`
-- attachment selection → `01_Utils`, `06a_EntryPoints`
-- pipeline execution → `06a_EntryPoints`, `06b_PipelineAndEnrichment`
+- email query / queue policy → `00_Config.gs`, `06a_EntryPoints.gs`
+- attachment selection → `01_Utils.gs`, `06a_EntryPoints.gs`
+- pipeline execution → `06a_EntryPoints.gs`, `06b_PipelineAndEnrichment.gs`
 - raw write / enrichment → `04_*`, `05*`, `06b_*`
 
 ---
@@ -126,12 +122,12 @@ flowchart TD
 ### SUB touchpoints
 
 Kalau ingin mengubah SUB, biasanya area yang terdampak:
-- old/new attachment detection → `06a_EntryPoints`
-- raw sheet naming / policy → `00_Config`
-- operational update fields → `06a_EntryPoints`
-- row relocation logic → `06a_EntryPoints` + routing policy di `00_Config`
-- sorting criteria → `00_Config` / `06a_EntryPoints`
-- movement tracking → `06c_PostProcessAndUtils`
+- old/new attachment detection → `06a_EntryPoints.gs`
+- raw sheet naming / policy → `00_Config.gs`
+- operational update fields → `06a_EntryPoints.gs`
+- row relocation logic → `06a_EntryPoints.gs` + routing policy di `00_Config.gs`
+- sorting criteria → `00_Config.gs` / `06a_EntryPoints.gs`
+- movement tracking → `06c_PostProcessAndUtils.gs`
 
 ---
 
@@ -151,9 +147,9 @@ flowchart TD
 ### FORM touchpoints
 
 Kalau ingin mengubah flow manual/form:
-- field mapping / file upload interpretation → `00_Config`, `06a_EntryPoints`
-- auto-detection MAIN vs SUB → `06a_EntryPoints`
-- progress / timing / log context → `06a_EntryPoints`, `02_LogAndDetails`
+- field mapping / file upload interpretation → `00_Config.gs`, `06a_EntryPoints.gs`
+- auto-detection MAIN vs SUB → `06a_EntryPoints.gs`
+- progress / timing / log context → `06a_EntryPoints.gs`, `02_LogAndDetails.gs`
 
 ---
 
@@ -170,7 +166,7 @@ Minimal cek:
 ### Jika menambah kolom baru pada sheet operasional
 Minimal cek:
 - `SV03_TEMPLATES`
-- formatting / checkbox / dropdown behavior di `03_SheetsAndValidation`
+- formatting / checkbox / dropdown behavior di `03_SheetsAndValidation.gs`
 - writer yang mengisi kolom itu
 - apakah kolom itu source-driven, derived, atau manual-only
 
@@ -189,8 +185,8 @@ Minimal cek:
 
 ### Jika mengubah optional sheet logic
 Minimal cek:
-- `05c_Pipeline_OptionalSheets`
-- flags/policy di `00_Config`
+- `05c_Pipeline_OptionalSheets.gs`
+- flags/policy di `00_Config.gs`
 - schema fixed vs non-fixed
 - apakah sheet itu boleh auto-heal atau harus diperlakukan manual
 
@@ -238,11 +234,11 @@ Urutan refactor yang paling masuk akal:
    - inconsistent policy lookup
 
 2. **discovery improvement**
-   - section index di `00_Config`
+   - section index di `00_Config.gs`
    - boundary docblock di function integrasi
 
 3. **structural slimming**
-   - kecilkan `06a_EntryPoints`
+   - kecilkan `06a_EntryPoints.gs`
    - rapikan backward compatibility branch yang sudah tidak perlu
 
 Bukan sebaliknya. Jangan mulai dari operasi kosmetik besar yang hasil akhirnya cuma folder makin ramai.
