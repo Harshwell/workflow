@@ -1,1494 +1,1147 @@
 /***************************************
- * 05b_Pipeline_RoutingOperational.gs
+ * 05a_Pipeline_RawMutate_Backup.gs
  * Split from: 05_Pipeline_Routing_Optional.gs
  * Scope:
- *  - Routing map compilation + sheet writer builders
- *  - Clear operational sheets
- *  - Route Raw -> operational sheets (in-memory writers + flush)
- *  - Sorting operational + optional sheets
+ *  - Safe fallbacks (FORMATS / OPTIONAL flags / SPECIAL flags)
+ *  - RAW write helpers
+ *  - Typed date/OR helpers
+ *  - Associate mapping + Raw in-memory mutation (aging + QL/ML/MQ + Associate + OR defaulting)
+ *  - Backup operational columns -> Raw (in-memory)
+ *  - Raw minimal column writeback
+ ***************************************/
+
+/** REVISION NOTE (2026-01-26)
+ * - Added 'SC - Ivan' to the last-resort operational sheet list in getOperationalSheetsForBackup_(),
+ *   aligned with 3-way SC routing (Farhan/Meilani/Ivan).
+ */
+
+/***************************************
+ * 05_Pipeline_Routing_Optional.gs
+ * Enterprise refactor:
+ * - Typed date/datetime/timestamp writes (no mixed string dates)
+ * - Avoid validation violations (Associate unknown => blank)
+ * - Admin skips optional sheets (B2B / Special Case / EV-Bike)
+ * - Special Case rules per request (year>=MIN_SUBMISSION_YEAR, Q-L 0/1, exclude done statuses, numeric money)
+ * - OR standardized:
+ *    - OR        = checkbox (TRUE/FALSE) for operational sheets
+ *    - OR Amount = claim_own_risk_amount (numeric) for money usage (Special Case, or any sheet with "OR Amount")
+ * - Consistent column formatting & alignment (minimal calls)
  ***************************************/
 'use strict';
 
-/**
- * Returns TRUE when DRY_RUN is enabled.
- * Supports both global DRY_RUN constant and helper isDryRun_() (load-order safe).
- */
-function __isDryRun05b__() {
-  try {
-    if (typeof isDryRun_ === 'function') return !!isDryRun_();
-  } catch (e) {}
-  try {
-    return (typeof DRY_RUN !== 'undefined') ? !!DRY_RUN : false;
-  } catch (e2) {}
-  return false;
+
+/** Normalize header cell text: trim + remove BOM + replace NBSP + collapse whitespace. */
+function __normalizeHeaderText05a_(v) {
+  return String(v == null ? '' : v)
+    .replace(/^\uFEFF/, '')       // BOM
+    .replace(/\u00A0/g, ' ')      // NBSP
+    .replace(/\s+/g, ' ')         // collapse spaces/tabs/newlines
+    .trim();
 }
 
 
-/**
- * Runtime flow resolver (load-order safe).
- * Expected values: main | sub | form
- */
-function __getRuntimeFlow05b_() {
+/** Case-insensitive exact header matcher (backup/restore resilience). */
+function __findHeaderIndex05a_(headerRow, name) {
   try {
-    if (typeof RUNTIME === 'object' && RUNTIME) {
-      const v = RUNTIME.flowName || RUNTIME.flow || RUNTIME.FLOW;
-      if (v) return String(v).trim().toLowerCase();
+    if (typeof findHeaderIndexByCandidates_ === 'function') {
+      return findHeaderIndexByCandidates_(headerRow, [name]);
     }
   } catch (e) {}
-  return 'main';
+  const want = __normalizeHeaderText05a_(name).toLowerCase();
+  if (!want) return -1;
+  const h = Array.isArray(headerRow) ? headerRow : [];
+  for (let i = 0; i < h.length; i++) {
+    const v = __normalizeHeaderText05a_(h[i]).toLowerCase();
+    if (v === want) return i;
+  }
+  return -1;
 }
 
-/**
- * Ensure a header exists by appending it at the right-most end (first row).
- * - If there is an empty header cell after the last non-empty header, it will be used.
- * - Otherwise inserts a new column at the end.
- */
-function __ensureAppendHeader05b_(sh, headerName) {
+
+/** Best-effort resolver for the Raw sheet (used to persist manual fields like Remarks). */
+function __resolveRawSheet05a_(ss) {
+  if (!ss) return null;
+
+  // Prefer CONFIG if provided
   try {
-    if (!sh) return;
-    const name = String(headerName || '').trim();
-    if (!name) return;
-
-    const lastCol = Math.max(sh.getLastColumn() || 1, 1);
-    const header = sh.getRange(1, 1, 1, lastCol).getValues()[0].map(v => String(v || '').trim());
-    if (header.indexOf(name) > -1) return;
-
-    // Find last non-empty header cell.
-    let lastNonEmpty = -1;
-    for (let i = header.length - 1; i >= 0; i--) {
-      if (header[i]) { lastNonEmpty = i; break; }
-    }
-    const targetCol = lastNonEmpty + 2; // 1-based
-
-    if (__isDryRun05b__()) return;
-
-    if (targetCol <= lastCol) {
-      sh.getRange(1, targetCol).setValue(name)
-        .setHorizontalAlignment('center')
-        .setVerticalAlignment('middle');
-    } else {
-      sh.insertColumnAfter(lastCol);
-      sh.getRange(1, lastCol + 1).setValue(name)
-        .setHorizontalAlignment('center')
-        .setVerticalAlignment('middle');
-    }
-  } catch (e) {
-    // best-effort only (do not fail routing)
-  }
-}
-
-/** Status Type resolver (prefers 06c mapping when available). */
-function __getStatusType05b_(lastStatus) {
-  const s = String(lastStatus || '').trim();
-  if (!s) return '';
-  try {
-    if (typeof getStatusType06c_ === 'function') return String(getStatusType06c_(s) || '');
-  } catch (e) {}
-
-  try {
-    const map = (CONFIG && (CONFIG.STATUS_TYPE_MAP || CONFIG.statusTypeMap || CONFIG.statusTypeByLastStatus)) || null;
-    if (map && map[s] != null) return String(map[s] || '');
-  } catch (e2) {}
-
-  return '';
-}
-
-/** Pick Activity Log value from raw row based on flow. */
-function __pickActivityLogValue05b_(rawRow, headerIndexRaw, flowName) {
-  const flow = String(flowName || '').trim().toLowerCase();
-  const preferSub = (flow === 'sub');
-  const keys = preferSub
-    ? ['activity_log', 'last_activity_log']
-    : ['last_activity_log', 'activity_log'];
-  for (let i = 0; i < keys.length; i++) {
-    const k = keys[i];
-    const ix = headerIndexRaw[k];
-    if (ix == null) continue;
-    const v = rawRow[ix];
-    if (v === '' || v == null) continue;
-    return v;
-  }
-  return '';
-}
-
-/** Pick Activity Log datetime from raw row based on flow (best-effort). */
-function __pickActivityLogDatetimeValue05b_(rawRow, headerIndexRaw, flowName) {
-  const flow = String(flowName || '').trim().toLowerCase();
-  const preferSub = (flow === 'sub');
-  const keys = preferSub
-    ? ['activity_log_datetime', 'activity_log_date_time', 'activity_log_updated_datetime', 'last_activity_log_datetime', 'last_activity_log_date_time']
-    : ['last_activity_log_datetime', 'last_activity_log_date_time', 'activity_log_datetime', 'activity_log_date_time', 'activity_log_updated_datetime'];
-  for (let i = 0; i < keys.length; i++) {
-    const k = keys[i];
-    const ix = headerIndexRaw[k];
-    if (ix == null) continue;
-    const v = rawRow[ix];
-    if (v === '' || v == null) continue;
-    return v;
-  }
-  return '';
-}
-
-
-/**
- * Finish-status detector (SUB + SC routing patch).
- * NOTE: status may contain trailing spaces (e.g., DONE_REPAIR ).
- */
-function isFinishStatus05a_(status) {
-  const s = String(status || '').trim();
-  if (!s) return false;
-
-  // Prefer shared constant from 00.gs
-  try {
-    if (typeof FINISH_STATUSES !== 'undefined' && Array.isArray(FINISH_STATUSES)) {
-      return FINISH_STATUSES.indexOf(s) !== -1;
-    }
-  } catch (e) {}
-
-  // Fallback (legacy minimal list)
-  return (
-    s === 'DONE_REPAIR' ||
-    s === 'WAITING_WALKIN_FINISH' ||
-    s === 'COURIER_PICKED_UP' ||
-    s === 'WAITING_COURIER_FINISH' ||
-    s === 'SERVICE_CENTER_CLAIM_WAITING_WALKIN_FINISH'
-  );
-}
-
-function uniq05a_(arr) {
-  const out = [];
-  const seen = {};
-  (arr || []).forEach(v => {
-    const k = String(v || '');
-    if (!k) return;
-    if (seen[k]) return;
-    seen[k] = true;
-    out.push(v);
-  });
-  return out;
-}
-
-
-
-/** =========================
- *  Routing core
- *  ========================= */
-
-function compileRoutingIndex_(routingMap) {
-  const idx = {};
-  Object.keys(routingMap).forEach(sheetName => {
-    (routingMap[sheetName] || []).forEach(status => {
-      if (!idx[status]) idx[status] = [];
-      idx[status].push(sheetName);
-    });
-  });
-  return idx;
-}
-
-
-/** =========================
- * SC sheet split + Type dropdown helpers (single master workflow)
- * ========================= */
-
-function containsAnyKeyword05b_(text, keywords) {
-  const s = String(text || '').toLowerCase();
-  if (!s) return false;
-  const list = keywords || [];
-  for (let i = 0; i < list.length; i++) {
-    const k = String(list[i] || '').toLowerCase().trim();
-    if (k && s.indexOf(k) > -1) return true;
-  }
-  return false;
-}
-
-function scoreKeywords05b_(text, keywords) {
-  const s = String(text || '').toLowerCase();
-  if (!s) return 0;
-  const list = keywords || [];
-  let score = 0;
-  for (let i = 0; i < list.length; i++) {
-    const k = String(list[i] || '').toLowerCase().trim();
-    if (k && s.indexOf(k) > -1) score++;
-  }
-  return score;
-}
-
-
-function filterScTargets05b_(targets, scNameVal, scFarhan, scMeilani, scIvan, kwFarhan, kwMeilani, kwIvan, scFallback) {
-  if (!targets || !targets.length) return targets || [];
-
-  const hasFarhan = targets.indexOf(scFarhan) > -1;
-  const hasMeilani = targets.indexOf(scMeilani) > -1;
-  const hasIvan = targets.indexOf(scIvan) > -1;
-
-  if (!hasFarhan && !hasMeilani && !hasIvan) return targets;
-
-  const nonSc = targets.filter(x => x !== scFarhan && x !== scMeilani && x !== scIvan);
-
-  const candidates = [];
-  if (hasFarhan) candidates.push({ name: scFarhan, score: scoreKeywords05b_(scNameVal, kwFarhan) });
-  if (hasIvan) candidates.push({ name: scIvan, score: scoreKeywords05b_(scNameVal, kwIvan) });
-  if (hasMeilani) candidates.push({ name: scMeilani, score: scoreKeywords05b_(scNameVal, kwMeilani) });
-
-  // Pick the best match. Tie-break is deterministic by insertion order above.
-  let chosen = null;
-  let best = 0;
-  for (let i = 0; i < candidates.length; i++) {
-    const c = candidates[i];
-    if (!chosen || c.score > best) { chosen = c.name; best = c.score; }
-  }
-
-  // Fail-closed: if no keyword match, route to quarantine sheet to prevent mis-mapping.
-  if (!chosen || best <= 0) {
-    const fb = String(scFallback || '').trim();
-    if (fb) chosen = fb;
-    else if (hasIvan) chosen = scIvan;
-    else if (hasMeilani) chosen = scMeilani;
-    else chosen = scFarhan;
-  }
-
-  const out = nonSc.slice();
-  if (chosen) out.push(chosen);
-  return out;
-}
-
-
-/**
- * Ensure the SC fallback/quarantine sheet exists.
- * - Creates the sheet if missing (best-effort).
- * - Copies header row (values + formats) from a template SC sheet if available.
- */
-function ensureScFallbackSheet05b_(ss, fallbackSheetName, templateSheetName) {
-  try {
-    const fb = String(fallbackSheetName || '').trim();
-    if (!fb) return;
-    if (!ss) return;
-    if (ss.getSheetByName(fb)) return;
-    if (__isDryRun05b__()) return;
-
-    const sh = ss.insertSheet(fb);
-
-    const tmplName = String(templateSheetName || '').trim();
-    const tmpl = tmplName ? ss.getSheetByName(tmplName) : null;
-    if (tmpl) {
-      const lc = Math.max(tmpl.getLastColumn() || 1, 1);
-      tmpl.getRange(1, 1, 1, lc).copyTo(sh.getRange(1, 1, 1, lc), { contentsOnly: false });
-      try { sh.setFrozenRows(Math.max(tmpl.getFrozenRows() || 0, 1)); } catch (e1) { try { sh.setFrozenRows(1); } catch (e2) {} }
-    } else {
-      sh.getRange(1, 1).setValue('Claim Number');
-      try { sh.setFrozenRows(1); } catch (e3) {}
-    }
-
-    try {
-      const lc2 = Math.max(sh.getLastColumn() || 1, 1);
-      sh.getRange(1, 1, 1, lc2).setHorizontalAlignment('center').setVerticalAlignment('middle');
-    } catch (e4) {}
-  } catch (e) {
-    // best-effort only
-  }
-}
-
-
-
-/**
- * Apply formats & alignments for common columns with minimal calls
- * opts:
- *  - orIsMoney: boolean (true => format OR as money; false => format OR as checkbox)
- */
-function applyOperationalColumnSchema_(sh, header, startRow, nRows, opts) {
-  if (!sh || !header || nRows <= 0) return;
-
-  opts = opts || {};
-  const orIsMoney = !!opts.orIsMoney;
-
-  const idx = buildHeaderIndex_(header);
-  const fmt = (colName, numberFormat, align) => {
-    const c0 = idx[colName];
-    if (c0 == null) return;
-    const r = sh.getRange(startRow, c0 + 1, nRows, 1);
-    if (numberFormat) safeSetNumberFormat_(r, numberFormat);
-    if (align && !DRY_RUN) r.setHorizontalAlignment(align);
-  };
-
-  // Dates
-  fmt('Submission Date', __FORMATS.DATE, 'center');
-  fmt('Last Status Date', __FORMATS.DATE, 'center');
-  fmt('Last Status Datetime', __FORMATS.DATETIME, 'center');
-  fmt('Timestamp', __FORMATS.TIMESTAMP, 'center');
-
-  // Numbers
-  // Legacy abbreviations were renamed:
-  //  - LSA => Last Status Aging
-  //  - ALA => Activity Log Aging
-  // Keep both for backward compatibility.
-  fmt('LSA', __FORMATS.INT, 'right');
-  fmt('Last Status Aging', __FORMATS.INT, 'right');
-  fmt('ALA', __FORMATS.INT, 'right');
-  fmt('Activity Log Aging', __FORMATS.INT, 'right');
-  fmt('TAT', __FORMATS.INT, 'right');
-  fmt('Q-L (Months)', __FORMATS.INT, 'right');
-  fmt('M-L (Months)', __FORMATS.INT, 'right');
-  fmt('M-Q (Months)', __FORMATS.INT, 'right');
-
-  // Money-like
-  fmt('Sum Insured', __FORMATS.MONEY0, 'right');
-  fmt('Sum Insured Amount', __FORMATS.MONEY0, 'right');
-  // Legacy Special Case header (renamed to Claim Amount)
-  fmt('Repair/Replace Amount', __FORMATS.MONEY0, 'right');
-  fmt('Claim Amount', __FORMATS.MONEY0, 'right');
-  fmt('Claim Own Risk Amount', __FORMATS.MONEY0, 'right');
-  fmt('Nett Claim Amount', __FORMATS.MONEY0, 'right');
-  fmt('OR Amount', __FORMATS.MONEY0, 'right');
-
-  // Percent
-  fmt('% Approval', '0%', 'right');
-
-  // OR checkbox vs money (Special Case)
-  if (orIsMoney) {
-    fmt('OR', __FORMATS.MONEY0, 'right');
-  } else {
-    // checkbox: no number format; keep center
-    fmt('OR', null, 'center');
-  }
-}
-
-/**
- * Apply RichText hyperlinks to the 'DB Link' column (post-flush).
- * - Writes plain display text in setValues pass, then upgrades to RichText hyperlinks here.
- * - Avoids locale-sensitive HYPERLINK() formula errors (#ERROR!).
- */
-function applyDbLinkRichTextFromWriter_(w, startRow) {
-  if (!w || !w.sheet || !w.header || !w.rows || !w.rows.length) return;
-  startRow = startRow || 2;
-  const idx = w.header.indexOf('DB Link');
-  if (idx === -1) return;
-  const n = w.rows.length;
-  const urls = (w.dbLinkUrls || []).slice(0, n).map(u => [u]);
-  const rich = makeRichTextHyperlinks2d_(urls, 'LINK');
-  if (!DRY_RUN) safeSetRichTextValues_(w.sheet.getRange(startRow, idx + 1, n, 1), rich);
-}
-
-/** Build claim highlight sets from the full Raw Data (independent of routing). */
-function buildOperationalClaimHighlightSetsFromRaw_(rawValues, headerIndexRaw) {
-  const h = CONFIG.headers;
-  const ixClaim = headerIndexRaw[h.claimNumber];
-  const ixPartner = headerIndexRaw[h.businessPartner];
-  const ixProduct = headerIndexRaw[h.productName];
-  const ixDaysToEnd = headerIndexRaw[h.daysToEndPolicy];
-
-  const expired = new Set();
-  const flex = new Set();
-  const b2b = new Set();
-  const duplicate = new Map(); // claimKey -> dynamic note
-
-  // New highlight sets
-  const secondYear = new Set();
-  const firstMonthPolicy = new Set();
-  const remaining1Month = new Set();
-
-  if (ixClaim == null) return { expired, flex, b2b, duplicate, secondYear, firstMonthPolicy, remaining1Month };
-
-  const specialPartners = ((CONFIG.patterns && CONFIG.patterns.specialPartners) || [])
-    .map(s => String(s || '').trim())
-    .filter(Boolean);
-
-  const b2bPartners = ((CONFIG.patterns && CONFIG.patterns.b2bPartners) || [])
-    .map(s => String(s || '').trim())
-    .filter(Boolean);
-
-  // Inputs for DUPLICATE detection (load-order safe; uses raw header names when needed).
-  const ixPolicyNo = headerIndexRaw['qoala_policy_number'];
-  const ixSource = (headerIndexRaw[h.sourceSystem] != null) ? headerIndexRaw[h.sourceSystem] : headerIndexRaw['source_system_name'];
-  const ixSub = headerIndexRaw[h.claimSubmissionDate];
-  const ixLastStatus = headerIndexRaw[h.lastStatus];
-
-  const hasDupInputs = (ixPolicyNo != null && ixSource != null && ixSub != null && ixLastStatus != null);
-  const oldByPolicy = new Map();
-
-  const dupPolicy = (typeof DUPLICATE_DETECTION_POLICY === 'object' && DUPLICATE_DETECTION_POLICY) ? DUPLICATE_DETECTION_POLICY : {};
-  const tokens = (Array.isArray(dupPolicy.policyTokens) && dupPolicy.policyTokens.length) ? dupPolicy.policyTokens : ['SFP', 'SFX', 'SMR'];
-  const newServiceName = String(dupPolicy.newServiceName || 'NEW SERVICE').toUpperCase();
-  const oldServiceName = String(dupPolicy.oldServiceName || 'OLD SERVICE').toUpperCase();
-  const maxDays = (dupPolicy.maxDaysDiff != null) ? Number(dupPolicy.maxDaysDiff) : 62;
-
-  const formatOldDate_ = (d) => {
-    const dd = (typeof coerceDateOnly_ === 'function') ? coerceDateOnly_(d) : (d instanceof Date ? d : null);
-    if (!dd) return '';
-    if (typeof formatDowShortDate_ === 'function') return formatDowShortDate_(dd);
-    try {
-      return Utilities.formatDate(dd, Session.getScriptTimeZone(), 'EEE, dd MMM yyyy');
-    } catch (e) {
-      return String(dd);
-    }
-  };
-
-  // Helper: find raw index by multiple candidate header names.
-  const findRawIndex_ = (candidates) => {
-    const a = candidates || [];
-    for (let i = 0; i < a.length; i++) {
-      const k = a[i];
-      if (!k) continue;
-      if (headerIndexRaw[k] != null) return headerIndexRaw[k];
-    }
-    return null;
-  };
-
-  const ixQLMonths = findRawIndex_([
-    h.qLMonths,
-    'Q-L (Months)',
-    'q_l_months',
-    'ql_months',
-    'q_l_(months)'
-  ]);
-
-  const ixMonthPolicyAging = findRawIndex_([
-    h.monthPolicyAging,
-    'month_policy_aging',
-    'Month Policy Aging',
-    'month policy aging',
-    'month_policy_aging_(months)',
-    'month_policy_aging_months'
-  ]);
-
-
-  const ixPolicyStart = findRawIndex_([
-    h.policyStartDate,
-    'Policy Start Date',
-    'policy_start_date'
-  ]);
-
-  const ixPolicyEnd = findRawIndex_([
-    h.policyEndDate,
-    'Policy End Date',
-    'policy_end_date'
-  ]);
-
-  const toDateOnly_ = (v) => {
-    return (typeof coerceDateOnly_ === 'function') ? coerceDateOnly_(v) : (v instanceof Date ? v : null);
-  };
-
-  const diffDaysLocal_ = (d1, d2) => {
-    const a = toDateOnly_(d1);
-    const b = toDateOnly_(d2);
-    if (!a || !b) return null;
-    const t1 = Date.UTC(a.getFullYear(), a.getMonth(), a.getDate());
-    const t2 = Date.UTC(b.getFullYear(), b.getMonth(), b.getDate());
-    return Math.floor((t2 - t1) / 86400000);
-  };
-
-  // Pass 1: expired/flex/b2b + collect OLD SERVICE candidates by policy number + new highlight sets.
-  for (let i = 0; i < (rawValues || []).length; i++) {
-    const r = rawValues[i] || [];
-    const claim = String(r[ixClaim] || '').trim();
-    if (!claim) continue;
-
-    const claimKey = claim.toUpperCase();
-
-    const partner = (ixPartner != null) ? String(r[ixPartner] || '').trim() : '';
-    const product = (ixProduct != null) ? String(r[ixProduct] || '').trim() : '';
-
-    // IMPORTANT: avoid treating blank/invalid values as 0 (which would falsely mark everything as EXPIRED).
-    const daysToEnd = (ixDaysToEnd != null) ? parseOptionalIntStrict_(r[ixDaysToEnd]) : null;
-    if (daysToEnd != null && daysToEnd <= 0) expired.add(claimKey);
-
-    const isFlex =
-      matchesAnyCi_(partner, specialPartners) ||
-      includesCi_(claim, 'SFX') ||
-      includesCi_(product, 'flex');
-    if (isFlex) flex.add(claimKey);
-
-    const isB2B =
-      matchesAnyCi_(partner, b2bPartners) ||
-      includesCi_(claim, 'SMR');
-    if (isB2B) b2b.add(claimKey);
-
-    // New rules:
-    // 1) Second-Year (Market Value) STRICT: month_policy_aging > 12 (Raw Data)
-    if (ixMonthPolicyAging != null) {
-      const m = parseOptionalIntStrict_(r[ixMonthPolicyAging]);
-      if (m != null && m > 12) secondYear.add(claimKey);
-    }
-    // 2) First-Month Policy if (claim_submission_date - policy_start_date) < 30 days
-    if (ixSub != null && ixPolicyStart != null) {
-      const dSub = toDateOnly_(r[ixSub]);
-      const dStart = toDateOnly_(r[ixPolicyStart]);
-      const diff = (typeof diffDays_ === 'function') ? diffDays_(dStart, dSub) : diffDaysLocal_(dStart, dSub);
-      if (diff != null && diff >= 0 && diff < 30) firstMonthPolicy.add(claimKey);
-    }
-
-    // 3) Policy Remaining <= 1 Month if (policy_end_date - claim_submission_date) < 30 days
-    if (ixSub != null && ixPolicyEnd != null) {
-      const dSub = toDateOnly_(r[ixSub]);
-      const dEnd = toDateOnly_(r[ixPolicyEnd]);
-      const diff = (typeof diffDays_ === 'function') ? diffDays_(dSub, dEnd) : diffDaysLocal_(dSub, dEnd);
-      if (diff != null && diff >= 0 && diff < 30) remaining1Month.add(claimKey);
-    }
-
-    if (hasDupInputs) {
-      const policyNo = String(r[ixPolicyNo] || '').trim();
-      const src = String(r[ixSource] || '').trim().toUpperCase();
-      if (policyNo && src === oldServiceName) {
-        const sub = r[ixSub];
-        const subDate = toDateOnly_(sub);
-        const lastStatus = String(r[ixLastStatus] || '').trim();
-        const arr = oldByPolicy.get(policyNo) || [];
-        arr.push({ claim: claim, subDate: subDate, lastStatus: lastStatus });
-        oldByPolicy.set(policyNo, arr);
+    if (typeof CONFIG !== 'undefined' && CONFIG && CONFIG.sheets) {
+      const candidates = []
+        .concat(CONFIG.sheets.rawData || [])
+        .concat(CONFIG.sheets.raw || [])
+        .concat(CONFIG.sheets.raw_sheet || [])
+        .concat(CONFIG.sheets.rawSheet || []);
+      for (let i = 0; i < candidates.length; i++) {
+        const name = candidates[i];
+        if (name && typeof name === 'string') {
+          const sh = ss.getSheetByName(name);
+          if (sh) return sh;
+        }
       }
     }
-  }
+  } catch (e) {}
 
-  // Pass 2: DUPLICATE notes for NEW SERVICE rows with SFP/SFX/SMR policy numbers.
-  if (hasDupInputs && oldByPolicy.size) {
-    const tokenLower = tokens.map(t => String(t || '').toLowerCase()).filter(Boolean);
-
-    for (let i = 0; i < (rawValues || []).length; i++) {
-      const r = rawValues[i] || [];
-      const claim = String(r[ixClaim] || '').trim();
-      if (!claim) continue;
-
-      const claimKey = claim.toUpperCase();
-
-      const policyNo = String(r[ixPolicyNo] || '').trim();
-      if (!policyNo) continue;
-
-      const src = String(r[ixSource] || '').trim().toUpperCase();
-      if (src !== newServiceName) continue;
-
-      const policyLower = policyNo.toLowerCase();
-      let hasToken = false;
-      for (let k = 0; k < tokenLower.length; k++) {
-        if (policyLower.indexOf(tokenLower[k]) > -1) { hasToken = true; break; }
-      }
-      if (!hasToken) continue;
-
-      const oldList = oldByPolicy.get(policyNo);
-      if (!oldList || !oldList.length) continue;
-
-      const newSub = r[ixSub];
-      const newSubDate = toDateOnly_(newSub);
-      if (!newSubDate) continue;
-
-      let best = null;
-      let bestDiff = null;
-
-      for (let j = 0; j < oldList.length; j++) {
-        const o = oldList[j];
-        if (!o || !o.subDate) continue;
-        const diff = (typeof diffDays_ === 'function') ? diffDays_(o.subDate, newSubDate) : diffDaysLocal_(o.subDate, newSubDate);
-        if (diff == null) continue;
-        if (diff < 0) continue; // only consider OLD before NEW
-        if (diff > maxDays) continue;
-        if (bestDiff == null || diff < bestDiff) { best = o; bestDiff = diff; }
-      }
-
-      if (!best) continue;
-
-      const oldDateStr = formatOldDate_(best.subDate);
-      const oldClaim = String(best.claim || '').trim();
-      const oldLastStatus = String(best.lastStatus || '').trim();
-
-      if (!oldClaim) continue;
-
-      const note =
-        `Duplicate Claim - Refer to Claim Number ${oldClaim}
-` +
-        `Submitted on ${oldDateStr || 'Unknown date'} - ${oldLastStatus}.`;
-
-      duplicate.set(claimKey, note);
-    }
-  }
-
-  return { expired, flex, b2b, duplicate, secondYear, firstMonthPolicy, remaining1Month };
-}
-
-
-
-
-
-function getOperationalClaimHighlightPolicy_() {
-  const p = (CONFIG && (CONFIG.CLAIM_HIGHLIGHT_POLICY || CONFIG.claimHighlightPolicy))
-    || ((typeof CLAIM_HIGHLIGHT_POLICY !== 'undefined' && CLAIM_HIGHLIGHT_POLICY) ? CLAIM_HIGHLIGHT_POLICY : {})
-    || {};
-  const colors = p.COLORS || p.colors || {};
-  const notes = p.NOTES_CANONICAL || p.notesCanonical || {};
-
-  const pick = (flatKey, colorKey, noteKey, defBg, defNote) => {
-    const flat = p[flatKey] || {};
-    return {
-      bg: flat.bg || colors[colorKey] || defBg,
-      note: flat.note || notes[noteKey] || defNote
-    };
-  };
-
-  const dup = p.duplicate || {};
-
-  return {
-    expired: pick('expired', 'EXPIRED', 'EXPIRED', '#fff2cc', 'Policy already expired.'),
-    flex: pick('flex', 'FLEX', 'FLEX', '#f4c7c3', 'Flex claim.'),
-    b2b: pick('b2b', 'B2B', 'B2B', '#c9daf8', 'B2B claim.'),
-
-    // New rules (colors per requirement)
-    secondYear: pick('secondYear', 'SECOND_YEAR', 'SECOND_YEAR', '#d9ead3', 'Second-Year (Market Value).'),
-    firstMonthPolicy: pick('firstMonthPolicy', 'FIRST_MONTH_POLICY', 'FIRST_MONTH_POLICY', '#d9d2e9', 'First-Month Policy.'),
-    remaining1Month: pick('remaining1Month', 'REMAINING_1_MONTH', 'REMAINING_1_MONTH', '#fce5cd', 'Policy Remaining <= 1 Month.'),
-
-    duplicate: {
-      bg: dup.bg || colors.DUPLICATE || '#dd7e6b',
-      notePrefix: dup.notePrefix || notes.DUPLICATE_PREFIX || 'Duplicate Claim - Refer to Claim Number'
-    }
-  };
-}
-
-
-
-function getClaimNumberHeaderAliases_() {
-  const aliases = (CONFIG && (CONFIG.CLAIM_NUMBER_HEADER_ALIASES || CONFIG.claimNumberHeaderAliases))
-    || ((typeof CLAIM_HIGHLIGHT_POLICY !== 'undefined' && CLAIM_HIGHLIGHT_POLICY && CLAIM_HIGHLIGHT_POLICY.CLAIM_NUMBER_HEADER_ALIASES)
-      ? CLAIM_HIGHLIGHT_POLICY.CLAIM_NUMBER_HEADER_ALIASES
-      : [])
-    || [];
-  const out = (aliases && aliases.length) ? aliases : ['Claim Number'];
-  return out.map(s => String(s || '').trim()).filter(Boolean);
-}
-
-/**
- * Parse an optional integer in a strict way.
- * - Returns null for blanks/undefined/invalid.
- * - Never returns 0 for blank cells (prevents mass false-positives).
- */
-function parseOptionalIntStrict_(v) {
-  if (v === '' || v == null) return null;
-  // Treat Date objects as invalid for integer parsing
-  if (Object.prototype.toString.call(v) === '[object Date]') return null;
-  if (typeof v === 'number') return isFinite(v) ? Math.trunc(v) : null;
-
-  const s = String(v || '').trim();
-  if (!s) return null;
-
-  // Accept plain ints and numeric strings. Avoid parsing arbitrary text to 0.
-  if (!/^-?\d+(?:\.\d+)?$/.test(s)) return null;
-
-  const n = parseInt(s, 10);
-  return isNaN(n) ? null : n;
-}
-
-
-function resolveHeaderIndexByAliases_(headerArr, aliases) {
-  if (!headerArr || !headerArr.length) return null;
-  const a = (aliases && aliases.length) ? aliases : ['Claim Number'];
-  if (typeof findHeaderIndexAny_ === 'function') {
-    const idx0 = findHeaderIndexAny_(headerArr, a, { enableSnakeCase: true });
-    return (idx0 == null) ? null : idx0;
-  }
-  if (typeof idxAny_ === 'function') {
-    const idx1 = idxAny_(headerArr, a, { enableSnakeCase: true });
-    return (idx1 == null) ? null : idx1;
-  }
-
-  // Conservative fallback when shared utils are unavailable.
-  const idx = buildHeaderIndex_(headerArr);
-  for (let i = 0; i < a.length; i++) {
-    const key = String(a[i] || '').trim();
-    if (!key) continue;
-    if (idx[key] != null) return idx[key];
-  }
-
-  const lower = headerArr.map(h => String(h || '').trim().toLowerCase());
-  for (let i = 0; i < a.length; i++) {
-    const key = String(a[i] || '').trim().toLowerCase();
-    if (!key) continue;
-    const j = lower.indexOf(key);
-    if (j > -1) return j;
+  // Common defaults
+  const names = ['Raw Data', 'RawData', 'RAW DATA', 'Raw', 'RAW'];
+  for (let i = 0; i < names.length; i++) {
+    const sh = ss.getSheetByName(names[i]);
+    if (sh) return sh;
   }
   return null;
 }
 
-function normalizeColor_(c) {
-  const s = String(c || '').trim().toLowerCase();
-  return s;
-}
 
-function formatLogDate05b_(v) {
-  const d = (typeof coerceDateOnly_ === 'function') ? coerceDateOnly_(v) : (v instanceof Date ? v : null);
-  if (d) {
-    try {
-      return Utilities.formatDate(d, Session.getScriptTimeZone(), 'dd MMM yyyy');
-    } catch (e) {
-      return d.toDateString ? d.toDateString() : String(d);
+
+// ---- Safe fallbacks (avoid ReferenceError) ----
+
+
+// ---- Safe fallbacks (avoid ReferenceError / TDZ across files) ----
+var __FORMATS = (function () {
+  try { if (typeof FORMATS !== 'undefined' && FORMATS) return FORMATS; } catch (e) {}
+  try { if (typeof _FORMATS !== 'undefined' && _FORMATS) return _FORMATS; } catch (e) {}
+  return Object.freeze({
+    DATE: 'd mmm yy',
+    DATETIME: 'd mmm yy, HH:mm',
+    DATETIME_LONG: 'MMMM d, yyyy, h:mm AM/PM',
+    TIMESTAMP: 'd mmm, HH:mm',
+    INT: '0',
+    MONEY0: '#,##0'
+  });
+})();
+
+var __OPTIONAL_FLAGS = (function () {
+  try { if (typeof OPTIONAL_SHEETS_FLAGS !== 'undefined' && OPTIONAL_SHEETS_FLAGS) return OPTIONAL_SHEETS_FLAGS; } catch (e) {}
+  return Object.freeze({});
+})();
+
+var __SPECIAL_FLAGS = (function () {
+  try { if (typeof SPECIAL_CASE_FLAGS !== 'undefined' && SPECIAL_CASE_FLAGS) return SPECIAL_CASE_FLAGS; } catch (e) {}
+  return Object.freeze({ MODE: 'UPSERT', COLORIZE_CLAIM_CELL: false });
+})();
+
+var __SPECIAL_RULES = (function () {
+  try { if (typeof SPECIAL_CASE_RULES !== 'undefined' && SPECIAL_CASE_RULES) return SPECIAL_CASE_RULES; } catch (e) {}
+  return Object.freeze({});
+})();
+
+function __getExcludedLastStatuses05a_() {
+  try {
+    if (typeof RUNTIME !== 'undefined' && RUNTIME && RUNTIME.__excludedLastStatuses05a) {
+      return RUNTIME.__excludedLastStatuses05a;
     }
-  }
-  const s = String(v || '').trim();
-  return s;
-}
+  } catch (e0) {}
 
+  let out = null;
+
+  // Prefer per-run builder from 00_Config if available.
+  try { if (typeof getExcludedLastStatusesSet_ === 'function') out = getExcludedLastStatusesSet_(); } catch (e) {}
+  if (!out) {
+    try { if (typeof buildExcludedLastStatusesSet_ === 'function') out = buildExcludedLastStatusesSet_(); } catch (e2) {}
+  }
+
+  // Back-compat: older versions exposed a Set directly.
+  if (!out) {
+    try {
+      if (typeof EXCLUDED_LAST_STATUSES !== 'undefined' && EXCLUDED_LAST_STATUSES && EXCLUDED_LAST_STATUSES.has) {
+        out = EXCLUDED_LAST_STATUSES;
+      }
+    } catch (e3) {}
+  }
+
+  // Newer versions may expose a base array.
+  if (!out) {
+    try {
+      if (typeof EXCLUDED_LAST_STATUSES_BASE !== 'undefined' && Array.isArray(EXCLUDED_LAST_STATUSES_BASE)) {
+        out = new Set(EXCLUDED_LAST_STATUSES_BASE);
+      }
+    } catch (e4) {}
+  }
+
+  if (!out || !out.has) out = new Set();
+
+  try { if (typeof RUNTIME !== 'undefined' && RUNTIME) RUNTIME.__excludedLastStatuses05a = out; } catch (e5) {}
+  return out;
+}
 
 /** =========================
- * DB classification (Operational)
- * =========================
- * Requirement:
- *  - DB = OLD if Claim Number contains: SFP, SFX, SMR
- *  - DB = NEW if Claim Number contains: VVMAR, GADLD
- */
-function computeDbValueFromClaimNumber05b_(claimNumber) {
-  try {
-    if (typeof computeDbValueFromClaimNumber_ === 'function') return computeDbValueFromClaimNumber_(claimNumber);
-  } catch (e) {}
-  const s = String(claimNumber == null ? '' : claimNumber).trim().toUpperCase();
+ *  RAW WRITE (Main -> Raw)
+ *  ========================= */
+
+/** Write main data into Raw (never overwrite validated/manual Status col) */
+function writeMainDataToRaw_(rawSheet, mainHeader, mainRows, headerIndexRaw) {
+  if (!rawSheet || !mainRows || !mainRows.length) return;
+
+  const pairs = [];
+  for (let i = 0; i < (mainHeader || []).length; i++) {
+    const key = String(mainHeader[i] || '').trim();
+    if (!key) continue;
+    const keyLc = key.toLowerCase();
+    if (key === CONFIG.headers.status || key === 'Status' || keyLc === 'remarks' || keyLc === 'remark') continue; // never overwrite validated/manual cols
+
+    const rawIdx = headerIndexRaw[key];
+    if (rawIdx == null) continue;
+    pairs.push({ rawIdx, mainIdx: i });
+  }
+  if (!pairs.length) return;
+  pairs.sort((a, b) => a.rawIdx - b.rawIdx);
+
+  // contiguous runs => fewer setValues
+  const runs = [];
+  let cur = [pairs[0]];
+  for (let k = 1; k < pairs.length; k++) {
+    const p = pairs[k - 1], n = pairs[k];
+    if (n.rawIdx === p.rawIdx + 1) cur.push(n);
+    else { runs.push(cur); cur = [n]; }
+  }
+  runs.push(cur);
+
+  for (let r = 0; r < runs.length; r++) {
+    const run = runs[r];
+    const startCol1 = run[0].rawIdx + 1;
+    const width = run.length;
+
+    const out = new Array(mainRows.length);
+    for (let i = 0; i < mainRows.length; i++) {
+      const src = mainRows[i];
+      const rowOut = new Array(width);
+      for (let j = 0; j < width; j++) rowOut[j] = src[run[j].mainIdx];
+      out[i] = rowOut;
+    }
+    safeSetValues_(rawSheet.getRange(2, startCol1, out.length, width), out);
+  }
+}
+
+/** =========================
+ *  Typed date helpers
+ *  ========================= */
+
+function coerceDate_(v) {
+  const d = normalizeDate_(v);
+  return d ? d : null;
+}
+
+function coerceDateOnly_(v) {
+  const d = coerceDate_(v);
+  if (!d) return null;
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0, 0, 0);
+}
+
+function coerceDateTime_(v) {
+  const d = coerceDate_(v);
+  return d ? d : null;
+}
+
+/** Timestamp format requested: "15 Dec, 15:17" -> FORMATS.TIMESTAMP */
+function coerceTimestamp_(v) {
+  return coerceDateTime_(v);
+}
+
+/** Submission output rule (source picking) */
+function getSubmissionDateForOutput_(rawRow, headerIndexRaw) {
+  const h = CONFIG.headers;
+  const idxDateOnly = headerIndexRaw[h.claimSubmissionDate];
+  const idxDt = headerIndexRaw[h.claimSubmittedDatetime];
+
+  const dateOnlyVal = (idxDateOnly != null) ? rawRow[idxDateOnly] : '';
+  const dtVal = (idxDt != null) ? rawRow[idxDt] : '';
+
+  // Always write DATE-only in destination sheets to avoid mixed formats.
+  if (dateOnlyVal) return { val: dateOnlyVal, mode: 'date' };
+  if (dtVal) return { val: dtVal, mode: 'datetime' };
+  return { val: '', mode: 'date' };
+}
+
+function buildSubmissionDateCell_(rawRow, headerIndexRaw) {
+  const picked = getSubmissionDateForOutput_(rawRow, headerIndexRaw);
+  if (!picked.val) return '';
+  const d = coerceDateOnly_(picked.val);
+  return d ? d : '';
+}
+
+function sanitizeAssociateForWrite_(v) {
+  const s = String(v || '').trim();
   if (!s) return '';
-  if (s.indexOf('SFP') !== -1 || s.indexOf('SFX') !== -1 || s.indexOf('SMR') !== -1) return 'OLD';
-  if (s.indexOf('VVMAR') !== -1 || s.indexOf('GADLD') !== -1) return 'NEW';
+  if (s === 'Meilani' || s === 'Farhan' || s === 'Suci' || s === 'Adi') return s;
   return '';
 }
 
+/** OR checkbox output (operational): prefer Raw OR checkbox; else derive from OR Amount > 0 */
+function getOrCheckboxForOutput_(rawRow, headerIndexRaw) {
+  const h = CONFIG.headers;
+  const idxOr = headerIndexRaw[h.orColumn];
+  const idxOwnRisk = idxAny_(headerIndexRaw, [h.ownRiskAmount, 'Claim Own Risk Amount', 'claim_own_risk_amount', 'Own Risk Amount']);
+
+  // Prefer explicit checkbox value if valid
+  if (idxOr != null) {
+    const cb = normalizeCheckbox_(rawRow[idxOr]);
+    if (cb !== '') return cb; // boolean
+  }
+
+  // Fallback: derive from amount
+  const amt = (idxOwnRisk != null) ? normalizeNumber_(rawRow[idxOwnRisk]) : null;
+  if (amt != null && amt > 0) return true;
+
+  return ''; // keep blank to avoid forcing unchecked on legacy sheets
+}
+
+/** OR Amount output (money): prefer claim_own_risk_amount; fallback legacy numeric in Raw OR if exists */
+function getOrAmountForOutput_(rawRow, headerIndexRaw) {
+  const h = CONFIG.headers;
+  const idxOwnRisk = idxAny_(headerIndexRaw, [h.ownRiskAmount, 'Claim Own Risk Amount', 'claim_own_risk_amount', 'Own Risk Amount']);
+  const idxOr = headerIndexRaw[h.orColumn];
+
+  const ownRisk = (idxOwnRisk != null) ? normalizeNumber_(rawRow[idxOwnRisk]) : null;
+  if (ownRisk != null) return ownRisk;
+
+  // Legacy fallback (only if someone already wrote numeric into Raw OR)
+  const rawOrNum = (idxOr != null) ? normalizeNumber_(rawRow[idxOr]) : null;
+  return (rawOrNum != null) ? rawOrNum : '';
+}
+
+/** =========================
+ *  Associate mapping
+ *  ========================= */
 
 /**
- * Insurance shortening (Operational).
- * Requirement mapping (case-insensitive substring):
- * - great eastern general insurance -> GEGI
- * - tokio marine -> TMI
- * - msig indonesia -> MSIG
- * - seainsure -> MIGI
- * - sompo insurance -> Sompo
- * - axa mandiri insurance -> AXA
- * - simas insurtech -> Simas
+ * New spec (2026):
+ * - Routing is no longer PIC/Associate-based.
+ * - The mapping sheet "[UPDATED] Mapping Team Claim" is deprecated.
+ * - Associate column in "Raw Data" is treated as a manual/operational field.
+ *
+ * If you *really* need the legacy mapping for some back-compat run, enable it via Script Properties:
+ *   ASSOCIATE_MAPPING_ENABLED = true
  */
-function normalizeInsuranceShort05b_(insuranceName) {
-  const s = String(insuranceName == null ? '' : insuranceName).trim();
-  if (!s) return '';
+
+// [Refactor] Removed duplicate definition of isAssociateMappingEnabled_ (source of truth in 01_Utils)
+
+
+/** Convert column letter (e.g. "A", "G", "AA") into 1-based column index. */
+function colA1ToIndex_(colA1) {
+  const s = String(colA1 || '').trim().toUpperCase();
+  if (!s) return null;
+  let n = 0;
+  for (let i = 0; i < s.length; i++) {
+    const c = s.charCodeAt(i);
+    if (c < 65 || c > 90) continue; // skip non A-Z
+    n = n * 26 + (c - 64);
+  }
+  return n || null;
+}
+
+function loadAssociateMapping_() {
+  if (!isAssociateMappingEnabled_()) {
+    return { Meilani: new Set(), Farhan: new Set(), Suci: new Set(), Adi: new Set() };
+  }
+    // Deprecated: Associate mapping is off by default.
+  // If someone enables it, keep the pipeline resilient (no hard-fail if mapping doc/sheet is missing).
+  let ss, sh;
   try {
-    if (typeof mapInsuranceShort_ === 'function') {
-      const mapped = String(mapInsuranceShort_(s) || '').trim();
-      if (mapped) return mapped;
+    if (!CONFIG || !CONFIG.mappingSpreadsheetId || !CONFIG.mappingSheetName) {
+      return { Meilani: new Set(), Farhan: new Set(), Suci: new Set(), Adi: new Set() };
+    }
+    ss = SpreadsheetApp.openById(CONFIG.mappingSpreadsheetId);
+    sh = ss.getSheetByName(CONFIG.mappingSheetName);
+    if (!sh) {
+      try { Logger && Logger.log && Logger.log('Associate mapping sheet not found (ignored): ' + CONFIG.mappingSheetName); } catch (e) {}
+      return { Meilani: new Set(), Farhan: new Set(), Suci: new Set(), Adi: new Set() };
+    }
+  } catch (e) {
+    try { Logger && Logger.log && Logger.log('Associate mapping load failed (ignored): ' + e); } catch (e2) {}
+    return { Meilani: new Set(), Farhan: new Set(), Suci: new Set(), Adi: new Set() };
+  }
+
+  // Mapping policy (safe fallback when 00_Config is not loaded / renamed).
+  const startRow = (function () {
+    try {
+      if (typeof MAPPING_TEAM_CLAIM_POLICY !== 'undefined' &&
+          MAPPING_TEAM_CLAIM_POLICY &&
+          MAPPING_TEAM_CLAIM_POLICY.PARTNER_START_ROW) return MAPPING_TEAM_CLAIM_POLICY.PARTNER_START_ROW;
+    } catch (e) {}
+    return 4;
+  })();
+
+  const lastRow = sh.getLastRow();
+  if (lastRow < startRow) return { Meilani: new Set(), Farhan: new Set(), Suci: new Set(), Adi: new Set() };
+
+  // Existing columns (legacy): A=Meilani, C=Farhan, E=Suci
+  const colByAssociate = { Meilani: 1, Farhan: 3, Suci: 5, Adi: 7 }; // Adi default = G
+
+  // Spec: Adi partner list is sourced from "[UPDATED] Mapping Team Claim" starting at G4.
+  try {
+    if (typeof MAPPING_TEAM_CLAIM_POLICY !== 'undefined' &&
+        MAPPING_TEAM_CLAIM_POLICY &&
+        MAPPING_TEAM_CLAIM_POLICY.PARTNER_START_COLUMN_BY_PIC &&
+        MAPPING_TEAM_CLAIM_POLICY.PARTNER_START_COLUMN_BY_PIC.Adi) {
+      const n = colA1ToIndex_(MAPPING_TEAM_CLAIM_POLICY.PARTNER_START_COLUMN_BY_PIC.Adi);
+      if (n) colByAssociate.Adi = n;
     }
   } catch (e) {}
-  return s;
+
+  const maxCol = Math.max.apply(null, Object.keys(colByAssociate).map(k => colByAssociate[k]));
+  const data = sh.getRange(startRow, 1, lastRow - startRow + 1, maxCol).getValues();
+
+  const map = { Meilani: new Set(), Farhan: new Set(), Suci: new Set(), Adi: new Set() };
+  for (let i = 0; i < data.length; i++) {
+    Object.keys(colByAssociate).forEach(name => {
+      const col0 = colByAssociate[name] - 1;
+      const v = (col0 >= 0 && col0 < data[i].length) ? String(data[i][col0] || '').trim() : '';
+      if (v) map[name].add(v.toLowerCase());
+    });
+  }
+  return map;
 }
-
-
-/** Strict finite number coercion (blank-safe; avoids treating blank as 0). */
-function __toFiniteNumber05b_(v) {
-  if (v === '' || v == null) return null;
-  if (typeof v === 'number') return isFinite(v) ? v : null;
-  const s = String(v || '').trim();
-  if (!s) return null;
-  // Remove common thousand separators; keep minus and decimal.
-  const n = Number(s.replace(/,/g, ''));
-  return isFinite(n) ? n : null;
-}
-
-
-
-/** Apply highlight + note on Claim Number cells for OPERATIONAL sheets only. */
-function applyOperationalClaimHighlightsByRaw_(ss, rawValues, headerIndexRaw, pic) {
-  if (__isDryRun05b__()) return;
-
-  // Notes are written based on RAW flags (as before). Background fill is derived from the final note,
-  // so only rows that actually have EXPIRED/FLEX/B2B notes get colored. This also cleans up any
-  // historical "mass fill" mistakes by clearing marker colors on non-flagged rows.
-  const sets = buildOperationalClaimHighlightSetsFromRaw_(rawValues, headerIndexRaw);
-  const policy = getOperationalClaimHighlightPolicy_();
-
-  const isAdmin = (pic === 'Admin');
-  const sheets = isAdmin ? CONFIG.sheetsByPic.adminOperational : CONFIG.sheetsByPic.picOperational;
-
-  const cExpired = normalizeColor_(policy.expired.bg);
-  const cFlex = normalizeColor_(policy.flex.bg);
-  const cB2b = normalizeColor_(policy.b2b.bg);
-  const cDup = normalizeColor_(policy.duplicate.bg);
-  const cSecondYear = normalizeColor_(policy.secondYear.bg);
-  const cFirstMonth = normalizeColor_(policy.firstMonthPolicy.bg);
-  const cRemaining1Month = normalizeColor_(policy.remaining1Month.bg);
-
-  const expiredNote = String(policy.expired.note || 'Policy already expired.');
-  const flexNote = String(policy.flex.note || 'Flex claim.');
-  const b2bNote = String(policy.b2b.note || 'B2B claim.');
-  const secondYearNote = String(policy.secondYear.note || 'Second-Year (Market Value).');
-  const firstMonthPolicyNote = String(policy.firstMonthPolicy.note || 'First-Month Policy.');
-  const remaining1MonthNote = String(policy.remaining1Month.note || 'Policy Remaining <= 1 Month.');
-
-  // Accept legacy Flex note variants.
-  const flexNoteAlt = new Set([flexNote, 'FLEX claim.', 'Flex claim.']);
-  const dupPrefix = String((policy.duplicate && policy.duplicate.notePrefix) || 'Duplicate Claim - Refer to Claim Number');
-
-
-  const markerFromNote_ = (note) => {
-    const n = String(note || '').trim();
-    if (!n) return null;
-    if (n.indexOf(dupPrefix) === 0) return 'duplicate';
-    if (n === expiredNote) return 'expired';
-    if (n === b2bNote) return 'b2b';
-    if (n === secondYearNote) return 'secondYear';
-    if (n === firstMonthPolicyNote) return 'firstMonthPolicy';
-    if (n === remaining1MonthNote) return 'remaining1Month';
-    if (flexNoteAlt.has(n)) return 'flex';
+/**
+ * Single-pass Raw mutation in memory:
+ * - Apply aging merge OR compute LSA/ALA if no aging files
+ * - Compute derived QL/ML/MQ
+ * - Apply Associate mapping (unknown => blank to avoid validation violation)
+ * - OR checkbox defaulting: if Raw OR blank/invalid, set TRUE when claim_own_risk_amount > 0
+ */
+function mutateRawInMemory_(rawValues, headerIndexRaw, agingStdMap, agingMap, assocMap) {
+  const h = CONFIG.headers;
+  const today = new Date();
+  const resolveHdrIdx05a_ = (keys) => {
+    if (typeof idxAny_ === 'function') {
+      const idx = idxAny_(headerIndexRaw, keys, { enableSnakeCase: true });
+      return (idx == null) ? null : idx;
+    }
+    for (let i = 0; i < (keys || []).length; i++) {
+      const k = keys[i];
+      if (!k) continue;
+      const v = headerIndexRaw[k];
+      if (v != null) return v;
+    }
     return null;
   };
 
-  const desiredBgFromMarker_ = (marker) => {
-    if (marker === 'expired') return policy.expired.bg;
-    if (marker === 'flex') return policy.flex.bg;
-    if (marker === 'b2b') return policy.b2b.bg;
-    if (marker === 'duplicate') return policy.duplicate.bg;
-    if (marker === 'secondYear') return policy.secondYear.bg;
-    if (marker === 'firstMonthPolicy') return policy.firstMonthPolicy.bg;
-    if (marker === 'remaining1Month') return policy.remaining1Month.bg;
-    return '';
+
+  const idxClaim = resolveHdrIdx05a_([h.claimNumber, 'Claim Number', 'claim_number']);
+  const idxBP = resolveHdrIdx05a_([h.businessPartner, 'Business Partner', 'Partner', 'business_partner']);
+  const idxAssoc = resolveHdrIdx05a_([h.associate, 'Associate', 'associate']);
+  const idxLastStatus = resolveHdrIdx05a_([h.lastStatus, 'Last Status', 'last_status']);
+  const idxSubDate = resolveHdrIdx05a_([h.claimSubmissionDate, 'Claim Submission Date', 'Submission Date', 'claim_submission_date', 'submission_date']);
+
+  const idxInsuranceCodeRaw = idxAny_(headerIndexRaw, [h.insuranceCode, 'Insurance Code', 'insurance_code']);
+  const idxLastStatusAgingRaw = idxAny_(headerIndexRaw, ['Last Status Aging', h.lastStatusAging, 'LSA', 'TAT']);
+  const idxActLogAgingRaw = idxAny_(headerIndexRaw, ['Activity Log Aging', h.activityLogAging, 'ALA']);
+  const idxClaimSubmittedRaw = resolveHdrIdx05a_([h.claimSubmittedDatetime, 'Claim Submitted Datetime', 'Submitted Datetime', 'claim_submitted_datetime', 'submitted_datetime']);
+
+  const idxLastUpdate = resolveHdrIdx05a_([h.lastUpdate, 'Last Update', 'last_update']);
+  const idxLastActDate = idxAny_(headerIndexRaw, [h.lastActivityLogDate, 'Last Activity Log Date', 'Last Activity Date', 'last_activity_log_date']);
+
+  const idxPolicyStart = resolveHdrIdx05a_([h.policyStartDate, 'Policy Start Date', 'policy_start_date']);
+  const idxPolicyEnd = resolveHdrIdx05a_([h.policyEndDate, 'Policy End Date', 'policy_end_date']);
+  const idxClaimSubDateOnly = idxSubDate;
+  const idxClaimSubDt = idxClaimSubmittedRaw;
+
+  const idxQL = headerIndexRaw['Q-L (Months)'];
+  const idxML = headerIndexRaw['M-L (Months)'];
+  const idxMQ = headerIndexRaw['M-Q (Months)'];
+
+  const idxRawOR = idxAny_(headerIndexRaw, [h.orColumn, 'OR', 'Or']);
+  const idxOwnRisk = idxAny_(headerIndexRaw, [h.ownRiskAmount, 'Claim Own Risk Amount', 'claim_own_risk_amount', 'Own Risk Amount']);
+
+  const applyAgingFrom_ = (mapObj, row, claim) => {
+    if (!mapObj || !mapObj.map) return false;
+    const src = mapObj.map[claim];
+    if (!src) return false;
+
+    const hA = mapObj.headerIndex;
+    const idxInsCodeA = idxAny_(hA, [h.partnerCodeAging, h.insuranceCode, 'Insurance Code', 'insurance_code', 'Partner Code']);
+    const idxLSA = idxAny_(hA, ['Last Status Aging', h.lastStatusAging, 'LSA', 'TAT']);
+    const idxALA = idxAny_(hA, ['Activity Log Aging', h.activityLogAging, 'ALA']);
+    const idxSubDtA = idxAny_(hA, [h.claimSubmittedDatetime, 'Claim Submitted Datetime', 'Submitted Datetime', 'claim_submitted_datetime']);
+
+    if (idxInsuranceCodeRaw != null && idxInsCodeA != null) row[idxInsuranceCodeRaw] = src[idxInsCodeA];
+    if (idxLastStatusAgingRaw != null && idxLSA != null) row[idxLastStatusAgingRaw] = src[idxLSA];
+    if (idxActLogAgingRaw != null && idxALA != null) row[idxActLogAgingRaw] = src[idxALA];
+    if (idxClaimSubmittedRaw != null && idxSubDtA != null) row[idxClaimSubmittedRaw] = src[idxSubDtA];
+    return true;
   };
 
-  const isMarkerBg_ = (bg) => {
-    const c = normalizeColor_(bg);
-    return c && (c === cExpired || c === cFlex || c === cB2b || c === cDup || c === cSecondYear || c === cFirstMonth || c === cRemaining1Month);
-  };
+  const unknownRowsAll = [];
 
-  
-const __setBgs05b__ = (range, matrix, sheetName) => {
-  try {
-    if (typeof safeSetBackgrounds_ === 'function') return safeSetBackgrounds_(range, matrix);
-    range.setBackgrounds(matrix);
-  } catch (e) {
-    const a1 = (range && range.getA1Notation) ? range.getA1Notation() : '?';
-    throw new Error(`[05b] Failed to set backgrounds on ${sheetName || '?'} ${a1}: ${e && e.message ? e.message : e}`);
-  }
-};
+  for (let i = 0; i < rawValues.length; i++) {
+    const row = rawValues[i];
 
-const __setNotes05b__ = (range, matrix, sheetName) => {
-  try {
-    if (typeof safeSetNotes_ === 'function') return safeSetNotes_(range, matrix);
-    range.setNotes(matrix);
-  } catch (e) {
-    const a1 = (range && range.getA1Notation) ? range.getA1Notation() : '?';
-    throw new Error(`[05b] Failed to set notes on ${sheetName || '?'} ${a1}: ${e && e.message ? e.message : e}`);
-  }
-};
+    const claimKey = (idxClaim != null) ? String(row[idxClaim] || '').trim() : '';
+    if (claimKey) {
+      if (agingStdMap) applyAgingFrom_(agingStdMap, row, claimKey);
+      if (agingMap) applyAgingFrom_(agingMap, row, claimKey);
+    }
 
-// Priority (single fill): FLEX > B2B > EXPIRED
-  sheets.forEach(name => {
-    try {
-      const sh = ss.getSheetByName(name);
-      if (!sh) return;
+    // Backfill: claim_submitted_datetime from submission_date when missing (helps ALA/TAT computations downstream)
+    if (idxClaimSubmittedRaw != null && (row[idxClaimSubmittedRaw] === '' || row[idxClaimSubmittedRaw] == null) && idxSubDate != null) {
+      const dSub = coerceDateTime_(row[idxSubDate]);
+      if (dSub) row[idxClaimSubmittedRaw] = dSub;
+    }
 
-      const lastRow = sh.getLastRow();
-      if (lastRow < 2) return;
 
-      const lastCol = Math.max(sh.getLastColumn(), 1);
-      const header = sh.getRange(1, 1, 1, lastCol)
-        .getValues()[0]
-        .map(v => String(v || '').trim());
-
-      const idxClaim = resolveHeaderIndexByAliases_(header, getClaimNumberHeaderAliases_());
-      if (idxClaim == null) return;
-
-      const n = lastRow - 1;
-      const rng = sh.getRange(2, idxClaim + 1, n, 1);
-
-      const vals = rng.getValues();
-      const bgs = rng.getBackgrounds();
-      const notes = rng.getNotes();
-
-      let bgChanged = false;
-      let noteChanged = false;
-
-      for (let i = 0; i < n; i++) {
-      const claim = String((vals[i] && vals[i][0]) || '').trim();
-      const claimKey = claim ? claim.toUpperCase() : '';
-
-      // 1) Compute desired note from RAW (keep existing behavior).
-      let desiredNote = null;
-      if (claimKey) {
-        const dupNote = (sets.duplicate && typeof sets.duplicate.get === 'function') ? sets.duplicate.get(claimKey) : null;
-        if (dupNote) desiredNote = dupNote;
-        else if (sets.expired.has(claimKey)) desiredNote = expiredNote;
-        else if (sets.flex.has(claimKey)) desiredNote = flexNote;
-        else if (sets.b2b.has(claimKey)) desiredNote = b2bNote;
-        else if (sets.secondYear && sets.secondYear.has(claimKey)) desiredNote = secondYearNote;
-        else if (sets.firstMonthPolicy && sets.firstMonthPolicy.has(claimKey)) desiredNote = firstMonthPolicyNote;
-        else if (sets.remaining1Month && sets.remaining1Month.has(claimKey)) desiredNote = remaining1MonthNote;
+    // If no aging files: compute LSA/ALA from dates
+    if (!RUNTIME.hasAgingFiles && idxLastStatusAgingRaw != null && idxActLogAgingRaw != null) {
+      if (idxLastUpdate != null) {
+        const d = coerceDateTime_(row[idxLastUpdate]);
+        const dd = diffDays_(d, today);
+        if (dd != null && dd >= 0) row[idxLastStatusAgingRaw] = dd;
       }
-
-      // Apply/clear our marker note only.
-      if (desiredNote != null) {
-        if (notes[i][0] !== desiredNote) { notes[i][0] = desiredNote; noteChanged = true; }
-      } else {
-        const curMarker = markerFromNote_(notes[i][0]);
-        if (curMarker) {
-          if (notes[i][0] !== '') { notes[i][0] = ''; noteChanged = true; }
-        }
-      }
-
-      // 2) Background is derived from the final note state (robust + cleanup).
-      const effNote = (desiredNote != null) ? desiredNote : String(notes[i][0] || '');
-      const marker = markerFromNote_(effNote);
-      const desiredBg = desiredBgFromMarker_(marker);
-
-      if (desiredBg) {
-        if (normalizeColor_(bgs[i][0]) !== normalizeColor_(desiredBg)) { bgs[i][0] = desiredBg; bgChanged = true; }
-      } else {
-        // Clear only our marker colors to avoid wiping user formatting.
-        if (isMarkerBg_(bgs[i][0])) { bgs[i][0] = ''; bgChanged = true; }
+      if (idxLastActDate != null) {
+        const d2 = coerceDateTime_(row[idxLastActDate]);
+        const dd2 = diffDays_(d2, today);
+        if (dd2 != null && dd2 >= 0) row[idxActLogAgingRaw] = dd2;
       }
     }
 
-      if (bgChanged) __setBgs05b__(rng, bgs, name);
-      if (noteChanged) __setNotes05b__(rng, notes, name);
-    } catch (sheetErr) {
-      try { if (typeof logLine_ === 'function') logLine_('WARN', 'HIGHLIGHT_SKIP', String(name || ''), String(sheetErr), 'WARN'); } catch (eLog) {}
+    // Derived QL/ML/MQ (compute independently, don't require all dates)
+    if ((idxClaimSubDateOnly != null || idxClaimSubDt != null)) {
+      const subVal =
+      (idxClaimSubDateOnly != null && row[idxClaimSubDateOnly] !== '' && row[idxClaimSubDateOnly] != null)
+      ? row[idxClaimSubDateOnly]
+      : ((idxClaimSubDt != null) ? row[idxClaimSubDt] : '');
+  const cs = coerceDateOnly_(subVal);
+
+  const ps = (idxPolicyStart != null) ? coerceDateOnly_(row[idxPolicyStart]) : null;
+  const pe = (idxPolicyEnd != null) ? coerceDateOnly_(row[idxPolicyEnd]) : null;
+
+  if (idxQL != null && cs && ps) row[idxQL] = monthDiff_(ps, cs);
+  if (idxML != null && ps && pe) row[idxML] = monthDiff_(ps, pe);
+  if (idxMQ != null && cs && pe) row[idxMQ] = monthDiff_(cs, pe);
+}
+
+    // OR checkbox defaulting: if Raw OR blank/invalid, set TRUE when claim_own_risk_amount > 0
+    if (idxRawOR != null && idxOwnRisk != null) {
+      const cb = normalizeCheckbox_(row[idxRawOR]);
+      if (cb === '') {
+        const amt = normalizeNumber_(row[idxOwnRisk]);
+        if (amt != null && amt > 0) row[idxRawOR] = true;
+      } else {
+        // normalize to strict boolean (avoid "TRUE"/"FALSE" strings lingering)
+        row[idxRawOR] = cb;
+      }
     }
-  });
+// Associate column is manual/operational in the 2026 routing spec: do not auto-map by default.
+// If you need legacy mapping (deprecated), enable Script Properties: ASSOCIATE_MAPPING_ENABLED=true.
+if (isAssociateMappingEnabled_() && idxBP != null && idxAssoc != null && assocMap) {
+  const currentAssoc = String(row[idxAssoc] || '').trim();
+  if (!currentAssoc) {
+    const partnerRaw = String(row[idxBP] || '').trim();
+    const partner = partnerRaw.toLowerCase();
+
+    let assoc = '';
+    if (assocMap.Meilani && assocMap.Meilani.has(partner)) assoc = 'Meilani';
+    else if (assocMap.Farhan && assocMap.Farhan.has(partner)) assoc = 'Farhan';
+    else if (assocMap.Suci && assocMap.Suci.has(partner)) assoc = 'Suci';
+    else if (assocMap.Adi && assocMap.Adi.has(partner)) assoc = 'Adi';
+
+    if (assoc) {
+      row[idxAssoc] = assoc; // fill only when blank
+    } else {
+      unknownRowsAll.push({
+        rowNumber: i + 2,
+        claim: claimKey,
+        partner: partnerRaw,
+        lastStatus: (idxLastStatus != null) ? String(row[idxLastStatus] || '').trim() : '',
+        submissionDateVal: (idxSubDate != null) ? row[idxSubDate] : ''
+      });
+    }
+  }
+}
+  }
+
+  const unknownRowsForLog = unknownRowsAll.filter(x => !isLegacyBySubmission_(x.submissionDateVal));
+  return { values: rawValues, unknownRowsAll, unknownRowsForLog };
 }
 
+/** =========================
+ *  Ops -> Raw backup
+ *  ========================= */
 
-/** Build per-sheet writer (fast, typed) */
-function buildSheetWriters_(ss, routingMap, headerIndexRaw, pic) {
-  const h = CONFIG.headers;
-  const writers = {};
-
-  const flowName = __getRuntimeFlow05b_();
-
-
-  // Single-master default: treat missing pic as Admin semantics.
-  const isAdmin = (pic === 'Admin' || pic == null);
-
-  const opsPolicy =
-    (CONFIG && (CONFIG.opsRouting || CONFIG.opsRoutingPolicy || CONFIG.OPS_ROUTING_POLICY)) || null;
-
-  const scFarhanName = (opsPolicy && opsPolicy.SHEETS && opsPolicy.SHEETS.SC_FARHAN) ? opsPolicy.SHEETS.SC_FARHAN : 'SC - Farhan';
-  const scMeilaniName = (opsPolicy && opsPolicy.SHEETS && opsPolicy.SHEETS.SC_MEILANI) ? opsPolicy.SHEETS.SC_MEILANI : 'SC - Meilani';
-
-  const scIvanName = (opsPolicy && opsPolicy.SHEETS && (opsPolicy.SHEETS.SC_IVAN || opsPolicy.SHEETS.SC_IVAN_NAME)) ? (opsPolicy.SHEETS.SC_IVAN || opsPolicy.SHEETS.SC_IVAN_NAME) : 'SC - Ivan';
-
-  // Precompute Type lookup for SC sheets (write only if header has "Type").
-// Mapping lives in OPS_ROUTING_POLICY.TYPE_BY_LAST_STATUS (00.gs) and is matched by Last Status.
-  const typePolicy = (opsPolicy && opsPolicy.TYPE_BY_LAST_STATUS) ? opsPolicy.TYPE_BY_LAST_STATUS : null;
-
-  const typeSets = typePolicy ? {
-    onRep: new Set(typePolicy['SC - On Rep'] || []),
-    waitRep: new Set(typePolicy['SC - Wait Rep'] || []),
-    finish: new Set(typePolicy['Finish'] || []),
-    orSet: new Set(typePolicy['OR'] || []),
-    insurance: new Set(typePolicy['Insurance'] || []),
-    est: new Set(typePolicy['SC - Est'] || []),
-    rcvd: new Set(typePolicy['SC - Rcvd'] || [])
-  } : null;
-
-  // Precedence (specific > general):
-  // - SC - On Rep / SC - Wait Rep override Insurance (overlap in status universe).
-  const resolveType = (statusVal) => {
-    const s = String(statusVal || '').trim();
-    if (!s || !typeSets) return '';
-    if (typeSets.onRep && typeSets.onRep.has(s)) return 'SC - On Rep';
-    if (typeSets.waitRep && typeSets.waitRep.has(s)) return 'SC - Wait Rep';
-    if (typeSets.finish && typeSets.finish.has(s)) return 'Finish';
-    if (typeSets.orSet && typeSets.orSet.has(s)) return 'OR';
-    if (typeSets.insurance && typeSets.insurance.has(s)) return 'Insurance';
-    if (typeSets.est && typeSets.est.has(s)) return 'SC - Est';
-    if (typeSets.rcvd && typeSets.rcvd.has(s)) return 'SC - Rcvd';
-    return '';
-  };
-
-  Object.keys(routingMap).forEach(sheetName => {
-    const sh = ss.getSheetByName(sheetName);
-    if (!sh) return;
-
-    // Mandatory column for operational sheets (append if missing)
-    __ensureAppendHeader05b_(sh, 'Status Type');
-
-    const lc = sh.getLastColumn() || 20;
-    const header = sh.getRange(1, 1, 1, lc).getValues()[0].map(v => String(v || '').trim());
-    const idxH = buildHeaderIndex_(header);
-    const dbLinkUrls = [];
-
-    const isScSheet = (sheetName === scFarhanName || sheetName === scMeilaniName || sheetName === scIvanName || sheetName === 'SC - Unmapped');
-
-    const getRaw = (rawRow, rawKey) => {
-      const ix = headerIndexRaw[rawKey];
-      return (ix != null) ? rawRow[ix] : '';
-    };
-
-    // Read first NON-EMPTY raw value across multiple possible raw keys.
-    const getRawAny = (rawRow, rawKeys) => {
-      const list = rawKeys || [];
-      for (let i = 0; i < list.length; i++) {
-        const k = list[i];
-        if (!k) continue;
-        const ix = headerIndexRaw[k];
-        if (ix == null) continue;
-        const v = rawRow[ix];
-        if (v === '' || v == null) continue;
-        return v;
-      }
-      return '';
-    };
-
-    writers[sheetName] = {
-      sheet: sh,
-      header,
-      rows: [],
-      dbLinkUrls,
-
-      build: (rawRow) => {
-        const out = header.map(() => '');
-
-        const set = (colName, value) => {
-          const c0 = idxH[colName];
-          if (c0 == null) return;
-          out[c0] = (value != null) ? value : '';
-        };
-
-        // Core columns (best-effort; only sets if headers exist)
-        const claimNumberVal = String(getRaw(rawRow, h.claimNumber) || '').trim();
-        const lastStatusVal = getRaw(rawRow, h.lastStatus);
-        set('Claim Number', claimNumberVal);
-        set('Last Status', lastStatusVal);
-        set('Partner', getRaw(rawRow, h.businessPartner));
-
-        // Activity Log (optional column)
-        if (idxH['Activity Log'] != null) {
-          set('Activity Log', __pickActivityLogValue05b_(rawRow, headerIndexRaw, flowName));
-        }
-        if (idxH['Activity Log Datetime'] != null) {
-          const v = __pickActivityLogDatetimeValue05b_(rawRow, headerIndexRaw, flowName);
-          const dt = coerceDateTime_(v);
-          set('Activity Log Datetime', dt ? dt : '');
-        }
-
-        // Status Type (mandatory)
-        if (idxH['Status Type'] != null) {
-          set('Status Type', __getStatusType05b_(lastStatusVal));
-        }
-        set('Product', getRaw(rawRow, h.productName));
-
-        // Extended operational columns (best-effort; only applies when those headers exist)
-        // - Partner Name / Insurance / Device Type / Service Center
-        set('Partner Name', getRaw(rawRow, h.businessPartner));
-        set('Insurance', normalizeInsuranceShort05b_(getRawAny(rawRow, [h.insuranceName, h.insurance, 'insurance_name', 'insurance'])));
-        set('Device Type', getRawAny(rawRow, [h.deviceType, 'device_type', 'deviceType']));
-        set('Service Center', getRawAny(rawRow, [h.serviceCenter, h.serviceCenterName, h.scName, 'service_center', 'service_center_name', 'sc_name']));
-        set('Service Center Name', getRawAny(rawRow, [h.serviceCenterName, h.serviceCenter, h.scName, 'service_center_name', 'service_center', 'sc_name']));
-        // - Device Brand / IMEI
-        set('Device Brand', getRawAny(rawRow, [h.deviceBrand, 'device_brand', 'brand']));
-        set('IMEI/SN', getRawAny(rawRow, [h.imeiNumber, h.imei, 'imei_number', 'imei', 'serial_number', 'sn']));
-
-        // - DB OLD/NEW (computed from Claim Number codes; fallback to raw when not matched)
-        const dbComputed = computeDbValueFromClaimNumber05b_(claimNumberVal);
-        const dbRaw = getRawAny(rawRow, [h.dbClass, 'DB', 'db', 'db_class', 'old_new']);
-        set('DB', dbComputed || dbRaw);
-
-        // - Activity Log Aging (ALA) & TAT (best-effort)
-        const activityLogAgingVal = normalizeInt_(getRawAny(rawRow, [
-          h.activityLogAging,
-          h.ala,
-          'Activity Log Aging',
-          'ALA',
-          'activity_log_aging',
-          'ala'
-        ]));
-        set('Activity Log Aging', activityLogAgingVal);
-        set('ALA', activityLogAgingVal);
-        set('TAT', normalizeInt_(getRawAny(rawRow, [h.tat, 'TAT', 'tat'])));
-
-        // Dates (submission)
-        if (idxH['Submission Date'] != null) {
-          const d = coerceDate_(getRaw(rawRow, h.claimSubmissionDate));
-          set('Submission Date', d ? d : '');
-        }
-        if (idxH['Submission Datetime'] != null) {
-          const dt = coerceDateTime_(getRaw(rawRow, h.claimSubmittedDatetime));
-          set('Submission Datetime', dt ? dt : '');
-        }
-
-        // Policy start/end
-        if (idxH['Policy Start Date'] != null) {
-          const d = coerceDate_(getRaw(rawRow, h.policyStartDate));
-          set('Policy Start Date', d ? d : '');
-        }
-        if (idxH['Policy End Date'] != null) {
-          const d = coerceDate_(getRaw(rawRow, h.policyEndDate));
-          set('Policy End Date', d ? d : '');
-        }
-
-        // Aging
-        if (idxH['Days to End Policy'] != null) {
-          const v = normalizeInt_(getRaw(rawRow, h.daysToEndPolicy));
-          set('Days to End Policy', (v != null) ? v : '');
-        }
-        if (idxH['Days Aging'] != null) {
-          const v = normalizeInt_(getRaw(rawRow, h.daysAgingFromSubmission));
-          set('Days Aging', (v != null) ? v : '');
-        }
-        // Last Status Aging (LSA) - keep both headers for backward compatibility
-        const lastStatusAgingVal = normalizeInt_(getRawAny(rawRow, [
-          h.lastStatusAging,
-          'Last Status Aging',
-          'LSA',
-          'last_status_aging',
-          'lsa'
-        ]));
-        set('Last Status Aging', lastStatusAgingVal);
-        set('LSA', lastStatusAgingVal);
-
-        // Money-like (best-effort)
-        const sumInsured = normalizeMoney_(getRawAny(rawRow, [
-          h.sumInsuredAmount,
-          'sum_insured_amount',
-          'sum_insured',
-          'sum_insured_amount_idr'
-        ]));
-
-        const nettAmt = normalizeMoney_(getRawAny(rawRow, [
-          h.nettClaimAmount,
-          'nett_claim_amount',
-          'nettClaimAmount',
-          'nett_claim_amount_idr'
-        ]));
-
-        const claimAmtRaw = normalizeMoney_(getRawAny(rawRow, [
-          h.claimAmount,
-          'claim_amount'
-        ]));
-        const claimAmt = (claimAmtRaw != null && claimAmtRaw !== '') ? claimAmtRaw : nettAmt;
-
-        const orAmtRaw = normalizeMoney_(getRawAny(rawRow, [
-          h.orAmount,
-          'or_amount',
-          'orAmount'
-        ]));
-
-        const ownRiskRaw = normalizeMoney_(getRawAny(rawRow, [
-          h.claimOwnRiskAmount,
-          'claim_own_risk_amount',
-          'claim_or_amount'
-        ]));
-        const ownRiskAmt = (ownRiskRaw != null && ownRiskRaw !== '') ? ownRiskRaw : orAmtRaw;
-
-        set('Sum Insured', sumInsured);
-        set('Sum Insured Amount', sumInsured);
-        set('Claim Amount', claimAmt);
-        // Legacy Special Case header (renamed to Claim Amount)
-        set('Repair/Replace Amount', claimAmt);
-        // OR Amount renamed to Claim Own Risk Amount
-        set('Claim Own Risk Amount', ownRiskAmt);
-        set('OR Amount', ownRiskAmt);
-        set('Nett Claim Amount', nettAmt);
-
-        // Selisih (Special Case) = Sum Insured Amount - Claim Amount
-        if (idxH['Selisih'] != null) {
-          const s = __toFiniteNumber05b_(sumInsured);
-          const a = __toFiniteNumber05b_(claimAmt);
-          set('Selisih', (s != null && a != null) ? (s - a) : '');
-        }
-
-        // % Approval: store as ratio (e.g. 0.75), format applied by schema formatter.
-        if (idxH['% Approval'] != null) {
-          const a = __toFiniteNumber05b_(claimAmt);
-          const s = __toFiniteNumber05b_(sumInsured);
-          set('% Approval', (a != null && s != null && s !== 0) ? (a / s) : '');
-        }
-
-        // OR checkbox (keep text if sheet expects checkbox; formatting handled elsewhere)
-        set('OR', getRaw(rawRow, h.orFlag));
-
-        // Links
-        if (idxH['DB Link'] != null) {
-          const url = String(getRaw(rawRow, h.dashboardLink) || '').trim();
-          set('DB Link', url ? url : '');
-          if (url) dbLinkUrls.push(url);
-        }
-
-        // Timestamp if exists
-        if (idxH['Timestamp'] != null) {
-          const ts = coerceTimestamp_(getRaw(rawRow, h.timestamp));
-          set('Timestamp', ts ? ts : '');
-        }
-
-        // Status column exists, but we WILL NOT WRITE it on flush (avoid validation traps)
-        set('Status', getRaw(rawRow, h.status));
-
-        // Associate (single-master default: allow Admin semantics)
-        if (isAdmin && idxH['Associate'] != null) {
-          set('Associate', sanitizeAssociateForWrite_(getRaw(rawRow, h.associate)));
-        }
-
-        // SC sheet "Type" dropdown auto-fill
-        if (isScSheet && idxH['Type'] != null) {
-          const typeLabel = resolveType(lastStatusVal);
-          if (typeLabel) set('Type', typeLabel);
-        }
-
-        // Last Status Date/Datetime:
-        // Single-master: prefer Raw last_update; fallback to last_activity_log_date if needed.
-        if (idxH['Last Status Date'] != null || idxH['Last Status Datetime'] != null) {
-          const rawVal = getRawAny(rawRow, [h.claimLastUpdatedDatetime, 'claim_last_updated_datetime', h.lastUpdate, 'last_update_datetime', 'last_update', h.lastActivityLogDate, 'last_activity_log_date', 'last_activity_log_datetime']);
-          const dt = coerceDateTime_(rawVal);
-          if (idxH['Last Status Date'] != null) set('Last Status Date', dt ? dt : '');
-          if (idxH['Last Status Datetime'] != null) set('Last Status Datetime', dt ? dt : '');
-        }
-
-        return out;
-      }
-    };
-  });
-
-  return writers;
-}
-
-function clearOperationalSheets_(ss, pic) {
-  // Single-master default: treat missing pic as Admin semantics.
-  const isAdmin = (pic === 'Admin' || pic == null);
-  const sheetsBase = isAdmin ? CONFIG.sheetsByPic.adminOperational : CONFIG.sheetsByPic.picOperational;
-  const sheets = sheetsBase.slice();
+/**
+ * Operational sheets are no longer PIC-scoped in the 2026 routing spec.
+ * This helper returns the current operational sheet list, with safe fallbacks.
+ */
+function getOperationalSheetsForBackup_(pic) { // pic kept for back-compat (ignored)
+  // Prefer explicit routing policy (new spec)
   try {
-    if (ss.getSheetByName('SC - Unmapped') && sheets.indexOf('SC - Unmapped') === -1) sheets.push('SC - Unmapped');
+    if (typeof OPS_ROUTING_POLICY !== 'undefined' &&
+        OPS_ROUTING_POLICY &&
+        Array.isArray(OPS_ROUTING_POLICY.OPERATIONAL_SHEETS)) {
+      return OPS_ROUTING_POLICY.OPERATIONAL_SHEETS.slice();
+    }
   } catch (e) {}
 
-  sheets.forEach(name => {
-    const sh = ss.getSheetByName(name);
-    if (!sh) return;
-    const buffer = (name === 'Ask Detail') ? 1500 : 400;
-    // clearFormat() does not remove data validations (dropdowns stay intact)
-    clearSheetDataHard_(sh, { bufferRows: buffer, clearFormats: true, preserveTemplateRow: true });
-
-    // Requirement: Operational header (row 1) must be centered (horizontal) and middle (vertical).
-    if (!__isDryRun05b__()) {
-      try {
-        const lastCol = Math.max(sh.getLastColumn(), 1);
-        sh.getRange(1, 1, 1, lastCol)
-          .setHorizontalAlignment('center')
-          .setVerticalAlignment('middle');
-      } catch (e) {}
+  // If CONFIG exposes a unified list
+  try {
+    if (typeof CONFIG !== 'undefined' &&
+        CONFIG &&
+        Array.isArray(CONFIG.operationalSheetsUnified)) {
+      return CONFIG.operationalSheetsUnified.slice();
     }
-  });
+  } catch (e) {}
+
+  // Fallback to workbook profile PIC operational list
+  try {
+    if (typeof CONFIG !== 'undefined' &&
+        CONFIG &&
+        CONFIG.workbookProfiles &&
+        CONFIG.workbookProfiles[WORKBOOK_PROFILES.PIC] &&
+        Array.isArray(CONFIG.workbookProfiles[WORKBOOK_PROFILES.PIC].operational)) {
+      return CONFIG.workbookProfiles[WORKBOOK_PROFILES.PIC].operational.slice();
+    }
+  } catch (e) {}
+
+  // Legacy union fallback
+  try {
+    const a = (CONFIG && CONFIG.sheetsByPic && CONFIG.sheetsByPic.picOperational) ? CONFIG.sheetsByPic.picOperational : [];
+    const b = (CONFIG && CONFIG.sheetsByPic && CONFIG.sheetsByPic.adminOperational) ? CONFIG.sheetsByPic.adminOperational : [];
+    const out = Array.from(new Set([].concat(a, b)));
+    if (out.length) return out;
+  } catch (e) {}
+
+  // Last-resort list per 2026 spec
+  return [
+    'Submission',
+    'Ask Detail',
+    'OR - OLD',
+    'Start',
+    'Finish',
+    'SC - Farhan',
+    'SC - Meilani',
+    'SC - Ivan',
+    'PO',
+    'Exclusion'
+  ];
 }
 
-function routeRawToOperationalSheetsInMemory_(ss, rawValues, headerIndexRaw, pic) {
+/**
+ * Backup ops -> raw (OR/Update/Timestamp/Status + Asso/Admin tail fields) using in-memory rawValues
+ * IMPORTANT: OR is checkbox (TRUE/FALSE). We only accept checkbox-valid values.
+ */
+function backupOpsToRawInMemory_(ss, rawValues, headerIndexRaw, pic) {
   const h = CONFIG.headers;
-  if (!rawValues || !rawValues.length) return { total: 0, perSheet: {}, unknown: [], missingStatus: [] };
+  const idxRawClaim = headerIndexRaw[h.claimNumber];
+  const idxRawOR = idxAny_(headerIndexRaw, [h.orColumn, 'OR', 'Or']);
+  const idxRawUpdate = headerIndexRaw[h.updateStatus];
+  const idxRawTs = headerIndexRaw[h.timestamp];
+  const idxRawStatus = headerIndexRaw[h.status];
+  const idxRawRemarks = idxAny_(headerIndexRaw, ['Remarks', 'Remark', 'remarks', 'remark']);
 
-  // Single-master default: treat missing pic as Admin semantics.
-  const isAdmin = (pic === 'Admin' || pic == null);
+  // Additional manual/operational tail fields (snapshot per Claim Number)
+  const idxRawUpdateAsso = headerIndexRaw['Update Status Asso'];
+  const idxRawTsAsso = headerIndexRaw['Timestamp Asso'];
+  const idxRawUpdateAdmin = headerIndexRaw['Update Status Admin'];
+  const idxRawTsAdmin = headerIndexRaw['Timestamp Admin'];
 
-  // Prefer new routing policy; fallback to legacy maps if present.
-  const routingMapOrig = (CONFIG && (CONFIG.statusRoutingAdmin || CONFIG.statusRoutingPIC)) || {};
-  const routingMap = Object.assign({}, routingMapOrig);
+  if (idxRawClaim == null) return { updated: 0, notes: 'Raw claim_number not found' };
+  if (!rawValues || !rawValues.length) return { updated: 0, notes: 'Raw has no rows' };
 
+  const rawMap = {};
+  for (let i = 0; i < rawValues.length; i++) {
+    const key = String(rawValues[i][idxRawClaim] || '').trim().toUpperCase();
+    if (key) rawMap[key] = i;
+  }
 
-  // Always include SC quarantine sheet to prevent mis-mapping (fail-closed).
-  if (routingMap['SC - Unmapped'] == null) routingMap['SC - Unmapped'] = [];
+  const opsList = getOperationalSheetsForBackup_(pic);
 
-  // Ensure the quarantine sheet exists before building writers.
-  ensureScFallbackSheet05b_(ss, 'SC - Unmapped', 'SC - Farhan');
+  const fieldSet = {};
+  const ensureObj = claim => (fieldSet[claim] ? fieldSet[claim] : (fieldSet[claim] = {}));
 
-  const routingIndex = compileRoutingIndex_(routingMap);
-  const writers = buildSheetWriters_(ss, routingMap, headerIndexRaw, pic);
+  let scannedRows = 0;
 
-  const opsPolicy =
-    (CONFIG && (CONFIG.opsRouting || CONFIG.opsRoutingPolicy || CONFIG.OPS_ROUTING_POLICY)) || null;
+  for (let s = 0; s < opsList.length; s++) {
+    const name = opsList[s];
+    const sh = ss.getSheetByName(name);
+    if (!sh) continue;
 
-  const scFarhanName = (opsPolicy && opsPolicy.SHEETS && opsPolicy.SHEETS.SC_FARHAN) ? opsPolicy.SHEETS.SC_FARHAN : 'SC - Farhan';
-  const scMeilaniName = (opsPolicy && opsPolicy.SHEETS && opsPolicy.SHEETS.SC_MEILANI) ? opsPolicy.SHEETS.SC_MEILANI : 'SC - Meilani';
+    const lr = sh.getLastRow(), lc = sh.getLastColumn();
+    if (lr <= 1 || lc <= 0) continue;
 
-  const scIvanName = (opsPolicy && opsPolicy.SHEETS && (opsPolicy.SHEETS.SC_IVAN || opsPolicy.SHEETS.SC_IVAN_NAME)) ? (opsPolicy.SHEETS.SC_IVAN || opsPolicy.SHEETS.SC_IVAN_NAME) : 'SC - Ivan';
+    const header = sh.getRange(1, 1, 1, lc).getValues()[0].map(v => String(v || '').trim());
+    const idxClaimOps = header.indexOf('Claim Number');
+    if (idxClaimOps === -1) continue;
 
-  const scFallbackName = 'SC - Unmapped';
+    const idxOR = __findHeaderIndex05a_(header, 'OR');
+    const idxUpdate = __findHeaderIndex05a_(header, 'Update Status');
+    const idxTs = __findHeaderIndex05a_(header, 'Timestamp');
+    const idxStatus = __findHeaderIndex05a_(header, 'Status');
 
-  const scKeywords = (opsPolicy && opsPolicy.SC_NAME_KEYWORDS) ? opsPolicy.SC_NAME_KEYWORDS : {};
-  const kwFarhan = scKeywords[scFarhanName] || scKeywords['SC - Farhan'] || [];
-  const kwMeilani = scKeywords[scMeilaniName] || scKeywords['SC - Meilani'] || [];
-  const kwIvan = scKeywords[scIvanName] || scKeywords['SC - Ivan'] || [];
+    const idxUpdateAsso = __findHeaderIndex05a_(header, 'Update Status Asso');
+    const idxTsAsso = __findHeaderIndex05a_(header, 'Timestamp Asso');
+    const idxUpdateAdmin = __findHeaderIndex05a_(header, 'Update Status Admin');
+    const idxTsAdmin = __findHeaderIndex05a_(header, 'Timestamp Admin');
 
-  const idxClaim = headerIndexRaw[h.claimNumber];
-  const idxLastStatus = headerIndexRaw[h.lastStatus];
-  const idxDaysAging = headerIndexRaw[h.daysAgingFromSubmission];
-  const idxPartnerName = headerIndexRaw[h.businessPartner];
-  const idxScName = headerIndexRaw[h.scName];
+    const idxRemarksTmp = __findHeaderIndex05a_(header, 'Remarks');
+    const idxRemarks = (idxRemarksTmp !== -1) ? idxRemarksTmp : __findHeaderIndex05a_(header, 'Remark');
 
-  const unknownStatuses = [];
-  const missingStatus = [];
-  const routeCount = {};
-  let total = 0;
+    if (idxOR === -1 && idxUpdate === -1 && idxTs === -1 && idxStatus === -1 &&
+        idxUpdateAsso === -1 && idxTsAsso === -1 && idxUpdateAdmin === -1 && idxTsAdmin === -1 && idxRemarks === -1) continue;
 
-  for (let r = 0; r < rawValues.length; r++) {
-    const rawRow = rawValues[r];
-    if (!rawRow) continue;
-    const rowNumber = r + 2;
+    const values = sh.getRange(2, 1, lr - 1, lc).getValues();
+    scannedRows += values.length;
 
-    const claimVal = (idxClaim != null) ? String(rawRow[idxClaim] || '').trim() : '';
-    const statusVal = (idxLastStatus != null) ? String(rawRow[idxLastStatus] || '').trim() : '';
-    const partnerVal = (idxPartnerName != null) ? String(rawRow[idxPartnerName] || '').trim() : '';
-    const daysAging = (idxDaysAging != null) ? normalizeInt_(rawRow[idxDaysAging]) : null;
+    for (let r = 0; r < values.length; r++) {
+      const row = values[r];
+      const claim = String(row[idxClaimOps] || '').trim().toUpperCase();
+      if (!claim) continue;
+      const rawIdx = rawMap[claim];
+      if (rawIdx == null) continue;
 
-    if (!statusVal) {
-      missingStatus.push({ rowNumber, claim: claimVal, partner: partnerVal });
-      continue;
-    }
+      const obj = ensureObj(claim);
 
-    let targets = (routingIndex[statusVal] || []).slice();
+      if (idxOR !== -1 && obj.or == null) {
+        const cb = normalizeCheckbox_(row[idxOR]);
+        if (cb !== '') obj.or = cb;
+      }
+      if (idxUpdate !== -1 && obj.update == null) {
+        const v = row[idxUpdate];
+        if (v !== '' && v != null) obj.update = v;
+      }
+      if (idxTs !== -1 && obj.ts == null) {
+        const v = row[idxTs];
+        if (v !== '' && v != null) obj.ts = v;
+      }
+      if (idxStatus !== -1 && obj.status == null) {
+        const v = normalizeStatusValue_(row[idxStatus]);
+        if (v !== '') obj.status = v;
+      }
 
-    // Patch B1: force Finish statuses into SC routing.
-    if (isFinishStatus05a_(statusVal)) {
-      targets = uniq05a_(targets.concat([scFarhanName, scMeilaniName, scIvanName, scFallbackName]));
-    }
+      // Additional manual/ops tail fields (values-only snapshot)
+      if (idxUpdateAsso !== -1 && obj.updateAsso == null) {
+        const v = row[idxUpdateAsso];
+        if (v !== '' && v != null) obj.updateAsso = v;
+      }
+      if (idxTsAsso !== -1 && obj.tsAsso == null) {
+        const v = row[idxTsAsso];
+        if (v !== '' && v != null) obj.tsAsso = v;
+      }
+      if (idxUpdateAdmin !== -1 && obj.updateAdmin == null) {
+        const v = row[idxUpdateAdmin];
+        if (v !== '' && v != null) obj.updateAdmin = v;
+      }
+      if (idxTsAdmin !== -1 && obj.tsAdmin == null) {
+        const v = row[idxTsAdmin];
+        if (v !== '' && v != null) obj.tsAdmin = v;
+      }
 
-    // SC sheet split by sc_name keywords (only if targets include SC sheets)
-    const scNameVal = (idxScName != null) ? String(rawRow[idxScName] || '') : '';
-    if (targets.length && (targets.indexOf(scFarhanName) > -1 || targets.indexOf(scMeilaniName) > -1 || targets.indexOf(scIvanName) > -1)) {
-      targets = filterScTargets05b_(targets, scNameVal, scFarhanName, scMeilaniName, scIvanName, kwFarhan, kwMeilani, kwIvan, scFallbackName);
-    }
-
-    // NOTE: previously there were EV-Bike / PIC suppressions. Those are intentionally removed.
-    // We always route all incoming data in the single master workflow.
-
-    if (!targets.length) {
-      unknownStatuses.push({
-      rowNumber,
-      claim: claimVal,
-      partner: partnerVal,
-      status: statusVal,
-      sc: scNameVal,
-        daysAging,
-      });
-      continue;
-    }
-
-    for (let t = 0; t < targets.length; t++) {
-      const sheetName = targets[t];
-      const w = writers[sheetName];
-      if (!w) continue;
-      w.rows.push(w.build(rawRow));
-      routeCount[sheetName] = (routeCount[sheetName] || 0) + 1;
-      total++;
+      if (idxRemarks !== -1 && obj.remarks == null) {
+        const v = row[idxRemarks];
+        const t = String(v == null ? '' : v).trim();
+        if (t) obj.remarks = t;
+      }
     }
   }
 
-  // Flush writers: NEVER write "Status" column to avoid validation trap
-  Object.keys(writers).forEach(sheetName => {
-    const w = writers[sheetName];
-    if (!w.rows.length) return;
+  let updated = 0;
+  let remarksTouched = 0;
+  Object.keys(fieldSet).forEach(claim => {
+    const i = rawMap[claim];
+    if (i == null) return;
+    const obj = fieldSet[claim];
+    const row = rawValues[i];
+    let touched = false;
 
-    const sh = w.sheet;
-    const header = w.header;
-    const n = w.rows.length;
-    const startRow = 2;
+    if (idxRawOR != null && obj.or != null) { row[idxRawOR] = obj.or; touched = true; }
+    if (idxRawUpdate != null && obj.update != null) { row[idxRawUpdate] = obj.update; touched = true; }
+    if (idxRawTs != null && obj.ts != null) { row[idxRawTs] = obj.ts; touched = true; }
+    if (idxRawStatus != null && obj.status != null) { row[idxRawStatus] = obj.status; touched = true; }
 
-    const idxStatus = header.indexOf('Status');
-    if (idxStatus === -1) {
-      safeSetValues_(sh.getRange(startRow, 1, n, header.length), w.rows);
-    } else {
-      if (idxStatus > 0) {
-        const left = w.rows.map(r => r.slice(0, idxStatus));
-        safeSetValues_(sh.getRange(startRow, 1, n, idxStatus), left);
-      }
-      if (idxStatus < header.length - 1) {
-        const right = w.rows.map(r => r.slice(idxStatus + 1));
-        safeSetValues_(sh.getRange(startRow, idxStatus + 2, n, header.length - idxStatus - 1), right);
-      }
-    }
+    if (idxRawUpdateAsso != null && obj.updateAsso != null) { row[idxRawUpdateAsso] = obj.updateAsso; touched = true; }
+    if (idxRawTsAsso != null && obj.tsAsso != null) { row[idxRawTsAsso] = obj.tsAsso; touched = true; }
+    if (idxRawUpdateAdmin != null && obj.updateAdmin != null) { row[idxRawUpdateAdmin] = obj.updateAdmin; touched = true; }
+    if (idxRawTsAdmin != null && obj.tsAdmin != null) { row[idxRawTsAdmin] = obj.tsAdmin; touched = true; }
 
-    // Ensure header alignment (center + middle) on the destination sheet.
-    if (!__isDryRun05b__()) {
-      try {
-        sh.getRange(1, 1, 1, Math.max(header.length, 1))
-          .setHorizontalAlignment('center')
-          .setVerticalAlignment('middle');
-      } catch (e) {}
-    }
+    if (idxRawRemarks != null && obj.remarks != null) { row[idxRawRemarks] = obj.remarks; touched = true; }
 
-    // Column formatting minimal (does not touch data validations)
-    applyOperationalColumnSchema_(sh, header, startRow, n, { orIsMoney: false });
+    if (idxRawRemarks != null && obj.remarks != null) { row[idxRawRemarks] = obj.remarks; touched = true; remarksTouched++; }
 
-    // DB Link RichText if supported
-    if (typeof applyDbLinkRichTextFromWriter_ === 'function') {
-      applyDbLinkRichTextFromWriter_(w, startRow);
-    }
+    if (touched) updated++;
   });
 
-  // Highlight + note by claim: operational sheets only (derived from full Raw, regardless of routing)
-  applyOperationalClaimHighlightsByRaw_(ss, rawValues, headerIndexRaw, pic);
+  // Best-effort immediate writeback for Remarks, to prevent accidental loss when callers do minimal raw writes.
+  if (idxRawRemarks != null && remarksTouched > 0) {
+    try {
+      const rawSheet = __resolveRawSheet05a_(ss);
+      if (rawSheet) writeRawColumns_(rawSheet, rawValues, [idxRawRemarks]);
+    } catch (e) {}
+  }
 
-  // Unknown status logging (single-master: log only, do not spam Details by default)
-  if (unknownStatuses.length && typeof logLine_ === 'function') {
-    const maxN = (typeof MAPPING_ERROR_LOG_POLICY === 'object' && MAPPING_ERROR_LOG_POLICY && MAPPING_ERROR_LOG_POLICY.maxPerRun != null)
-      ? Number(MAPPING_ERROR_LOG_POLICY.maxPerRun)
-      : 200;
+  return { updated, notes: 'scannedOpsRows=' + scannedRows + ' | matchedClaims=' + Object.keys(fieldSet).length };
+}
 
-    for (let i = 0; i < unknownStatuses.length && i < maxN; i++) {
-      const x = unknownStatuses[i] || {};
-      const dateStr = formatLogDate05b_(x.submissionDateVal);
-      const notes = `Last Status: ${x.status || ''} | Claim Number: ${x.claim || ''} | SC: ${x.sc || ''} | Date: ${dateStr || ''}`;
-      logLine_('MAP', 'Last status not routed', '', notes, 'WARN');
+/**
+ * Backup ops -> raw with full column format + data validation + rich text (Update Status).
+ *
+ * Why:
+ * - Requirement: Status (dropdown+format), OR (checkbox), Update Status (rich text) must be preserved (not value-only).
+ * - Claim alignment stays correct even if sheets are sorted differently.
+ *
+ * Performance:
+ * - One values block read per ops sheet + optional rich text column read for Update Status.
+ * - One write per raw column + one rich text write for Update Status.
+ */
+function backupOpsToRawFull_(ss, rawSheet, rawValues, headerIndexRaw, pic) {
+  if (DRY_RUN) return { updated: 0, notes: 'DRY_RUN' };
+  if (!ss || !rawSheet || !headerIndexRaw) return { updated: 0, notes: 'Missing args' };
+
+  const h = CONFIG.headers;
+  const idxRawClaim = headerIndexRaw[h.claimNumber];
+  const idxRawOR = idxAny_(headerIndexRaw, [h.orColumn, 'OR', 'Or']);
+  const idxRawUpdate = headerIndexRaw[h.updateStatus];
+  const idxRawTs = headerIndexRaw[h.timestamp];
+  const idxRawStatus = headerIndexRaw[h.status];
+  const idxRawRemarks = idxAny_(headerIndexRaw, ['Remarks', 'Remark', 'remarks', 'remark']);
+
+  // Additional manual/operational tail fields (snapshot per Claim Number)
+  const idxRawUpdateAsso = headerIndexRaw['Update Status Asso'];
+  const idxRawTsAsso = headerIndexRaw['Timestamp Asso'];
+  const idxRawUpdateAdmin = headerIndexRaw['Update Status Admin'];
+  const idxRawTsAdmin = headerIndexRaw['Timestamp Admin'];
+
+
+  if (idxRawClaim == null) return { updated: 0, notes: 'Raw claim_number not found' };
+
+  // Ensure rawValues are loaded (rows only, no header)
+  const rawRowCount = Math.max(0, rawSheet.getLastRow() - 1);
+  const workingRawValues = (rawValues && rawValues.length === rawRowCount)
+    ? rawValues
+    : (rawRowCount > 0 ? rawSheet.getRange(2, 1, rawRowCount, rawSheet.getLastColumn()).getValues() : []);
+
+  if (!workingRawValues.length) return { updated: 0, notes: 'Raw has no rows' };
+
+  // Build claim -> raw row index map
+  const rawMap = {};
+  for (let i = 0; i < workingRawValues.length; i++) {
+    const key = String(workingRawValues[i][idxRawClaim] || '').trim().toUpperCase();
+    if (key) rawMap[key] = i;
+  }
+
+  const opsList = getOperationalSheetsForBackup_(pic);
+  const fieldSet = {}; // claim -> {or, status, ts, updateRt}
+  const ensureObj = claim => (fieldSet[claim] ? fieldSet[claim] : (fieldSet[claim] = {}));
+
+  let scannedRows = 0;
+  let formatSource = null; // {sh, idxOR, idxUpdate, idxTs, idxStatus}
+
+  for (let s = 0; s < opsList.length; s++) {
+    const name = opsList[s];
+    const sh = ss.getSheetByName(name);
+    if (!sh) continue;
+
+    const lr = sh.getLastRow(), lc = sh.getLastColumn();
+    if (lr <= 1 || lc <= 0) continue;
+
+    const header = sh.getRange(1, 1, 1, lc).getValues()[0].map(v => String(v || '').trim());
+
+    const idxClaimOps = header.indexOf(h.claimNumber) !== -1 ? header.indexOf(h.claimNumber) : header.indexOf('Claim Number');
+    if (idxClaimOps === -1) continue;
+
+    const idxOR = __findHeaderIndex05a_(header, 'OR');
+    const idxUpdate = __findHeaderIndex05a_(header, 'Update Status');
+    const idxTs = __findHeaderIndex05a_(header, 'Timestamp');
+    const idxStatus = __findHeaderIndex05a_(header, 'Status');
+
+    const idxUpdateAsso = __findHeaderIndex05a_(header, 'Update Status Asso');
+    const idxTsAsso = __findHeaderIndex05a_(header, 'Timestamp Asso');
+    const idxUpdateAdmin = __findHeaderIndex05a_(header, 'Update Status Admin');
+    const idxTsAdmin = __findHeaderIndex05a_(header, 'Timestamp Admin');
+
+    const idxRemarksTmp = __findHeaderIndex05a_(header, 'Remarks');
+    const idxRemarks = (idxRemarksTmp !== -1) ? idxRemarksTmp : __findHeaderIndex05a_(header, 'Remark');
+
+    if (idxOR === -1 && idxUpdate === -1 && idxTs === -1 && idxStatus === -1 &&
+        idxUpdateAsso === -1 && idxTsAsso === -1 && idxUpdateAdmin === -1 && idxTsAdmin === -1 && idxRemarks === -1) continue;
+
+    // Prefer using the "Submission" sheet as the formatting/validation source when available.
+    const shName = sh.getName();
+    if (!formatSource || (formatSource && formatSource.sh && formatSource.sh.getName && formatSource.sh.getName() !== 'Submission' && shName === 'Submission')) {
+      formatSource = { sh, idxOR, idxUpdate, idxTs, idxStatus, idxUpdateAsso, idxTsAsso, idxUpdateAdmin, idxTsAdmin, idxRemarks };
+    }
+
+    // Read the smallest contiguous block that covers all needed columns
+    const needed = [idxClaimOps, idxOR, idxUpdate, idxTs, idxStatus, idxUpdateAsso, idxTsAsso, idxUpdateAdmin, idxTsAdmin].filter(x => x !== -1);
+    const minC = Math.min.apply(null, needed);
+    const maxC = Math.max.apply(null, needed);
+    const width = maxC - minC + 1;
+
+    const block = sh.getRange(2, minC + 1, lr - 1, width).getValues();
+    scannedRows += block.length;
+
+    // Rich text only for Update Status (and Asso/Admin variants, if present)
+    let updateRT = null;
+    let updateAssoRT = null;
+    let updateAdminRT = null;
+    if (idxUpdate !== -1) {
+      updateRT = sh.getRange(2, idxUpdate + 1, lr - 1, 1).getRichTextValues(); // 2D
+    }
+    if (idxUpdateAsso !== -1) {
+      updateAssoRT = sh.getRange(2, idxUpdateAsso + 1, lr - 1, 1).getRichTextValues(); // 2D
+    }
+    if (idxUpdateAdmin !== -1) {
+      updateAdminRT = sh.getRange(2, idxUpdateAdmin + 1, lr - 1, 1).getRichTextValues(); // 2D
+    }
+
+    // Rich text for Remarks (preserve hyperlinks/format)
+    let remarksRT = null;
+    if (idxRemarks !== -1) {
+      try { remarksRT = sh.getRange(2, idxRemarks + 1, lr - 1, 1).getRichTextValues(); } catch (e) { remarksRT = null; }
+    }
+
+    for (let r = 0; r < block.length; r++) {
+      const row = block[r];
+      const claim = String(row[idxClaimOps - minC] || '').trim().toUpperCase();
+      if (!claim) continue;
+
+      const obj = ensureObj(claim);
+
+      if (idxOR !== -1 && obj.or == null) {
+        const cb = normalizeCheckbox_(row[idxOR - minC]);
+        if (cb !== '') obj.or = cb;
+      }
+      if (idxStatus !== -1 && obj.status == null) {
+        const v = normalizeStatusValue_(row[idxStatus - minC]);
+        if (v !== '') obj.status = v;
+      }
+      if (idxTs !== -1 && obj.ts == null) {
+        const v = row[idxTs - minC];
+        if (v !== '' && v != null) obj.ts = v;
+      }
+      if (idxUpdate !== -1 && obj.updateRt == null && updateRT) {
+        const rt = updateRT[r] && updateRT[r][0];
+        const t = (rt && rt.getText) ? String(rt.getText() || '').trim() : '';
+        if (t) obj.updateRt = rt;
+      }
+
+      if (idxUpdateAsso !== -1 && obj.updateAssoRt == null && updateAssoRT) {
+        const rt = updateAssoRT[r] && updateAssoRT[r][0];
+        const t = (rt && rt.getText) ? String(rt.getText() || '').trim() : '';
+        if (t) obj.updateAssoRt = rt;
+      }
+      if (idxTsAsso !== -1 && obj.tsAsso == null) {
+        const v = row[idxTsAsso - minC];
+        if (v !== '' && v != null) obj.tsAsso = v;
+      }
+      if (idxUpdateAdmin !== -1 && obj.updateAdminRt == null && updateAdminRT) {
+        const rt = updateAdminRT[r] && updateAdminRT[r][0];
+        const t = (rt && rt.getText) ? String(rt.getText() || '').trim() : '';
+        if (t) obj.updateAdminRt = rt;
+      }
+      if (idxTsAdmin !== -1 && obj.tsAdmin == null) {
+        const v = row[idxTsAdmin - minC];
+        if (v !== '' && v != null) obj.tsAdmin = v;
+      }
+
+      if (idxRemarks !== -1 && obj.remarksRt == null) {
+        // Prefer RichText to preserve formatting/hyperlinks/line breaks.
+        if (remarksRT && remarksRT[r] && remarksRT[r][0] && remarksRT[r][0].getText) {
+          const rt = remarksRT[r][0];
+          const txt = String(rt.getText() || '');
+          if (txt !== '') {
+            obj.remarksRt = rt;
+            obj.remarks = txt; // keep plain value too
+          }
+        } else if (obj.remarks == null) {
+          const v = row[idxRemarks - minC];
+          const txt = String(v == null ? '' : v);
+          if (txt !== '') obj.remarks = txt;
+        }
+      }
     }
   }
 
-  // Keep old return shape mostly, but remove EV-Bike artifacts.
-  return { total, perSheet: routeCount, unknown: unknownStatuses, missingStatus };
+  // Prepare raw Update Status rich text buffers (single batch write)
+  let rawUpdateRTs = null;
+  let rawUpdateAssoRTs = null;
+  let rawUpdateAdminRTs = null;
+  if (idxRawUpdate != null) {
+    rawUpdateRTs = rawSheet.getRange(2, idxRawUpdate + 1, rawValues.length, 1).getRichTextValues();
+  }
+  if (idxRawUpdateAsso != null) {
+    rawUpdateAssoRTs = rawSheet.getRange(2, idxRawUpdateAsso + 1, rawValues.length, 1).getRichTextValues();
+  }
+  if (idxRawUpdateAdmin != null) {
+    rawUpdateAdminRTs = rawSheet.getRange(2, idxRawUpdateAdmin + 1, rawValues.length, 1).getRichTextValues();
+  }
+
+  let rawRemarksRTs = null;
+  if (idxRawRemarks != null) {
+    try { rawRemarksRTs = rawSheet.getRange(2, idxRawRemarks + 1, rawValues.length, 1).getRichTextValues(); } catch (e) { rawRemarksRTs = null; }
+  }
+
+  let updated = 0;
+  Object.keys(fieldSet).forEach(claim => {
+    const i = rawMap[claim];
+    if (i == null) return;
+
+    const obj = fieldSet[claim];
+    const row = rawValues[i];
+    let touched = false;
+
+    if (idxRawOR != null && obj.or != null) { row[idxRawOR] = obj.or; touched = true; }
+    if (idxRawStatus != null && obj.status != null) { row[idxRawStatus] = obj.status; touched = true; }
+    if (idxRawTs != null && obj.ts != null) { row[idxRawTs] = obj.ts; touched = true; }
+
+    if (idxRawTsAsso != null && obj.tsAsso != null) { row[idxRawTsAsso] = obj.tsAsso; touched = true; }
+    if (idxRawTsAdmin != null && obj.tsAdmin != null) { row[idxRawTsAdmin] = obj.tsAdmin; touched = true; }
+
+    if (idxRawUpdate != null && obj.updateRt != null && rawUpdateRTs) {
+      rawUpdateRTs[i][0] = obj.updateRt;
+      row[idxRawUpdate] = obj.updateRt.getText(); // keep values in sync for downstream reads
+      touched = true;
+    }
+
+    if (idxRawUpdateAsso != null && obj.updateAssoRt != null && rawUpdateAssoRTs) {
+      rawUpdateAssoRTs[i][0] = obj.updateAssoRt;
+      row[idxRawUpdateAsso] = obj.updateAssoRt.getText();
+      touched = true;
+    }
+    if (idxRawUpdateAdmin != null && obj.updateAdminRt != null && rawUpdateAdminRTs) {
+      rawUpdateAdminRTs[i][0] = obj.updateAdminRt;
+      row[idxRawUpdateAdmin] = obj.updateAdminRt.getText();
+      touched = true;
+    }
+
+    if (idxRawRemarks != null) {
+      if (obj.remarksRt != null && rawRemarksRTs) {
+        rawRemarksRTs[i][0] = obj.remarksRt;
+        row[idxRawRemarks] = obj.remarksRt.getText();
+        touched = true;
+      } else if (obj.remarks != null && String(obj.remarks) !== '') {
+        row[idxRawRemarks] = obj.remarks;
+        touched = true;
+      }
+    }
+
+    if (touched) updated++;
+  });
+
+  // Apply column-level types/format/validation (cheap, once)
+  if (idxRawOR != null) {
+    try { rawSheet.getRange(2, idxRawOR + 1, rawValues.length, 1).insertCheckboxes(); } catch (e) {}
+  }
+  if (formatSource) {
+    try {
+      // Status: preserve dropdown *chip* rule + visuals on Raw (do NOT overwrite values)
+      // Rationale: setDataValidation(dv) can drop "chip" display + option colors; copyTo(PASTE_DATA_VALIDATION) preserves it.
+      if (idxRawStatus != null && formatSource.idxStatus !== -1) {
+        const srcCell = formatSource.sh.getRange(2, formatSource.idxStatus + 1, 1, 1);
+        const dstCol  = rawSheet.getRange(2, idxRawStatus + 1, rawValues.length, 1);
+
+        try { srcCell.copyTo(dstCol, SpreadsheetApp.CopyPasteType.PASTE_DATA_VALIDATION, false); } catch (e) {
+          // Fallback (may lose chip styling, but keeps dropdown rule at least)
+          try {
+            const dv = srcCell.getDataValidation();
+            if (dv) dstCol.setDataValidation(dv);
+          } catch (e2) {}
+        }
+
+        // Visuals (number format, fonts, alignment, borders)
+        try { srcCell.copyTo(dstCol, SpreadsheetApp.CopyPasteType.PASTE_FORMAT, false); } catch (e) {}
+
+        // Conditional formatting (if the Status column uses CF-based highlighting)
+        try { srcCell.copyTo(dstCol, SpreadsheetApp.CopyPasteType.PASTE_CONDITIONAL_FORMATTING, false); } catch (e) {}
+      }
+
+      // Update Status: column format (rich text is written below)
+      if (idxRawUpdate != null && formatSource.idxUpdate !== -1) {
+        const src2 = formatSource.sh.getRange(2, formatSource.idxUpdate + 1, 1, 1);
+        const dst2 = rawSheet.getRange(2, idxRawUpdate + 1, rawValues.length, 1);
+        src2.copyTo(dst2, SpreadsheetApp.CopyPasteType.PASTE_FORMAT, false);
+      }
+
+      // Remarks: preserve column format + (if any) data validation.
+      if (idxRawRemarks != null && formatSource.idxRemarks !== -1) {
+        const srcR = formatSource.sh.getRange(2, formatSource.idxRemarks + 1, 1, 1);
+        const dstR = rawSheet.getRange(2, idxRawRemarks + 1, rawValues.length, 1);
+        try { srcR.copyTo(dstR, SpreadsheetApp.CopyPasteType.PASTE_FORMAT, false); } catch (e) {}
+        try { srcR.copyTo(dstR, SpreadsheetApp.CopyPasteType.PASTE_DATA_VALIDATION, false); } catch (e2) {}
+      }
+
+      // Update Status Asso/Admin: column format (rich text is written below)
+      if (idxRawUpdateAsso != null && formatSource.idxUpdateAsso !== -1) {
+        const srcA = formatSource.sh.getRange(2, formatSource.idxUpdateAsso + 1, 1, 1);
+        const dstA = rawSheet.getRange(2, idxRawUpdateAsso + 1, rawValues.length, 1);
+        try { srcA.copyTo(dstA, SpreadsheetApp.CopyPasteType.PASTE_FORMAT, false); } catch (e) {}
+      }
+      if (idxRawUpdateAdmin != null && formatSource.idxUpdateAdmin !== -1) {
+        const srcB = formatSource.sh.getRange(2, formatSource.idxUpdateAdmin + 1, 1, 1);
+        const dstB = rawSheet.getRange(2, idxRawUpdateAdmin + 1, rawValues.length, 1);
+        try { srcB.copyTo(dstB, SpreadsheetApp.CopyPasteType.PASTE_FORMAT, false); } catch (e) {}
+      }
+
+      // Timestamp: number format (optional)
+      if (idxRawTs != null && formatSource.idxTs !== -1) {
+        const fmt = formatSource.sh.getRange(2, formatSource.idxTs + 1, 1, 1).getNumberFormat();
+        if (fmt) rawSheet.getRange(2, idxRawTs + 1, rawValues.length, 1).setNumberFormat(fmt);
+      }
+    } catch (e) {}
+  }
+
+  // Write back changed raw columns (batch per contiguous block)
+  const colsToWrite = [];
+  if (idxRawOR != null) colsToWrite.push(idxRawOR);
+  if (idxRawStatus != null) colsToWrite.push(idxRawStatus);
+  if (idxRawTs != null) colsToWrite.push(idxRawTs);
+  if (idxRawUpdate != null) colsToWrite.push(idxRawUpdate);
+  if (idxRawUpdateAsso != null) colsToWrite.push(idxRawUpdateAsso);
+  if (idxRawTsAsso != null) colsToWrite.push(idxRawTsAsso);
+  if (idxRawUpdateAdmin != null) colsToWrite.push(idxRawUpdateAdmin);
+  if (idxRawTsAdmin != null) colsToWrite.push(idxRawTsAdmin);
+  if (idxRawRemarks != null) colsToWrite.push(idxRawRemarks);
+
+  writeRawColumns_(rawSheet, rawValues, colsToWrite);
+
+  // Rich text write (Update Status + Asso/Admin variants)
+  if (idxRawUpdate != null && rawUpdateRTs) {
+    try { safeSetRichTextValues_(rawSheet.getRange(2, idxRawUpdate + 1, rawUpdateRTs.length, 1), rawUpdateRTs); } catch (e) {}
+  }
+  if (idxRawUpdateAsso != null && rawUpdateAssoRTs) {
+    try { safeSetRichTextValues_(rawSheet.getRange(2, idxRawUpdateAsso + 1, rawUpdateAssoRTs.length, 1), rawUpdateAssoRTs); } catch (e) {}
+  }
+  if (idxRawUpdateAdmin != null && rawUpdateAdminRTs) {
+    try { safeSetRichTextValues_(rawSheet.getRange(2, idxRawUpdateAdmin + 1, rawUpdateAdminRTs.length, 1), rawUpdateAdminRTs); } catch (e) {}
+  }
+
+  if (idxRawRemarks != null && rawRemarksRTs) {
+    try { safeSetRichTextValues_(rawSheet.getRange(2, idxRawRemarks + 1, rawRemarksRTs.length, 1), rawRemarksRTs); } catch (e) {}
+  }
+
+  return { updated, notes: 'scannedOpsRows=' + scannedRows + ' | matchedClaims=' + Object.keys(fieldSet).length + ' | fullFormat=1' };
 }
+
 
 
 
 /** =========================
- *  Sorting
+ *  Raw minimal column writeback
  *  ========================= */
 
-function sortOperationalSheets_(ss, pic) {
-  // Requirement: preserve filters & sort by:
-  //  1) Last Status Date (A->Z)
-  //  2) Last Status (A->Z)
-  const isAdmin = (pic === 'Admin' || pic == null);
-  const ops = isAdmin ? CONFIG.sheetsByPic.adminOperational : CONFIG.sheetsByPic.picOperational;
-  const optional = (!isAdmin) ? (CONFIG.sheetsByPic.optional || []) : []; // Admin skips optional
-  const names = ops.concat(optional);
+function writeRawColumns_(rawSheet, rawValues, colIdxList0based) {
+  if (DRY_RUN) return;
+  if (!rawSheet || !rawValues || !rawValues.length) return;
 
-  // Include SC quarantine sheet if present
-  try {
-    if (ss.getSheetByName('SC - Unmapped') && names.indexOf('SC - Unmapped') === -1) names.push('SC - Unmapped');
-  } catch (e) {}
+  const cols = Array.from(new Set(colIdxList0based.filter(x => x != null && x >= 0))).sort((a, b) => a - b);
+  if (!cols.length) return;
 
-  names.forEach(name => {
-    const sh = ss.getSheetByName(name);
-    if (!sh) return;
+  // Group contiguous columns into runs to minimize Range writes
+  const runs = [];
+  let cur = [cols[0]];
+  for (let i = 1; i < cols.length; i++) {
+    const c = cols[i];
+    if (c === cur[cur.length - 1] + 1) cur.push(c);
+    else { runs.push(cur); cur = [c]; }
+  }
+  runs.push(cur);
 
-    const lastRow = sh.getLastRow();
-    const lastCol = sh.getLastColumn();
-    if (lastRow <= 2 || lastCol < 1) return;
+  for (let r = 0; r < runs.length; r++) {
+    const run = runs[r];
+    const startCol1 = run[0] + 1;
+    const width = run.length;
 
-    const header = sh.getRange(1, 1, 1, lastCol).getValues()[0].map(v => String(v || '').trim());
-    const idx = buildHeaderIndex_(header);
-
-    const idxLsd = (idx['Last Status Date'] != null) ? idx['Last Status Date'] : -1;
-    const idxLs = (idx['Last Status'] != null) ? idx['Last Status'] : -1;
-
-    const criteriaAbs = [];
-    if (idxLsd > -1) criteriaAbs.push({ colAbs: idxLsd + 1, ascending: true });
-    if (idxLs > -1) criteriaAbs.push({ colAbs: idxLs + 1, ascending: true });
-
-    if (!criteriaAbs.length || __isDryRun05b__()) return;
-
-    try {
-      const f = (typeof sh.getFilter === 'function') ? sh.getFilter() : null;
-      if (f && typeof f.getRange === 'function') {
-        const fr = f.getRange();
-        const frColStart = fr.getColumn();
-        const frColEnd = fr.getColumn() + fr.getNumColumns() - 1;
-
-        // Safety: only sort inside filter range if it covers required columns.
-        let ok = (fr.getNumRows() > 1);
-        for (let i = 0; i < criteriaAbs.length; i++) {
-          const cAbs = criteriaAbs[i].colAbs;
-          if (cAbs < frColStart || cAbs > frColEnd) { ok = false; break; }
-        }
-        if (!ok) return;
-
-        const sortRange = fr.offset(1, 0, fr.getNumRows() - 1, fr.getNumColumns());
-        const criteriaRel = criteriaAbs.map(x => ({ column: (x.colAbs - frColStart + 1), ascending: x.ascending }));
-        sortRange.sort(criteriaRel);
-        return;
-      }
-
-      // No filter: sort full data range.
-      const criteria = criteriaAbs.map(x => ({ column: x.colAbs, ascending: x.ascending }));
-      sh.getRange(2, 1, lastRow - 1, lastCol).sort(criteria);
-    } catch (e) {
-      // best-effort only
+    const out = new Array(rawValues.length);
+    for (let i = 0; i < rawValues.length; i++) {
+      const src = rawValues[i];
+      const rowOut = new Array(width);
+      for (let j = 0; j < width; j++) rowOut[j] = src[run[j]];
+      out[i] = rowOut;
     }
-  });
+    safeSetValues_(rawSheet.getRange(2, startCol1, rawValues.length, width), out);
+  }
 }

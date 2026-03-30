@@ -1,245 +1,212 @@
 /***************************************************************
- * 06e_SubHelpers.gs
- * Extracted SUB helper implementations from 06a_EntryPoints.
+ * 06d_IntegratedMaintenance.gs
+ * Integrated maintenance module.
+ *
+ * Absorbs previous patch-layer files:
+ * - 97_SelfCheck
+ * - 98_PipelineCoreHardening
+ * - 99_RuntimeFixes
+ *
+ * Goal:
+ * - keep transition logic centralized,
+ * - reduce patch-layer sprawl,
+ * - keep self-check + maintenance utilities centralized.
  ***************************************************************/
 'use strict';
 
-function __appendSubmissionFromRawIfMissing06e_(ss, rawMap, rawHdrIdx, dbTag) {
-  const sh = ss.getSheetByName('Submission');
-  if (!sh) {
-    try { logLine_('SUB_WARN', 'Submission sheet not found (skip append)', '', '', 'WARN'); } catch (e1) {}
-    return { appended: 0, skipped: true };
+(function bootstrapIntegratedMaintenance06d_() {
+  // Runtime hardening that previously lived in this bootstrap has been merged back
+  // into the source modules (05b/06b/06c). Keep this bootstrap as an explicit
+  // no-op so file load order stays stable without re-shadowing upstream helpers.
+})();
+
+function runSelfCheck_() {
+  const g = (typeof globalThis !== 'undefined') ? globalThis : Function('return this')();
+  const startedAt = new Date();
+  const report = {
+    checkedAt: startedAt.toISOString(),
+    ok: true,
+    errors: [],
+    warnings: [],
+    summary: {}
+  };
+
+  function pushErr(msg) {
+    report.ok = false;
+    report.errors.push(String(msg || 'Unknown error'));
   }
-
-  const lastCol = sh.getLastColumn();
-  const lastRow = sh.getLastRow();
-  if (lastCol < 1) return { appended: 0, skipped: true };
-
-  const header = sh.getRange(1, 1, 1, lastCol).getValues()[0].map(h => String(h || '').trim());
-  const norm = header.map(h => h.toLowerCase());
-
-  function idxOf(name) {
-    const i = norm.indexOf(String(name || '').toLowerCase());
-    return i >= 0 ? i : -1;
+  function pushWarn(msg) {
+    report.warnings.push(String(msg || 'Unknown warning'));
   }
-
-  const idxClaim = idxOf('claim number');
-  if (idxClaim < 0) {
-    try { logLine_('SUB_WARN', 'Submission missing Claim Number header (skip append)', '', '', 'WARN'); } catch (e2) {}
-    return { appended: 0, skipped: true };
-  }
-
-  // Existing claim set
-  const existing = new Set();
-  if (lastRow >= 2) {
-    const colVals = sh.getRange(2, idxClaim + 1, lastRow - 1, 1).getValues();
-    for (let i = 0; i < colVals.length; i++) {
-      const cn = String(colVals[i][0] || '').trim();
-      if (cn) existing.add(cn);
-    }
-  }
-
-  const idxSubDate = idxOf('submission date');
-  const idxDbLink = idxOf('db link');
-  const idxDb = idxOf('db');
-  const idxPartner = idxOf('partner name');
-  const idxIns = idxOf('insurance');
-  const idxDeviceType = idxOf('device type');
-  const idxImei = idxOf('imei/sn');
-  const idxLast = idxOf('last status');
-  const idxSc = idxOf('service center');
-  const idxLSA = idxOf('last status aging');
-  const idxALA = idxOf('activity log aging');
-
-  const flow = (typeof CONFIG === 'object' && CONFIG && CONFIG.subFlow) ? CONFIG.subFlow : null;
-  let dbValue = String(dbTag || '').trim().toUpperCase();
-  let wantStatus = (dbValue === 'OLD') ? 'SUBMITTED' : 'CLAIM_INITIATE';
-
-  // Prefer configured DB tag + trigger status mapping when available.
-  try {
-    if (flow && flow.SUBMISSION_RULES) {
-      if (dbValue === 'OLD' && flow.SUBMISSION_RULES.OLD) {
-        if (flow.SUBMISSION_RULES.OLD.DB_VALUE) {
-          dbValue = String(flow.SUBMISSION_RULES.OLD.DB_VALUE || '').trim().toUpperCase();
-        }
-        if (flow.SUBMISSION_RULES.OLD.TRIGGER_RAW_LAST_STATUS) {
-          wantStatus = String(flow.SUBMISSION_RULES.OLD.TRIGGER_RAW_LAST_STATUS || '').trim().toUpperCase();
-        }
-      } else if (dbValue === 'NEW' && flow.SUBMISSION_RULES.NEW) {
-        if (flow.SUBMISSION_RULES.NEW.DB_VALUE) {
-          dbValue = String(flow.SUBMISSION_RULES.NEW.DB_VALUE || '').trim().toUpperCase();
-        }
-        if (flow.SUBMISSION_RULES.NEW.TRIGGER_RAW_LAST_STATUS) {
-          wantStatus = String(flow.SUBMISSION_RULES.NEW.TRIGGER_RAW_LAST_STATUS || '').trim().toUpperCase();
-        }
-      }
-    }
-  } catch (e0) {}
-
-  const rowsToAppend = [];
-  const richLinks = []; // { rowOffset, url }
-
-  rawMap.forEach(rec => {
-    const cn = String(rec.claim_number || '').trim();
-    if (!cn) return;
-
-    const st = String(rec.last_status || '').trim().toUpperCase();
-    if (st !== wantStatus) return;
-    if (existing.has(cn)) return;
-
-    const row = new Array(lastCol).fill('');
-
-    if (idxSubDate >= 0) row[idxSubDate] = rec.claim_submitted_datetime || '';
-    row[idxClaim] = cn;
-
-    if (idxDbLink >= 0) {
-      row[idxDbLink] = 'LINK';
-      const url = String(rec.dashboard_link || '').trim();
-      if (url) richLinks.push({ rowOffset: rowsToAppend.length, url: url });
-    }
-    if (idxDb >= 0) row[idxDb] = dbValue;
-
-    if (idxPartner >= 0) row[idxPartner] = rec.partner_name || '';
-    if (idxIns >= 0) row[idxIns] = rec.insurance || '';
-    if (idxDeviceType >= 0) row[idxDeviceType] = rec.device_type || '';
-    if (idxImei >= 0) row[idxImei] = rec.device_imei || '';
-    if (idxLast >= 0) row[idxLast] = rec.last_status || '';
-    if (idxSc >= 0) row[idxSc] = rec.sc_name || '';
-    if (idxLSA >= 0) row[idxLSA] = rec.last_status_aging || '';
-    if (idxALA >= 0) row[idxALA] = rec.activity_log_aging || '';
-
-    rowsToAppend.push(row);
-    existing.add(cn);
-  });
-
-  if (!rowsToAppend.length) {
-    try { logLine_('SUB_APP', 'No new Submission rows to append', dbTag, '', 'INFO'); } catch (e3) {}
-    return { appended: 0 };
-  }
-
-  const startRow = sh.getLastRow() + 1;
-  const rng = sh.getRange(startRow, 1, rowsToAppend.length, lastCol);
-  if (typeof safeSetValues_ === 'function') safeSetValues_(rng, rowsToAppend);
-  else rng.setValues(rowsToAppend);
-
-  // Apply RichText hyperlink to DB Link column if possible.
-  if (idxDbLink >= 0 && richLinks.length) {
+  function resolveSymbol_(name) {
     try {
-      const rich = [];
-      for (let i = 0; i < rowsToAppend.length; i++) rich.push([SpreadsheetApp.newRichTextValue().setText('LINK').build()]);
-
-      for (let i = 0; i < richLinks.length; i++) {
-        const r = richLinks[i].rowOffset;
-        const url = richLinks[i].url;
-        rich[r][0] = SpreadsheetApp.newRichTextValue().setText('LINK').setLinkUrl(url).build();
-      }
-
-      const linkRange = sh.getRange(startRow, idxDbLink + 1, rowsToAppend.length, 1);
-      if (typeof safeSetRichTextValues_ === 'function') safeSetRichTextValues_(linkRange, rich);
-      else linkRange.setRichTextValues(rich);
-    } catch (e4) {
-      try { logLine_('SUB_WARN', 'Failed to apply RichText hyperlinks for DB Link', String(e4), '', 'WARN'); } catch (e5) {}
-    }
+      // eval can resolve top-level const/let that do not become properties on globalThis.
+      return eval(name);
+    } catch (e0) {}
+    try {
+      return g[name];
+    } catch (e1) {}
+    return undefined;
+  }
+  function hasFn(name) {
+    try { return typeof resolveSymbol_(name) === 'function'; } catch (e) { return false; }
+  }
+  function hasObj(name) {
+    try {
+      const v = resolveSymbol_(name);
+      return typeof v !== 'undefined' && v != null;
+    } catch (e) { return false; }
+  }
+  function uniqSorted(arr) {
+    const seen = Object.create(null);
+    const out = [];
+    (arr || []).forEach(function (x) {
+      const s = String(x || '').trim();
+      if (!s || seen[s]) return;
+      seen[s] = 1;
+      out.push(s);
+    });
+    out.sort();
+    return out;
   }
 
-  try { logLine_('SUB_APP', 'Appended rows to Submission', dbTag, 'count=' + rowsToAppend.length, 'INFO'); } catch (e6) {}
+  try {
+    if (hasFn('healthCheck_')) {
+      const hc = healthCheck_();
+      report.summary.health = hc;
+      if (!hc || hc.ok !== true) pushErr('healthCheck_ reported failure.');
+    } else {
+      pushWarn('healthCheck_ is not available.');
+    }
+  } catch (e0) {
+    pushErr('healthCheck_ threw: ' + (e0 && e0.message ? e0.message : e0));
+  }
 
-  return { appended: rowsToAppend.length };
+  const criticalFns = [
+    'runPipeline_',
+    'runEmailIngest',
+    'runSubEmailIngest',
+    'onFormSubmit',
+    'runManual',
+    'parseUploadedFile_',
+    'mutateRawInMemory_',
+    'routeRawToOperationalSheetsInMemory_',
+    'enrichOperationalSheetsFromRaw06_',
+    'processB2B_',
+    'processSpecialCase_',
+    'processEVBike_',
+    'sortOperationalSheetsPreserveFilter06b_',
+    'sortOperationalSheetPreserveFilter06c_'
+  ];
+  const missingFns = criticalFns.filter(function (name) { return !hasFn(name); });
+  report.summary.missingCriticalFunctions = missingFns;
+  if (missingFns.length) pushErr('Missing critical functions: ' + missingFns.join(', '));
+
+  const criticalObjects = [
+    'CONFIG',
+    'OPS_ROUTING_POLICY',
+    'STATUS_TYPE_BY_LAST_STATUS',
+    'POSITION_BY_LAST_STATUS',
+    'FINISH_STATUSES'
+  ];
+  const missingObjects = criticalObjects.filter(function (name) { return !hasObj(name); });
+  report.summary.missingCriticalObjects = missingObjects;
+  if (missingObjects.length) pushErr('Missing critical config objects: ' + missingObjects.join(', '));
+
+  try {
+    const routed = [];
+    const bySheet = (typeof OPS_ROUTING_POLICY !== 'undefined' && OPS_ROUTING_POLICY && OPS_ROUTING_POLICY.LAST_STATUS_BY_SHEET)
+      ? OPS_ROUTING_POLICY.LAST_STATUS_BY_SHEET
+      : {};
+    Object.keys(bySheet || {}).forEach(function (sheetName) {
+      (bySheet[sheetName] || []).forEach(function (status) {
+        const s = String(status || '').trim();
+        if (s) routed.push(s);
+      });
+    });
+    const routedStatuses = uniqSorted(routed);
+    report.summary.routedStatusCount = routedStatuses.length;
+
+    const statusTypeMap = (typeof STATUS_TYPE_BY_LAST_STATUS !== 'undefined' && STATUS_TYPE_BY_LAST_STATUS)
+      ? STATUS_TYPE_BY_LAST_STATUS
+      : ((typeof CONFIG !== 'undefined' && CONFIG && CONFIG.statusTypeByLastStatus) ? CONFIG.statusTypeByLastStatus : {});
+    const positionMap = (typeof POSITION_BY_LAST_STATUS !== 'undefined' && POSITION_BY_LAST_STATUS)
+      ? POSITION_BY_LAST_STATUS
+      : ((typeof CONFIG !== 'undefined' && CONFIG && CONFIG.positionByLastStatus) ? CONFIG.positionByLastStatus : {});
+
+    const missingStatusType = routedStatuses.filter(function (s) { return statusTypeMap[s] == null || String(statusTypeMap[s]).trim() === ''; });
+    const missingPosition = routedStatuses.filter(function (s) { return positionMap[s] == null || String(positionMap[s]).trim() === ''; });
+
+    report.summary.missingStatusTypeMapping = missingStatusType;
+    report.summary.missingPositionMapping = missingPosition;
+
+    if (missingStatusType.length) pushErr('Missing Status Type mapping for: ' + missingStatusType.join(', '));
+    if (missingPosition.length) pushErr('Missing Position mapping for: ' + missingPosition.join(', '));
+  } catch (e1) {
+    pushErr('Routing coverage check failed: ' + (e1 && e1.message ? e1.message : e1));
+  }
+
+  try {
+    const kwBySheet = (typeof OPS_ROUTING_POLICY !== 'undefined' && OPS_ROUTING_POLICY && OPS_ROUTING_POLICY.SC_NAME_KEYWORDS)
+      ? OPS_ROUTING_POLICY.SC_NAME_KEYWORDS
+      : {};
+    const kwIndex = Object.create(null);
+    Object.keys(kwBySheet || {}).forEach(function (sheet) {
+      (kwBySheet[sheet] || []).forEach(function (kw) {
+        const k = String(kw || '').trim().toLowerCase();
+        if (!k) return;
+        if (!kwIndex[k]) kwIndex[k] = [];
+        kwIndex[k].push(sheet);
+      });
+    });
+    const overlaps = [];
+    Object.keys(kwIndex).forEach(function (k) {
+      const owners = uniqSorted(kwIndex[k]);
+      if (owners.length > 1) overlaps.push(k + ' => ' + owners.join(' / '));
+    });
+    report.summary.scKeywordOverlap = overlaps;
+    if (overlaps.length) pushWarn('SC keyword overlap detected: ' + overlaps.join(' | '));
+  } catch (e2) {
+    pushWarn('SC keyword overlap check failed: ' + (e2 && e2.message ? e2.message : e2));
+  }
+
+  try {
+    const tails = (typeof RAW_DATA_CUSTOM_TAIL_HEADERS !== 'undefined' && RAW_DATA_CUSTOM_TAIL_HEADERS) ? RAW_DATA_CUSTOM_TAIL_HEADERS : [];
+    const counts = Object.create(null);
+    (tails || []).forEach(function (h) {
+      const s = String(h || '').trim();
+      if (!s) return;
+      counts[s] = (counts[s] || 0) + 1;
+    });
+    const duplicates = Object.keys(counts).filter(function (k) { return counts[k] > 1; });
+    report.summary.duplicateRawTailHeaders = duplicates;
+    if (duplicates.length) pushWarn('Duplicate raw tail headers: ' + duplicates.join(', '));
+  } catch (e3) {
+    pushWarn('Raw tail duplicate check failed: ' + (e3 && e3.message ? e3.message : e3));
+  }
+
+  report.summary.durationMs = new Date().getTime() - startedAt.getTime();
+  try { Logger.log(JSON.stringify(report)); } catch (e5) {}
+  return report;
 }
 
-function __sortOperationalSheetsSub06e_(ss, sheetNames, sortSpecs) {
-  const names = Array.isArray(sheetNames) ? sheetNames : [];
-  const out = { sheets: {}, sortedSheets: 0, skippedSheets: 0 };
+function summarizeSelfCheck_(report) {
+  const r = report || runSelfCheck_();
+  const parts = [];
+  parts.push(r.ok ? 'SELF CHECK: OK' : 'SELF CHECK: FAIL');
+  parts.push('errors=' + ((r.errors || []).length));
+  parts.push('warnings=' + ((r.warnings || []).length));
+  parts.push('durationMs=' + (((r.summary || {}).durationMs) || 0));
+  if (r.errors && r.errors.length) parts.push('firstError=' + r.errors[0]);
+  if (r.warnings && r.warnings.length) parts.push('firstWarning=' + r.warnings[0]);
+  return parts.join(' | ');
+}
 
-  // Default SUB sort order:
-  // 1) Submission Date (A->Z)
-  // 2) Last Status Date (A->Z)
-  // 3) Last Status (A->Z)
-  const defaultSpecs = [
-    { headerCandidates: ['Submission Date', 'claim_submission_date', 'claim submitted datetime'], ascending: true },
-    { headerCandidates: ['Last Status Date', 'claim_last_updated_datetime', 'claim last updated datetime'], ascending: true },
-    { headerCandidates: ['Last Status', 'last_status', 'last status'], ascending: true }
-  ];
-
-  const normalizedSpecs = (Array.isArray(sortSpecs) && sortSpecs.length)
-    ? sortSpecs.map(s => ({
-        headerCandidates: Array.isArray(s && s.headerCandidates)
-          ? s.headerCandidates
-          : (s && s.header ? [s.header] : []),
-        ascending: (s && typeof s.ascending === 'boolean') ? s.ascending : true
-      }))
-    : defaultSpecs;
-
-  // SUB sort is enforced by requirement; ignore legacy default unless explicitly configured.
-  const enforcedSpecs = [
-        { headerCandidates: ['Last Status Date', 'claim_last_updated_datetime', 'claim last updated datetime'], ascending: true },
-    { headerCandidates: ['Last Status', 'last_status', 'last status'], ascending: true }
-  ];
-
-  for (let i = 0; i < names.length; i++) {
-    const name = String(names[i] || '').trim();
-    if (!name) continue;
-
-    const sh = ss.getSheetByName(name);
-    if (!sh) { out.sheets[name] = { skipped: 'not found' }; out.skippedSheets++; continue; }
-
-    const lastRow = sh.getLastRow();
-    const lastCol = sh.getLastColumn();
-    if (lastRow < 3 || lastCol < 2) { out.sheets[name] = { skipped: 'too few rows' }; out.skippedSheets++; continue; }
-
-    try {
-      const hdr = sh.getRange(1, 1, 1, lastCol).getValues()[0].map(h => String(h || '').trim());
-      const norm = hdr.map(h => h.toLowerCase());
-
-      function idxByCandidates(cands) {
-        for (let k = 0; k < cands.length; k++) {
-          const key = String(cands[k] || '').toLowerCase();
-          const j = norm.indexOf(key);
-          if (j >= 0) return j;
-        }
-        return -1;
-      }
-
-      const sortCriteria = [];
-      normalizedSpecs.forEach(s => {
-      enforcedSpecs.forEach(s => {
-        const idx = idxByCandidates(s.headerCandidates);
-        if (idx >= 0) sortCriteria.push({ column: idx + 1, ascending: !!s.ascending });
-      });
-
-      if (!sortCriteria.length) {
-        out.sheets[name] = { skipped: 'missing headers for sort' };
-        out.skippedSheets++;
-        continue;
-      }
-
-      // Preserve filter: sort only the data body, not the header.
-      const filter = sh.getFilter ? sh.getFilter() : null;
-      if (filter && filter.getRange) {
-        const fr = filter.getRange();
-        const sr = fr.getRow();
-        const sc = fr.getColumn();
-        const nr = fr.getNumRows();
-        const nc = fr.getNumColumns();
-
-        if (nr <= 1) { out.sheets[name] = { skipped: 'filter range too small' }; out.skippedSheets++; continue; }
-
-        const body = sh.getRange(sr + 1, sc, nr - 1, nc);
-        if (!isDryRun_()) body.sort(sortCriteria);
-      } else {
-        const body = sh.getRange(2, 1, lastRow - 1, lastCol);
-        if (!isDryRun_()) body.sort(sortCriteria);
-      }
-
-      out.sheets[name] = { sorted: true, criteria: sortCriteria.length };
-      out.sortedSheets++;
-    } catch (e0) {
-      out.sheets[name] = { error: String(e0 && e0.message ? e0.message : e0) };
-      out.skippedSheets++;
-      try { logLine_('SUB_WARN', 'Sort failed', name, String(e0), 'WARN'); } catch (e1) {}
-    }
-  }
-
+function runSelfCheckAndDescribe_() {
+  const out = {
+    selfCheck: runSelfCheck_(),
+    system: (typeof describeSystem_ === 'function') ? describeSystem_() : null
+  };
+  try { Logger.log(JSON.stringify(out)); } catch (e) {}
   return out;
 }
-

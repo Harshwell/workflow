@@ -186,7 +186,7 @@ function withLock_(fn) {
   } catch (lockErr) {
     // Best-effort logging even when lock fails (but do not crash because of logging).
     try {
-      CACHE.log = { ss: null, sh: null, ensured: false, nextRow: LOG_LAYOUT.DETAIL_START_ROW, segNo: 0 };
+      CACHE.log = { ss: null, sh: null, ensured: false, nextRow: LOG_LAYOUT.DETAIL_START_ROW, segNo: 0, didAnyWrite: false, lastFlushMs: 0, mappingKeySet: new Set(), v2Ensured: false, v2NextRow: LOGV2_LAYOUT.START_ROW, v2SegNo: 0, runId: '', flow: '' };
       CACHE.details = { ss: null, sh: null, ensured: false, nextNo: null, existingClaimSet: null, runClaimSet: new Set() };
       resetLogState_();
       if (PIPELINE_FLAGS.CLEAR_LOG_BEFORE_RUN) clearLogSheet_();
@@ -213,9 +213,10 @@ function resetRunState_() {
   // Single-master: optional processors are enabled by default.
   RUNTIME.enableEvBike = true;
   RUNTIME.enableB2B = true;
+  RUNTIME.enableSpecialCase = true;
   RUNTIME.hasAgingFiles = false;
 
-  CACHE.log = { ss: null, sh: null, ensured: false, nextRow: LOG_LAYOUT.DETAIL_START_ROW, segNo: 0 };
+  CACHE.log = { ss: null, sh: null, ensured: false, nextRow: LOG_LAYOUT.DETAIL_START_ROW, segNo: 0, didAnyWrite: false, lastFlushMs: 0, mappingKeySet: new Set(), v2Ensured: false, v2NextRow: LOGV2_LAYOUT.START_ROW, v2SegNo: 0, runId: '', flow: '' };
   CACHE.details = { ss: null, sh: null, ensured: false, nextNo: null, existingClaimSet: null, runClaimSet: new Set() };
   resetLogState_();
 }
@@ -395,7 +396,6 @@ function onFormSubmit(e) {
     } catch (e2) {}
 
     try { setProgressForFlow_(flowLabel, 0, 'Starting...', { runId: runId, prefixFlowInStep: true }); } catch (e3) {}
-    try { setProgressForFlow_(flowLabel, 0, 'Starting…', { runId: runId, prefixFlowInStep: true }); } catch (e3) {}
     try { logLine_('FORM', 'Trigger received', 'flow=' + flowLabel + ' runId=' + runId, 'files=' + (req.allFileIds ? req.allFileIds.length : 0), 'INFO'); } catch (e4) {}
 
     const seg = startSegment_(flowLabel + '_FORM', 'Pipeline run (onFormSubmit)');
@@ -600,7 +600,6 @@ function __runSubCore06a_(masterSs, oldBlob, newBlob, opt) {
 
   const startedAt = new Date();
   try { setProgressForFlow_('SUB', 0.05, 'Snapshot PREV...', { prefixFlowInStep: true }); } catch (e0) {}
-  try { setProgressForFlow_('SUB', 0.05, 'Snapshot PREV…', { prefixFlowInStep: true }); } catch (e0) {}
 
   // WebApp snapshots (best effort)
   try {
@@ -612,7 +611,6 @@ function __runSubCore06a_(masterSs, oldBlob, newBlob, opt) {
   }
 
   try { setProgressForFlow_('SUB', 0.20, 'Process OLD...', { prefixFlowInStep: true }); } catch (e1) {}
-  try { setProgressForFlow_('SUB', 0.20, 'Process OLD…', { prefixFlowInStep: true }); } catch (e1) {}
 
   const rOld = __processSubAttachment06a_(masterSs, oldBlob, {
     dbTag: 'OLD',
@@ -625,7 +623,6 @@ function __runSubCore06a_(masterSs, oldBlob, newBlob, opt) {
   }
 
   try { setProgressForFlow_('SUB', 0.55, 'Process NEW...', { prefixFlowInStep: true }); } catch (e3) {}
-  try { setProgressForFlow_('SUB', 0.55, 'Process NEW…', { prefixFlowInStep: true }); } catch (e3) {}
 
   const rNew = __processSubAttachment06a_(masterSs, newBlob, {
     dbTag: 'NEW',
@@ -638,7 +635,6 @@ function __runSubCore06a_(masterSs, oldBlob, newBlob, opt) {
   }
 
   try { setProgressForFlow_('SUB', 0.78, 'Relocate + sort...', { prefixFlowInStep: true }); } catch (e5) {}
-  try { setProgressForFlow_('SUB', 0.78, 'Relocate + sort…', { prefixFlowInStep: true }); } catch (e5) {}
 
   const relocateRes = __relocateOperationalRowsByLastStatusSub06a_(masterSs, opSheets);
   const sortRes = __sortOperationalSheetsSub06a_(masterSs, opSheets, sortSpecs);
@@ -771,7 +767,6 @@ function ensureRawTailColumns06_(rawSheet) {
 
 /** =========================
  * Email ingest flow (Dashboard -> Raw Data)
- * Email ingest flow (Dashboard → Raw Data)
  * ========================= */
 function buildDashboardEmailQuery_(policy) {
   // MAIN (daily 08:00) must be QUEUE-based and deterministic.
@@ -840,7 +835,6 @@ function runEmailIngest(maxThreads) {
       const limit = 1;
 
       setProgress_(0, 'Searching queued email...');
-      setProgress_(0, 'Searching queued email…');
       logLine_('MAIL', 'MAIN ingest started', 'query=' + query, 'limit=' + limit, 'INFO');
 
       const threads = GmailApp.search(query, 0, limit);
@@ -903,11 +897,6 @@ function runEmailIngest(maxThreads) {
         tmpFileId = conv.fileId;
 
         setProgress_(0.35, 'Processing pipeline...');
-        setProgress_(0.15, 'Converting XLSX…');
-        const conv = convertXlsxBlobToTempSpreadsheet_(att.copyBlob(), att.getName());
-        tmpFileId = conv.fileId;
-
-        setProgress_(0.35, 'Processing pipeline…');
         const res = runPipeline_('Master', [tmpFileId], { flow: 'main', source: 'EMAIL_MAIN', subject: msg.getSubject() });
 
         // Determine success strictly: no exception + not severity ERROR
@@ -922,7 +911,6 @@ function runEmailIngest(maxThreads) {
 
         // Cleanup success (per spec)
         setProgress_(0.85, 'Cleaning up email...');
-        setProgress_(0.85, 'Cleaning up email…');
         try { msg.markRead(); } catch (e1) {}
         try { thread.markRead(); } catch (e2) {}
         try { if (queuedLabel) thread.removeLabel(queuedLabel); } catch (e3) {}
@@ -2391,6 +2379,141 @@ function __scoreScMatch06a_(scNorm, keywords) {
 function __appendSubmissionFromRawIfMissing06a_(ss, rawMap, rawHdrIdx, dbTag) {
   if (typeof __appendSubmissionFromRawIfMissing06e_ === 'function') {
     return __appendSubmissionFromRawIfMissing06e_(ss, rawMap, rawHdrIdx, dbTag);
+  const sh = ss.getSheetByName('Submission');
+  if (!sh) {
+    try { logLine_('SUB_WARN', 'Submission sheet not found (skip append)', '', '', 'WARN'); } catch (e1) {}
+    return { appended: 0, skipped: true };
+  }
+
+  const lastCol = sh.getLastColumn();
+  const lastRow = sh.getLastRow();
+  if (lastCol < 1) return { appended: 0, skipped: true };
+
+  const header = sh.getRange(1, 1, 1, lastCol).getValues()[0].map(h => String(h || '').trim());
+  const norm = header.map(h => h.toLowerCase());
+
+  function idxOf(name) {
+    const i = norm.indexOf(String(name || '').toLowerCase());
+    return i >= 0 ? i : -1;
+  }
+
+  const idxClaim = idxOf('claim number');
+  if (idxClaim < 0) {
+    try { logLine_('SUB_WARN', 'Submission missing Claim Number header (skip append)', '', '', 'WARN'); } catch (e2) {}
+    return { appended: 0, skipped: true };
+  }
+
+  // Existing claim set
+  const existing = new Set();
+  if (lastRow >= 2) {
+    const colVals = sh.getRange(2, idxClaim + 1, lastRow - 1, 1).getValues();
+    for (let i = 0; i < colVals.length; i++) {
+      const cn = String(colVals[i][0] || '').trim();
+      if (cn) existing.add(cn);
+    }
+  }
+
+  const idxSubDate = idxOf('submission date');
+  const idxDbLink = idxOf('db link');
+  const idxDb = idxOf('db');
+  const idxPartner = idxOf('partner name');
+  const idxIns = idxOf('insurance');
+  const idxDeviceType = idxOf('device type');
+  const idxImei = idxOf('imei/sn');
+  const idxLast = idxOf('last status');
+  const idxSc = idxOf('service center');
+  const idxLSA = idxOf('last status aging');
+  const idxALA = idxOf('activity log aging');
+
+  const flow = (typeof CONFIG === 'object' && CONFIG && CONFIG.subFlow) ? CONFIG.subFlow : null;
+  let dbValue = String(dbTag || '').trim().toUpperCase();
+  let wantStatus = (dbValue === 'OLD') ? 'SUBMITTED' : 'CLAIM_INITIATE';
+
+  // Prefer configured DB tag + trigger status mapping when available.
+  try {
+    if (flow && flow.SUBMISSION_RULES) {
+      if (dbValue === 'OLD' && flow.SUBMISSION_RULES.OLD) {
+        if (flow.SUBMISSION_RULES.OLD.DB_VALUE) {
+          dbValue = String(flow.SUBMISSION_RULES.OLD.DB_VALUE || '').trim().toUpperCase();
+        }
+        if (flow.SUBMISSION_RULES.OLD.TRIGGER_RAW_LAST_STATUS) {
+          wantStatus = String(flow.SUBMISSION_RULES.OLD.TRIGGER_RAW_LAST_STATUS || '').trim().toUpperCase();
+        }
+      } else if (dbValue === 'NEW' && flow.SUBMISSION_RULES.NEW) {
+        if (flow.SUBMISSION_RULES.NEW.DB_VALUE) {
+          dbValue = String(flow.SUBMISSION_RULES.NEW.DB_VALUE || '').trim().toUpperCase();
+        }
+        if (flow.SUBMISSION_RULES.NEW.TRIGGER_RAW_LAST_STATUS) {
+          wantStatus = String(flow.SUBMISSION_RULES.NEW.TRIGGER_RAW_LAST_STATUS || '').trim().toUpperCase();
+        }
+      }
+    }
+  } catch (e0) {}
+
+  const rowsToAppend = [];
+  const richLinks = []; // { rowOffset, url }
+
+  rawMap.forEach(rec => {
+    const cn = String(rec.claim_number || '').trim();
+    if (!cn) return;
+
+    const st = String(rec.last_status || '').trim().toUpperCase();
+    if (st !== wantStatus) return;
+    if (existing.has(cn)) return;
+
+    const row = new Array(lastCol).fill('');
+
+    if (idxSubDate >= 0) row[idxSubDate] = rec.claim_submitted_datetime || '';
+    row[idxClaim] = cn;
+
+    if (idxDbLink >= 0) {
+      row[idxDbLink] = 'LINK';
+      const url = String(rec.dashboard_link || '').trim();
+      if (url) richLinks.push({ rowOffset: rowsToAppend.length, url: url });
+    }
+    if (idxDb >= 0) row[idxDb] = dbValue;
+
+    if (idxPartner >= 0) row[idxPartner] = rec.partner_name || '';
+    if (idxIns >= 0) row[idxIns] = rec.insurance || '';
+    if (idxDeviceType >= 0) row[idxDeviceType] = rec.device_type || '';
+    if (idxImei >= 0) row[idxImei] = rec.device_imei || '';
+    if (idxLast >= 0) row[idxLast] = rec.last_status || '';
+    if (idxSc >= 0) row[idxSc] = rec.sc_name || '';
+    if (idxLSA >= 0) row[idxLSA] = rec.last_status_aging || '';
+    if (idxALA >= 0) row[idxALA] = rec.activity_log_aging || '';
+
+    rowsToAppend.push(row);
+    existing.add(cn);
+  });
+
+  if (!rowsToAppend.length) {
+    try { logLine_('SUB_APP', 'No new Submission rows to append', dbTag, '', 'INFO'); } catch (e3) {}
+    return { appended: 0 };
+  }
+
+  const startRow = sh.getLastRow() + 1;
+  const rng = sh.getRange(startRow, 1, rowsToAppend.length, lastCol);
+  if (typeof safeSetValues_ === 'function') safeSetValues_(rng, rowsToAppend);
+  else rng.setValues(rowsToAppend);
+
+  // Apply RichText hyperlink to DB Link column if possible.
+  if (idxDbLink >= 0 && richLinks.length) {
+    try {
+      const rich = [];
+      for (let i = 0; i < rowsToAppend.length; i++) rich.push([SpreadsheetApp.newRichTextValue().setText('LINK').build()]);
+
+      for (let i = 0; i < richLinks.length; i++) {
+        const r = richLinks[i].rowOffset;
+        const url = richLinks[i].url;
+        rich[r][0] = SpreadsheetApp.newRichTextValue().setText('LINK').setLinkUrl(url).build();
+      }
+
+      const linkRange = sh.getRange(startRow, idxDbLink + 1, rowsToAppend.length, 1);
+      if (typeof safeSetRichTextValues_ === 'function') safeSetRichTextValues_(linkRange, rich);
+      else linkRange.setRichTextValues(rich);
+    } catch (e4) {
+      try { logLine_('SUB_WARN', 'Failed to apply RichText hyperlinks for DB Link', String(e4), '', 'WARN'); } catch (e5) {}
+    }
   }
   throw new Error('__appendSubmissionFromRawIfMissing06e_ is not available.');
 }
@@ -2455,7 +2578,6 @@ function runManual(picOrFileIdsCsv, fileIdsCsvMaybe) {
     try { ssTiming = __logOverviewStart06_(key, startedAt); } catch (e) {}
 
     setProgress_(0, 'Starting (manual)...');
-    setProgress_(0, 'Starting (manual)…');
     logLine_('BOOT', 'Manual run started', 'version=' + APP_VERSION, 'profile=' + key, 'INFO');
 
     const ids = String(fileIdsCsv || '')

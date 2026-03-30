@@ -1,376 +1,86 @@
-# workflow
+## [2026.03.30-bugfix-r1] – 2026-03-30
 
-Google Apps Script workflow untuk claim pipeline, ingestion, routing, validation, enrichment, dan operational sheet maintenance.
+### Fixed (automated review)
+- **CRITICAL** `06a_EntryPoints.gs`: Removed duplicate `const conv` declaration inside same block scope in `runEmailIngest` — caused `SyntaxError: Identifier 'conv' has already been declared` on GAS load
+- **CRITICAL** `06a_EntryPoints.gs`: Removed duplicate `setProgressForFlow_` / `setProgress_` calls (ASCII `...` + unicode `…` pairs) throughout `onFormSubmit`, `__runSubCore06a_`, `runEmailIngest`, `runManual` — caused double Sheets API writes per progress update
+- **BUG** `01_Utils`: Removed first duplicate `findHeaderIndexByCandidates_` (no-opts variant) — GAS global namespace collision with the full opts-capable version at line 439
+- **BUG** `06a_EntryPoints.gs` + `06a_EntryPoints`: `CACHE.log` object literal in `withLock_` failure handler and `resetRunState_` was missing v2 fields (`v2Ensured`, `v2NextRow`, `v2SegNo`, `didAnyWrite`, `lastFlushMs`, `mappingKeySet`, `runId`, `flow`) — caused `undefined` references in log v2 path after lock failure
+- **BUG** `06a_EntryPoints.gs` + `06a_EntryPoints`: `resetRunState_` was missing `RUNTIME.enableSpecialCase = true` reset — Special Case pipeline could be silently skipped if prior run left it false
+- **BUG** `02_LogAndDetails`: `setProgress_` note used `'\\n'` literal (double-escaped) instead of `'\n'` — note text showed literal backslash-n instead of newlines
 
-Repo ini sudah punya fondasi yang cukup serius: single master workbook, policy-driven config, safe writer utilities, template-driven sheet assurance, serta flow orchestration untuk **MAIN**, **SUB**, dan **FORM**. Masalah utamanya bukan kurang fitur, tapi **kurang lapisan dokumentasi yang membuat perubahan jadi mudah dipahami dan dirawat**.
+# Changelog
 
-Dokumen ini sengaja dibuat tetap ramping. Untuk self-project, dokumentasi yang efektif lebih penting daripada dokumentasi yang banyak tapi jadi dekorasi.
-
----
-
-## Tujuan dokumentasi
-
-Layer dokumentasi repo ini dibuat dengan prinsip:
-
-1. **Sedikit file, tinggi sinyal**
-2. **Satu pintu masuk utama**
-3. **Perubahan mudah ditelusuri**
-4. **Setiap area punya source of truth yang jelas**
-5. **Cocok untuk self-project, tapi tetap terasa enterprise**
-
-Struktur dokumentasi yang dipakai:
-
-- `README.md` → entrypoint utama, repo map, aturan maintenance, review temuan penting
-- `docs/WORKFLOW_MAP.md` → flow map, diagram, dan change impact map
+Repo ini memakai changelog ringan yang fokus ke perubahan yang benar-benar relevan buat maintainer.
+Formatnya sengaja sederhana: **Added / Changed / Fixed**. Tidak perlu sok formal kalau ujungnya tidak pernah dibaca.
 
 ---
 
-## Repository map
 
-| File | Peran utama | Ubah di sini ketika... |
-|---|---|---|
-| `00_Config` | source of truth untuk policy, mapping, konstanta, flags, routing, workbook/sheet config | menambah status, ubah routing, ubah policy bisnis, ubah IDs/sheet names, ubah feature flags |
-| `01_Utils` | utility layer: safe I/O, coercion, date parsing, header matching, retry, idempotency, gmail/drive helpers | butuh helper generik reusable, bukan business rule |
-| `02_LogAndDetails` | logging dan details reporting | ubah perilaku log/detail, struktur audit output |
-| `03_SheetsAndValidation` | sheet assurance, template header, dropdown propagation, layout enforcement | ubah template sheet, schema heal, dropdown/checkbox/layout |
-| `04_ParseAndAging` | parsing input dan aging derivation | ubah cara membaca file sumber / parsing dataset |
-| `05a_Pipeline_RawMutate_Backup` | raw mutation / backup stage | ubah tahap transform raw sebelum routing lanjutan |
-| `05c_Pipeline_OptionalSheets` | optional sheet processors | ubah logika B2B / EV-Bike / Special Case |
-| `06a_EntryPoints` | trigger entrypoints dan flow orchestration MAIN / SUB / FORM | ubah trigger, orchestration flow, queue consumer, attachment process orchestration |
-| `06b_PipelineAndEnrichment` | enrichment / main pipeline logic | ubah enrichment atau tahap pipeline utama |
-| `06c_PostProcessAndUtils` | post-process, status type, movement/webapp helpers, final utilities | ubah finalization, movement tracking, atau util pasca pipeline |
-
----
-
-## Arsitektur singkat
-
-Secara konseptual repo ini terdiri dari 4 layer:
-
-### 1. Policy layer
-Berada terutama di `00_Config`.
-
-Isi layer ini:
-- status routing
-- status type / position mapping
-- workbook profile
-- sheet template expectations
-- feature flags
-- optional sheet policy
-- ingestion policy
-- runtime knobs
-
-### 2. Utility layer
-Berada terutama di `01_Utils`.
-
-Isi layer ini:
-- safe write helpers
-- normalization helpers
-- header matching
-- typed coercion
-- retry / idempotency
-- generic Gmail / Drive helpers
-
-### 3. Schema & presentation layer
-Berada terutama di `03_SheetsAndValidation`.
-
-Isi layer ini:
-- ensure sheet
-- template header
-- dropdown propagation
-- checkbox enforcement
-- number format / alignment
-- profile-based sheet provisioning
-
-### 4. Flow orchestration + processing layer
-Berada terutama di `04_*`, `05*`, `06*`.
-
-Isi layer ini:
-- file ingestion
-- parsing
-- raw update
-- routing
-- enrichment
-- optional sheets
-- post-process
-- trigger execution
-
----
-
-## Flow yang ada
-
-### MAIN
-Flow utama untuk daily claim monitoring.
-
-Ringkasnya:
-1. cari email queued MAIN
-2. ambil attachment dashboard
-3. convert XLSX ke temp spreadsheet
-4. jalankan pipeline ke master workbook
-5. cleanup email jika sukses
-
-### SUB
-Flow operational dashboard incremental.
-
-Ringkasnya:
-1. cari email queued SUB
-2. ambil 2 attachment: OLD + NEW
-3. copy ke `Raw OLD` dan `Raw NEW`
-4. update operational sheets by Claim Number
-5. relocate row berdasarkan status routing
-6. sort sheet operasional
-7. movement snapshot / tracking
-8. cleanup email jika sukses penuh
-
-### FORM / MANUAL
-Flow alternatif untuk submit file manual dari Form/Drive.
-
-Ringkasnya:
-1. baca flow selector dan file upload
-2. autodetect MAIN atau SUB jika perlu
-3. jalankan flow yang sama dengan orchestration utama
-4. simpan timing dan log seperti flow lain
-
-Detail diagram dan impact map ada di `docs/WORKFLOW_MAP.md`.
-
----
-
-## Aturan maintenance
-
-### Ubah status atau routing?
-Mulai dari `00_Config`.
-
-Cek minimal bagian berikut:
-- `OPS_ROUTING_POLICY`
-- `STATUS_TYPE_BY_LAST_STATUS`
-- `POSITION_BY_LAST_STATUS`
-- `FINISH_STATUSES`
-- policy sheet khusus seperti SC / PO / Exclusion / Special Case
-
-### Ubah template kolom sheet?
-Mulai dari `03_SheetsAndValidation`.
-
-Cek minimal bagian berikut:
-- `SV03_TEMPLATES`
-- `ensurePicSheets_`
-- `sv03_ensureSheetWithHeader_`
-- `sv03_enforceStandardLayoutForSheet_`
-
-### Ubah parsing / datetime / header matching?
-Mulai dari `01_Utils` dan `04_ParseAndAging`.
-
-### Ubah trigger atau orchestration flow?
-Mulai dari `06a_EntryPoints`.
-
-### Ubah optional sheet behavior?
-Mulai dari `05c_Pipeline_OptionalSheets` dan policy pendukung di `00_Config`.
-
----
-
-## Dokumentasi maintenance model
-
-Supaya dokumentasi tetap rapi dan tidak jadi museum file markdown, gunakan aturan ini:
-
-### Selalu update `README.md` jika:
-- ada module baru
-- ada flow baru
-- ada perubahan source of truth
-- ada sheet/route penting yang berpindah ownership
-- ada perubahan cara maintainer harus melakukan modifikasi
-
-### Selalu update `docs/WORKFLOW_MAP.md` jika:
-- sequence flow berubah
-- ada node proses baru
-- ada branch logic baru
-- ada perubahan dependency antar layer
-
-### Jangan tambah file dokumentasi baru kecuali benar-benar perlu
-Default-nya cukup 2 file ini.
-
-Kalau suatu hari butuh file tambahan, prioritaskan urutan ini:
-1. update file existing dulu
-2. tambah section baru di file existing
-3. baru buat file baru kalau memang tidak masuk akal digabung
-
----
-
-## Checklist sebelum merge perubahan besar
-
-- source of truth perubahan sudah jelas
-- perubahan policy tidak duplikatif
-- template sheet tidak bertentangan dengan routing
-- flow MAIN / SUB / FORM tetap konsisten
-- backward compatibility memang sengaja dipertahankan, bukan kebetulan
-- perubahan status baru sudah ikut:
-  - routing
-  - status type
-  - position
-  - optional sheet logic jika relevan
-  - dokumentasi jika dampaknya lintas modul
-
----
-
-## Code review summary
-
-Berikut temuan paling penting dari review awal repo ini.
-
-### Update hardening terbaru (2026-03-26)
-
-Putaran hardening terbaru sudah menutup beberapa sumber masalah yang paling berbahaya:
-
-- konstruksi `CONFIG` tidak lagi memicu load-time crash karena referensi konstanta yang belum siap
-- bootstrap patch di `06d_IntegratedMaintenance` tidak lagi men-shadow helper utama
-- self-check sekarang membaca simbol global `const` / `let` dengan benar
-- parsing datetime dan sort-under-filter diperketat di area operasional yang paling rawan drift
-- repo sekarang punya `appsscript.json` eksplisit dan `tools/static_smoke_check.js` untuk smoke-check lokal
-
-Catatan: daftar temuan di bawah tetap berguna sebagai konteks desain, tetapi beberapa poin prioritas tingginya sudah ditangani oleh hardening terbaru.
-
-
-### Update stabilisasi berikutnya (2026-03-29, fase lanjutan)
-
-Perubahan lanjutan yang sudah diterapkan setelah patch critical sebelumnya:
-
-- `sv03_getDateAutoNumberFormatForColumn_` ditambahkan agar format `DATE_AUTO` tidak lagi melempar ReferenceError saat schema-format enforcement berjalan.
-- `applyOperationalClaimHighlightsByRaw_` sekarang mengisolasi error per-sheet (try/catch per sheet), jadi kegagalan satu sheet tidak menghentikan highlight di sheet lain.
-- EV-Bike sekarang dedup claim lebih ketat saat overlay dari `Submission` (menghindari proses ulang claim yang sudah diproses dari Raw pada run yang sama).
-- Scan Event ID untuk sheet `Past` dibatasi (windowed read) agar post-process movement tracking lebih scalable pada sheet historis besar.
-- Resolusi excluded-last-status di 05a diubah jadi lazy per-call + cache runtime (menghindari cache stale module-level).
-- `backupOpsToRawFull_` tidak lagi me-reassign parameter `rawValues`; sekarang pakai buffer lokal (`workingRawValues`) supaya alur data lebih eksplisit.
-
-
-### Update konsolidasi helper (2026-03-29, phase 3)
-
-- Helper DB classifier dan parser datetime claim dipusatkan ke `01_Utils` untuk memangkas duplikasi lintas modul.
-- Helper map insurance di modul operasional diarahkan ke `mapInsuranceShort_()` yang sudah jadi source bersama.
-- `getStatusTypeMap06c_` sekarang strict ke source-of-truth config (tanpa hardcoded fallback map lokal).
-- `enrichOperationalSheetsFromRaw06_` mulai dipisah bertahap dengan resolver indeks raw terpusat agar maintenance lebih aman.
-- Header matching mulai dikonsolidasikan ke util shared untuk mengurangi mismatch lintas modul.
-
-
-### Update struktur SUB helper (2026-03-29, phase 4A)
-
-- Implementasi helper SUB untuk append ke `Submission` dan sort operational dipindahkan ke `06e_SubHelpers.gs`.
-- `06a_EntryPoints` tetap mempertahankan nama fungsi existing sebagai delegator supaya caller lama tidak pecah.
-- Ditambahkan runtime preflight non-fatal (`06f_RuntimeAssertions.gs`) di flow MAIN/SUB untuk deteksi dini missing symbol tanpa memutus run.
-- Implementasi helper SUB untuk append ke `Submission` dan sort operational dipindahkan ke `06e_SubHelpers`.
-- `06a_EntryPoints` tetap mempertahankan nama fungsi existing sebagai delegator supaya caller lama tidak pecah.
-- Ditambahkan runtime preflight non-fatal (`06f_RuntimeAssertions`) di flow MAIN/SUB untuk deteksi dini missing symbol tanpa memutus run.
-
-### Yang sudah bagus
-
-- Struktur modul numerik sudah memberi urutan mental yang cukup jelas
-- Utility layer cukup kaya dan niatnya benar: safe write, normalization, retry, idempotency
-- Config cukup kuat untuk jadi policy registry
-- Sheet validation/template layer sudah lumayan matang
-- Ada usaha observability, introspection, dan movement tracking
-- Ada banyak guard untuk menjaga backward compatibility
-
-### Yang perlu direvisi paling cepat
-
-#### 1. Header validation masih berpotensi false negative
-Ada indikasi util validasi schema masih mencampur **exact header map** dengan **normalized key lookup**. Secara praktis, ini bisa bikin header dianggap hilang padahal variasinya cuma beda casing/spacing.
-
-**Prioritas:** tinggi
-
-#### 2. Lookup policy details log tampak tidak konsisten
-Ada indikasi sebagian kode membaca policy lewat `CONFIG.*`, sementara source of truth aktualnya berdiri sebagai constant global terpisah. Efeknya: fallback bisa terus kepakai tanpa sadar.
-
-**Prioritas:** tinggi
-
-#### 3. `00_Config` terlalu besar untuk discovery cepat
-Sebagai source of truth, file ini kuat. Sebagai file yang harus dipahami manusia, file ini terlalu padat. Mencari satu aturan terasa seperti audit forensik kecil-kecilan.
-
-**Prioritas:** menengah
-
-**Saran minimal:** jangan langsung pecah jadi banyak file. Mulai dengan section index yang stabil, naming convention yang lebih tegas, dan blok “change here when...” di setiap domain config.
-
-#### 4. `06a_EntryPoints` masih terlalu gemuk
-File entrypoint ini tidak lagi murni entrypoint. Ia juga menampung cukup banyak orchestration detail, helper flow, sorting, relocation, dan beberapa concern operasional lain.
-
-**Prioritas:** menengah
-
-**Saran minimal:** pisahkan secara bertahap menjadi:
-- entrypoints / installers
-- flow runners
-- sub-flow orchestration helpers
-
-Tanpa perlu membuat terlalu banyak file sekaligus.
-
-#### 5. Kontrak antar layer belum cukup eksplisit
-Banyak fungsi sebenarnya sudah reusable, tapi kontraknya masih tersirat.
-
-**Saran:** tambahkan docblock yang lebih tegas untuk fungsi yang jadi titik integrasi, misalnya:
-- input assumptions
-- output shape
-- side effects
-- source of truth dependency
-- allowed caller layer
-
-#### 6. Backward compatibility branch terlalu banyak di beberapa area
-Ini wajar untuk repo Apps Script yang berkembang organik, tapi lama-lama jadi mahal dibaca dan diuji.
-
-**Saran:** tandai dengan jelas mana yang:
-- legacy but required
-- temporary fallback
-- safe to remove later
-
----
-
-## Refactor strategy yang saya rekomendasikan
-
-Untuk repo ini, pendekatan terbaik **bukan** “pecah semua sekarang”. Itu overkill untuk self-project dan malah bikin maintenance makin nyebelin.
-
-Pakai strategi 3 tahap berikut:
-
-### Tahap 1 — stabilisasi discovery
-- rapikan dokumentasi
-- tandai source of truth
-- perjelas module ownership
-- perjelas change impact
-
-### Tahap 2 — kecilkan cognitive load
-- kurangi helper ganda
-- rapikan lookup policy yang campur antara constant vs config object
-- rapikan contract function yang jadi boundary
-
-### Tahap 3 — split hanya yang paling padat
-Prioritas split nanti:
-1. `06a_EntryPoints`
-2. `00_Config`
-3. baru area lain jika memang masih sakit dibaca
-
----
-
-## Prinsip commit ke depan
-
-Agar repo ini tetap enak dipelihara, usahakan commit mengikuti pola ini:
-
-- `docs: ...` untuk perubahan dokumentasi
-- `fix: ...` untuk bug yang mengubah behavior
-- `refactor: ...` untuk rapih-rapih tanpa ubah behavior
-- `feat: ...` untuk capability baru
-
-Dan idealnya satu commit punya satu niat utama. Ya, konsep kuno tapi masih bekerja karena ternyata codebase tidak otomatis jadi rapi hanya karena niatnya baik.
-
----
-
-## Next recommended actions
-
-Prioritas paling masuk akal setelah dokumentasi ini:
-
-1. perbaiki bug header validation di utility layer
-2. rapikan lookup policy details log supaya source of truth konsisten
-3. tambahkan section index di `00_Config`
-4. kurangi kepadatan `06a_EntryPoints` tanpa meledakkan jumlah file
-
----
-
-## Related docs
-
-- [Workflow Map](docs/WORKFLOW_MAP.md)
-
----
-
-## Maintenance note
-
-Kalau repo ini terus tumbuh, jangan buru-buru menambah file dokumentasi. Biasanya masalahnya bukan kurang file, tapi kurang disiplin menjaga dua file utama tetap hidup.
+## 2026-03-29
+
+### Phase 3 consolidation pass
+
+### 2026-03-29 (phase 3 consolidation pass)
+- `01_Utils` menambahkan helper bersama `computeDbValueFromClaimNumber_` dan `parseClaimLastUpdatedDatetime_` untuk menghapus duplikasi logika lintas modul.
+- `05b`, `05c`, `06b` sekarang mendelegasikan DB/insurance helper ke utility terpusat (`computeDbValueFromClaimNumber_`, `mapInsuranceShort_`).
+- `05c` DRY_RUN guard disejajarkan ke `isDryRun_()` agar perilaku dry-run konsisten lintas modul.
+- `06c` `getStatusTypeMap06c_` tidak lagi membawa hardcoded fallback map; mapping hanya dari source-of-truth config/global.
+- `06b` dan `06c` parser datetime claim kini mendelegasikan ke parser terpusat `parseClaimLastUpdatedDatetime_`.
+
+### Phase 4 structural pass
+- Split sebagian helper SUB dari `06a_EntryPoints` ke file baru `06e_SubHelpers.gs` (implementasi append Submission + sort operational dipindahkan; `06a` menyisakan delegator untuk menjaga kompatibilitas trigger/caller).
+- `static_smoke_check.js` diperbarui untuk memuat `06e_SubHelpers.gs` agar validasi load-order tetap mencakup helper baru.
+- Tambah modul `06f_RuntimeAssertions.gs` dan preflight non-fatal di `runPipeline_` + `runSubEmailIngest` untuk mendeteksi simbol penting yang hilang lebih awal.
+
+### Changed
+- Phase 4B-4D incremental hardening: `enrichOperationalSheetsFromRaw06_` sekarang memakai resolver indeks raw terpusat (`__resolveEnrichRawIndexes06b_`) untuk mengecilkan kompleksitas fungsi inti.
+- `06e_SubHelpers.gs` sort SUB kini mengutamakan `Submission Date` -> `Last Status Date` -> `Last Status` dan tetap mendukung `sortSpecs` custom saat diberikan.
+- Header matching lintas modul mulai dikonsolidasikan melalui util bersama `findHeaderIndexByCandidates_` (dipakai oleh 05a/06c).
+- Split sebagian helper SUB dari `06a_EntryPoints` ke file baru `06e_SubHelpers` (implementasi append Submission + sort operational dipindahkan; `06a` menyisakan delegator untuk menjaga kompatibilitas trigger/caller).
+- `static_smoke_check.js` diperbarui untuk memuat `06e_SubHelpers` agar validasi load-order tetap mencakup helper baru.
+- Tambah modul `06f_RuntimeAssertions` dan preflight non-fatal di `runPipeline_` + `runSubEmailIngest` untuk mendeteksi simbol penting yang hilang lebih awal.
+
+### Changed
+- Phase 4B-4D incremental hardening: `enrichOperationalSheetsFromRaw06_` sekarang memakai resolver indeks raw terpusat (`__resolveEnrichRawIndexes06b_`) untuk mengecilkan kompleksitas fungsi inti.
+- `06e_SubHelpers` sort SUB kini mengutamakan `Submission Date` -> `Last Status Date` -> `Last Status` dan tetap mendukung `sortSpecs` custom saat diberikan.
+- Header matching lintas modul mulai dikonsolidasikan melalui util bersama `findHeaderIndexByCandidates_` (dipakai oleh 05a/06c).
+### 2026-03-29 (phase 4 structural pass)
+- Split sebagian helper SUB dari `06a_EntryPoints` ke file baru `06e_SubHelpers` (implementasi append Submission + sort operational dipindahkan; `06a` menyisakan delegator untuk menjaga kompatibilitas trigger/caller).
+- `static_smoke_check.js` diperbarui untuk memuat `06e_SubHelpers` agar validasi load-order tetap mencakup helper baru.
+
+### Changed
+- Phase 4B-4D incremental hardening: `enrichOperationalSheetsFromRaw06_` sekarang memakai resolver indeks raw terpusat (`__resolveEnrichRawIndexes06b_`) untuk mengecilkan kompleksitas fungsi inti.
+- Header matching lintas modul mulai dikonsolidasikan melalui util bersama `findHeaderIndexByCandidates_` (dipakai oleh 05a/06c).
+### Changed
+- `03_SheetsAndValidation`: tambah `sv03_getDateAutoNumberFormatForColumn_` sebagai resolver `DATE_AUTO` yang aman (date-only fallback, datetime bila sample berisi komponen waktu).
+- `05b_Pipeline_RoutingOperational`: apply highlight operational kini memakai isolasi error per-sheet agar kegagalan satu sheet tidak memutus pemrosesan sheet lainnya.
+- `05c_Pipeline_OptionalSheets`: dedup EV-Bike diperketat untuk overlay `Submission` pada claim yang sudah diproses dari Raw di run yang sama.
+- `06c_PostProcessAndUtils`: scan Event ID sheet `Past` dibatasi dengan jendela baris terbaru (`PAST_EVENT_SCAN_MAX_ROWS`, default 5000) demi efisiensi di workbook besar.
+
+### Fixed
+- `05a_Pipeline_RawMutate_Backup`: cache `__EXCLUDED_LAST_STATUSES` dipindah dari module-load ke lazy per-call (`__getExcludedLastStatuses05a_`) dengan runtime cache.
+- `05a_Pipeline_RawMutate_Backup`: `backupOpsToRawFull_` tidak lagi me-reassign parameter `rawValues`, mengurangi risiko drift state dan side effect yang tidak eksplisit.
+- `06b` status-type fallback hardcoded dihapus agar tetap konsisten ke source-of-truth (`CONFIG`/`STATUS_TYPE_BY_LAST_STATUS`).
+
+## 2026-03-26
+
+### Added
+- `appsscript.json` dengan `runtimeVersion: V8`, `timeZone: Asia/Jakarta`, dan `exceptionLogging: STACKDRIVER` agar konfigurasi project tidak lagi implicit. 
+- `tools/static_smoke_check.js` untuk smoke-check lokal berbasis Node tanpa dependency tambahan. Script ini memuat seluruh source Apps Script ke runtime stub dan menjalankan `runSelfCheck_()` untuk menangkap load-order error sebelum deploy.
+
+### Changed
+- `00_Config` dirapikan agar `CONFIG` dibangun **setelah** seluruh konstanta yang direferensikan sudah terinisialisasi.
+- Alias source-of-truth di `CONFIG` diperluas supaya caller lama tidak membaca policy yang salah atau jatuh ke fallback diam-diam.
+- Helper highlight/status/date parsing di `05b`, `06b`, dan `06c` diarahkan kembali ke source-of-truth utama, bukan patch-layer terpisah.
+- `06d_IntegratedMaintenance` disederhanakan menjadi entrypoint maintenance + self-check; bootstrap override ganda yang men-shadow helper utama sudah dihapus.
+
+### Fixed
+- Crash load-time `CONFIG` / TDZ (`Cannot access 'COLUMN_TYPES' before initialization`) ditutup.
+- `runSelfCheck_()` sekarang bisa mendeteksi konstanta global `const` / `let` dengan benar, tidak lagi false negative hanya karena simbol tidak menjadi properti `globalThis`.
+- Policy highlight operasional sekarang membaca struktur canonical `CLAIM_HIGHLIGHT_POLICY.COLORS` dan `NOTES_CANONICAL`, bukan selalu jatuh ke warna/note default.
+- Resolver header di routing operasional sekarang memakai helper header matching terpusat sehingga variasi casing / spacing / alias lebih tahan banting.
+- Parsing datetime lintas modul diperketat agar native `Date(string)` hanya dipakai untuk string yang memang unambiguous; fallback liar yang berpotensi menggeser timezone sudah dipersempit.
+- Sort operasional yang berjalan di bawah filter sekarang memakai indeks relatif terhadap range filter, sehingga tidak lagi salah sort saat filter tidak mulai dari kolom A.
+
+### Notes
+- Repo ini masih besar, tetapi duplikasi shadow-override yang paling mengganggu sudah dipangkas dulu. Prioritas berikutnya sebaiknya fokus ke pemecahan `06a_EntryPoints` secara bertahap, bukan kosmetik folder.
