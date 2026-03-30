@@ -22,6 +22,7 @@ const SOURCE_FILES = [
   '05a_Pipeline_RawMutate_Backup',
   '05b_Pipeline_RoutingOperational',
   '05c_Pipeline_OptionalSheets',
+  '06a_EntryPoints.gs',
   '06a_EntryPoints',
   '06b_PipelineAndEnrichment',
   '06c_PostProcessAndUtils',
