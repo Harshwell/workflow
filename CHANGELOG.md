@@ -18,6 +18,14 @@ Formatnya sengaja sederhana: **Added / Changed / Fixed**. Tidak perlu sok formal
 - `06b` dan `06c` parser datetime claim kini mendelegasikan ke parser terpusat `parseClaimLastUpdatedDatetime_`.
 
 ### Phase 4 structural pass
+- Split sebagian helper SUB dari `06a_EntryPoints` ke file baru `06e_SubHelpers.gs` (implementasi append Submission + sort operational dipindahkan; `06a` menyisakan delegator untuk menjaga kompatibilitas trigger/caller).
+- `static_smoke_check.js` diperbarui untuk memuat `06e_SubHelpers.gs` agar validasi load-order tetap mencakup helper baru.
+- Tambah modul `06f_RuntimeAssertions.gs` dan preflight non-fatal di `runPipeline_` + `runSubEmailIngest` untuk mendeteksi simbol penting yang hilang lebih awal.
+
+### Changed
+- Phase 4B-4D incremental hardening: `enrichOperationalSheetsFromRaw06_` sekarang memakai resolver indeks raw terpusat (`__resolveEnrichRawIndexes06b_`) untuk mengecilkan kompleksitas fungsi inti.
+- `06e_SubHelpers.gs` sort SUB kini mengutamakan `Submission Date` -> `Last Status Date` -> `Last Status` dan tetap mendukung `sortSpecs` custom saat diberikan.
+- Header matching lintas modul mulai dikonsolidasikan melalui util bersama `findHeaderIndexByCandidates_` (dipakai oleh 05a/06c).
 - Split sebagian helper SUB dari `06a_EntryPoints` ke file baru `06e_SubHelpers` (implementasi append Submission + sort operational dipindahkan; `06a` menyisakan delegator untuk menjaga kompatibilitas trigger/caller).
 - `static_smoke_check.js` diperbarui untuk memuat `06e_SubHelpers` agar validasi load-order tetap mencakup helper baru.
 - Tambah modul `06f_RuntimeAssertions` dan preflight non-fatal di `runPipeline_` + `runSubEmailIngest` untuk mendeteksi simbol penting yang hilang lebih awal.
