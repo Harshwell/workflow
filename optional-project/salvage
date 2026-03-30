@@ -1412,6 +1412,11 @@ function inspectTargetSnapshot_() {
   const headers = sheet.getRange(headerRow, 1, 1, lastCol).getDisplayValues()[0];
   const claimCol = targetColumnMap['Claim Number'];
   const claimScan = getClaimColumnScan_(sheet, headerRow, claimCol);
+  const sheetLastRow = sheet.getLastRow();
+  const activeMode = String(SALVAGE_CONFIG.target.activeRangeMode || '').toLowerCase();
+  const effectiveLastRow = activeMode === 'sparse_claim_column'
+    ? Math.max(headerRow, claimScan.lastClaimRow)
+    : Math.max(sheetLastRow, headerRow);
 
   return {
     spreadsheetId: ss.getId(),
@@ -1420,7 +1425,8 @@ function inspectTargetSnapshot_() {
     headerRow: headerRow,
     columnMap: targetColumnMap,
     headers: headers,
-    lastRow: sheet.getLastRow(),
+    sheetLastRow: sheetLastRow,
+    lastRow: effectiveLastRow,
     lastCol: lastCol,
     claimRowCount: claimScan.claimRowCount,
     blankGapCount: claimScan.blankGapCount,
