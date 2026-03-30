@@ -218,6 +218,7 @@ Berikut temuan paling penting dari review awal repo ini.
 Putaran hardening terbaru sudah menutup beberapa sumber masalah yang paling berbahaya:
 
 - konstruksi `CONFIG` tidak lagi memicu load-time crash karena referensi konstanta yang belum siap
+- bootstrap patch maintenance tidak lagi men-shadow helper utama
 - bootstrap patch di `06d_IntegratedMaintenance.gs` tidak lagi men-shadow helper utama
 - self-check sekarang membaca simbol global `const` / `let` dengan benar
 - parsing datetime dan sort-under-filter diperketat di area operasional yang paling rawan drift
@@ -249,6 +250,13 @@ Perubahan lanjutan yang sudah diterapkan setelah patch critical sebelumnya:
 
 ### Update struktur SUB helper (2026-03-29, phase 4A)
 
+- Implementasi helper SUB untuk append ke `Submission` dan sort operational dipisah dari `06a_EntryPoints.gs` dengan delegator kompatibilitas.
+- Ditambahkan runtime preflight non-fatal di flow MAIN/SUB untuk deteksi dini missing symbol tanpa memutus run.
+
+### Update konsolidasi modul 06 (2026-03-30)
+
+- Fungsi maintenance/self-check, helper SUB, dan runtime preflight dikonsolidasikan ke `06c_PostProcessAndUtils.gs`.
+- Modul script kini disederhanakan menjadi `00` sampai `06c` untuk mengurangi fragmentasi load-order dan biaya maintenance.
 - Implementasi helper SUB untuk append ke `Submission` dan sort operational dipindahkan ke `06e_SubHelpers.gs`.
 - `06a_EntryPoints.gs` tetap mempertahankan nama fungsi existing sebagai delegator supaya caller lama tidak pecah.
 - Ditambahkan runtime preflight non-fatal (`06f_RuntimeAssertions.gs`) di flow MAIN/SUB untuk deteksi dini missing symbol tanpa memutus run.

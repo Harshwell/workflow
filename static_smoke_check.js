@@ -24,6 +24,7 @@ const SOURCE_FILES = [
   '05c_Pipeline_OptionalSheets.gs',
   '06a_EntryPoints.gs',
   '06b_PipelineAndEnrichment.gs',
+  '06c_PostProcessAndUtils.gs'
   '06c_PostProcessAndUtils.gs',
   '06d_IntegratedMaintenance.gs',
   '06e_SubHelpers.gs',
