@@ -1099,15 +1099,11 @@ function buildSheetWriters_(ss, routingMap, headerIndexRaw, pic) {
 
         // Dates (submission)
         if (idxH['Submission Date'] != null) {
-          const d = coerceDate_(getRawAny(rawRow, [
-            h.claimSubmissionDate,
-            'claim_submission_date',
-            h.claimSubmittedDatetime,
-            'claim_submitted_datetime',
-            'submission_date',
-            'submission date'
-          ]));
-          set('Submission Date', d ? d : '');
+          const rawSubmissionVal = getRaw(rawRow, 'claim_submitted_datetime');
+          const d = coerceDate_(rawSubmissionVal);
+          // IMPORTANT: never blank-out when parser misses a valid source representation.
+          // Keep raw value as fallback so Submission Date is still populated.
+          set('Submission Date', d ? d : (rawSubmissionVal != null ? rawSubmissionVal : ''));
         }
         if (idxH['Submission Datetime'] != null) {
           const dt = coerceDateTime_(getRaw(rawRow, h.claimSubmittedDatetime));
