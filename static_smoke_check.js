@@ -14,25 +14,20 @@ const vm = require('vm');
 
 const ROOT = process.cwd();
 const SOURCE_FILES = [
-  '00_Config',
-  '01_Utils',
-  '02_LogAndDetails',
-  '03_SheetsAndValidation',
-  '04_ParseAndAging',
-  '05a_Pipeline_RawMutate_Backup',
-  '05b_Pipeline_RoutingOperational',
-  '05c_Pipeline_OptionalSheets',
+  '00_Config.gs',
+  '01_Utils.gs',
+  '02_LogAndDetails.gs',
+  '03_SheetsAndValidation.gs',
+  '04_ParseAndAging.gs',
+  '05a_Pipeline_RawMutate_Backup.gs',
+  '05b_Pipeline_RoutingOperational.gs',
+  '05c_Pipeline_OptionalSheets.gs',
   '06a_EntryPoints.gs',
-  '06a_EntryPoints',
-  '06b_PipelineAndEnrichment',
-  '06c_PostProcessAndUtils',
-  '06d_IntegratedMaintenance',
+  '06b_PipelineAndEnrichment.gs',
+  '06c_PostProcessAndUtils.gs',
+  '06d_IntegratedMaintenance.gs',
   '06e_SubHelpers.gs',
   '06f_RuntimeAssertions.gs'
-  '06e_SubHelpers',
-  '06f_RuntimeAssertions'
-  '06e_SubHelpers'
-  '06d_IntegratedMaintenance'
 ];
 
 function createContext() {
