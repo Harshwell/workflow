@@ -1261,6 +1261,26 @@ function clearOperationalSheets_(ss, pic) {
     // clearFormat() does not remove data validations (dropdowns stay intact)
     clearSheetDataHard_(sh, { bufferRows: buffer, clearFormats: true, preserveTemplateRow: true });
 
+// FIX: clearSheetDataHard_ with preserveTemplateRow=true preserves row 2's format AND DV
+// as a template (intentional for Status dropdown chip style). However, if Submission Date
+// column had stale checkbox DV from a previous bad run, that DV remains on row 2 and will
+// bleed into all new rows when the routing writer writes Date values—causing cells to render
+// as checkboxes instead of dates. Defensively clear Submission Date DV across ALL rows
+// (including row 2) before any new data is written.
+if (!__isDryRun05b__()) {
+  try {
+    const lc = Math.max(sh.getLastColumn(), 1);
+    const mr = sh.getMaxRows();
+    const hdrVals = sh.getRange(1, 1, 1, lc).getValues()[0];
+    const subDateIdx = hdrVals.findIndex(function(h) {
+      return String(h == null ? '' : h).trim().toLowerCase() === 'submission date';
+    });
+    if (subDateIdx !== -1 && mr > 1) {
+      sh.getRange(2, subDateIdx + 1, mr - 1, 1).clearDataValidations();
+    }
+  } catch (_eClearSubDate) {}
+}
+
     // Requirement: Operational header (row 1) must be centered (horizontal) and middle (vertical).
     if (!__isDryRun05b__()) {
       try {
