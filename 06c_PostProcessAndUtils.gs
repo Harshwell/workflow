@@ -519,13 +519,15 @@ function sanitizeProblematicDataValidations06_(ss, pic) {
     if (!sh) return;
     const lastCol = sh.getLastColumn();
     const maxRows = sh.getMaxRows();
-    if (lastCol <= 0 || maxRows <= 1) return;
+    const lastRow = Math.max(2, sh.getLastRow());
+    const rows = Math.min(maxRows - 1, (lastRow - 1) + 400);
+    if (lastCol <= 0 || maxRows <= 1 || rows <= 0) return;
 
     try {
       const header = sh.getRange(1, 1, 1, lastCol).getValues()[0];
       const idxSubmissionDate = __findHeaderIndexFlexible06_(header, 'Submission Date');
       if (idxSubmissionDate !== -1) {
-        sh.getRange(2, idxSubmissionDate + 1, maxRows - 1, 1).clearDataValidations();
+        sh.getRange(2, idxSubmissionDate + 1, rows, 1).clearDataValidations();
       }
     } catch (e0) {}
   });

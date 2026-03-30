@@ -537,19 +537,7 @@ function processSpecialCase_(ss, rawValues, headerIndexRaw, pic) { // `pic` kept
   const idxPolicyStart = headerIndexRaw[h.policyStartDate];
   const idxPolicyEnd = headerIndexRaw[h.policyEndDate];
   const idxMonthPolicyAging = (headerIndexRaw['month_policy_aging'] != null) ? headerIndexRaw['month_policy_aging'] : null;
-  const idxClaimSubDate =
-    (headerIndexRaw[h.claimSubmissionDate] != null) ? headerIndexRaw[h.claimSubmissionDate]
-    : (headerIndexRaw['claim_submission_date'] != null) ? headerIndexRaw['claim_submission_date']
-    : (headerIndexRaw['submission_date'] != null) ? headerIndexRaw['submission_date']
-    : (headerIndexRaw['claim_sub_date'] != null) ? headerIndexRaw['claim_sub_date']
-    : null;
-
-  const idxClaimSubmittedDt =
-    (headerIndexRaw[h.claimSubmittedDatetime] != null) ? headerIndexRaw[h.claimSubmittedDatetime]
-    : (headerIndexRaw['claim_submitted_datetime'] != null) ? headerIndexRaw['claim_submitted_datetime']
-    : (headerIndexRaw['submission_datetime'] != null) ? headerIndexRaw['submission_datetime']
-    : (headerIndexRaw['submitted_datetime'] != null) ? headerIndexRaw['submitted_datetime']
-    : null;
+  const idxClaimSubmittedDt = (headerIndexRaw['claim_submitted_datetime'] != null) ? headerIndexRaw['claim_submitted_datetime'] : null;
 
   let header = __getHeaderRow05c_(sh);
   let idxH = buildHeaderIndex_(header);
@@ -702,10 +690,8 @@ function processSpecialCase_(ss, rawValues, headerIndexRaw, pic) { // `pic` kept
   for (let i = 0; i < rawValues.length; i++) {
     const row = rawValues[i];
 
-    // Submission date (prefer claim_submission_date, fallback claim_submitted_dt)
-    const subRaw =
-      ((idxClaimSubDate != null) ? row[idxClaimSubDate] : null) ||
-      ((idxClaimSubmittedDt != null) ? row[idxClaimSubmittedDt] : null);
+    // Submission date source of truth: claim_submitted_datetime.
+    const subRaw = (idxClaimSubmittedDt != null) ? row[idxClaimSubmittedDt] : null;
     const subDate = coerceDateOnly_(subRaw);
 
     // Year gate (optional): only apply when Submission Date tersedia.
@@ -1246,6 +1232,17 @@ function processEVBike_(ss, rawValues, headerIndexRaw, pic) { // `pic` kept for 
   } catch (e) {}
 
   if (!values.length) return 0;
+  // EV-Bike Last Status is user-managed free text (no enforced dropdown).
+  // Clear DV BEFORE write to prevent setValues rejection:
+  // "violates data validation rules ... Please enter one of ..."
+  try {
+    const idxLastStatusEv = idxH['Last Status'];
+    if (idxLastStatusEv != null && !__isDryRun05c__()) {
+      const rowsToClear = Math.max(values.length, (sh.getLastRow() > 1 ? sh.getLastRow() - 1 : 0));
+      if (rowsToClear > 0) sh.getRange(2, idxLastStatusEv + 1, rowsToClear, 1).clearDataValidations();
+    }
+  } catch (eDvEv) {}
+
   // Never overwrite manual Status dropdown column on EV-Bike.
   // Write left/right segments around "Status" when column exists.
   const idxStatus = (idxH['Status'] != null) ? idxH['Status'] : -1;

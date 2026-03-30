@@ -239,14 +239,10 @@ function coerceTimestamp_(v) {
 /** Submission output rule (source picking) */
 function getSubmissionDateForOutput_(rawRow, headerIndexRaw) {
   const h = CONFIG.headers;
-  const idxDateOnly = headerIndexRaw[h.claimSubmissionDate];
   const idxDt = headerIndexRaw[h.claimSubmittedDatetime];
-
-  const dateOnlyVal = (idxDateOnly != null) ? rawRow[idxDateOnly] : '';
   const dtVal = (idxDt != null) ? rawRow[idxDt] : '';
 
-  // Always write DATE-only in destination sheets to avoid mixed formats.
-  if (dateOnlyVal) return { val: dateOnlyVal, mode: 'date' };
+  // Source of truth: claim_submitted_datetime only.
   if (dtVal) return { val: dtVal, mode: 'datetime' };
   return { val: '', mode: 'date' };
 }
@@ -419,19 +415,17 @@ function mutateRawInMemory_(rawValues, headerIndexRaw, agingStdMap, agingMap, as
   const idxBP = resolveHdrIdx05a_([h.businessPartner, 'Business Partner', 'Partner', 'business_partner']);
   const idxAssoc = resolveHdrIdx05a_([h.associate, 'Associate', 'associate']);
   const idxLastStatus = resolveHdrIdx05a_([h.lastStatus, 'Last Status', 'last_status']);
-  const idxSubDate = resolveHdrIdx05a_([h.claimSubmissionDate, 'Claim Submission Date', 'Submission Date', 'claim_submission_date', 'submission_date']);
 
   const idxInsuranceCodeRaw = idxAny_(headerIndexRaw, [h.insuranceCode, 'Insurance Code', 'insurance_code']);
   const idxLastStatusAgingRaw = idxAny_(headerIndexRaw, ['Last Status Aging', h.lastStatusAging, 'LSA', 'TAT']);
   const idxActLogAgingRaw = idxAny_(headerIndexRaw, ['Activity Log Aging', h.activityLogAging, 'ALA']);
-  const idxClaimSubmittedRaw = resolveHdrIdx05a_([h.claimSubmittedDatetime, 'Claim Submitted Datetime', 'Submitted Datetime', 'claim_submitted_datetime', 'submitted_datetime']);
+  const idxClaimSubmittedRaw = (headerIndexRaw['claim_submitted_datetime'] != null) ? headerIndexRaw['claim_submitted_datetime'] : null;
 
   const idxLastUpdate = resolveHdrIdx05a_([h.lastUpdate, 'Last Update', 'last_update']);
   const idxLastActDate = idxAny_(headerIndexRaw, [h.lastActivityLogDate, 'Last Activity Log Date', 'Last Activity Date', 'last_activity_log_date']);
 
   const idxPolicyStart = resolveHdrIdx05a_([h.policyStartDate, 'Policy Start Date', 'policy_start_date']);
   const idxPolicyEnd = resolveHdrIdx05a_([h.policyEndDate, 'Policy End Date', 'policy_end_date']);
-  const idxClaimSubDateOnly = idxSubDate;
   const idxClaimSubDt = idxClaimSubmittedRaw;
 
   const idxQL = headerIndexRaw['Q-L (Months)'];
@@ -450,7 +444,7 @@ function mutateRawInMemory_(rawValues, headerIndexRaw, agingStdMap, agingMap, as
     const idxInsCodeA = idxAny_(hA, [h.partnerCodeAging, h.insuranceCode, 'Insurance Code', 'insurance_code', 'Partner Code']);
     const idxLSA = idxAny_(hA, ['Last Status Aging', h.lastStatusAging, 'LSA', 'TAT']);
     const idxALA = idxAny_(hA, ['Activity Log Aging', h.activityLogAging, 'ALA']);
-    const idxSubDtA = idxAny_(hA, [h.claimSubmittedDatetime, 'Claim Submitted Datetime', 'Submitted Datetime', 'claim_submitted_datetime']);
+    const idxSubDtA = (hA['claim_submitted_datetime'] != null) ? hA['claim_submitted_datetime'] : null;
 
     if (idxInsuranceCodeRaw != null && idxInsCodeA != null) row[idxInsuranceCodeRaw] = src[idxInsCodeA];
     if (idxLastStatusAgingRaw != null && idxLSA != null) row[idxLastStatusAgingRaw] = src[idxLSA];
@@ -470,13 +464,6 @@ function mutateRawInMemory_(rawValues, headerIndexRaw, agingStdMap, agingMap, as
       if (agingMap) applyAgingFrom_(agingMap, row, claimKey);
     }
 
-    // Backfill: claim_submitted_datetime from submission_date when missing (helps ALA/TAT computations downstream)
-    if (idxClaimSubmittedRaw != null && (row[idxClaimSubmittedRaw] === '' || row[idxClaimSubmittedRaw] == null) && idxSubDate != null) {
-      const dSub = coerceDateTime_(row[idxSubDate]);
-      if (dSub) row[idxClaimSubmittedRaw] = dSub;
-    }
-
-
     // If no aging files: compute LSA/ALA from dates
     if (!RUNTIME.hasAgingFiles && idxLastStatusAgingRaw != null && idxActLogAgingRaw != null) {
       if (idxLastUpdate != null) {
@@ -492,12 +479,8 @@ function mutateRawInMemory_(rawValues, headerIndexRaw, agingStdMap, agingMap, as
     }
 
     // Derived QL/ML/MQ (compute independently, don't require all dates)
-    if ((idxClaimSubDateOnly != null || idxClaimSubDt != null)) {
-      const subVal =
-      (idxClaimSubDateOnly != null && row[idxClaimSubDateOnly] !== '' && row[idxClaimSubDateOnly] != null)
-      ? row[idxClaimSubDateOnly]
-      : ((idxClaimSubDt != null) ? row[idxClaimSubDt] : '');
-  const cs = coerceDateOnly_(subVal);
+    if (idxClaimSubDt != null) {
+  const cs = coerceDateOnly_(row[idxClaimSubDt]);
 
   const ps = (idxPolicyStart != null) ? coerceDateOnly_(row[idxPolicyStart]) : null;
   const pe = (idxPolicyEnd != null) ? coerceDateOnly_(row[idxPolicyEnd]) : null;
@@ -540,7 +523,7 @@ if (isAssociateMappingEnabled_() && idxBP != null && idxAssoc != null && assocMa
         claim: claimKey,
         partner: partnerRaw,
         lastStatus: (idxLastStatus != null) ? String(row[idxLastStatus] || '').trim() : '',
-        submissionDateVal: (idxSubDate != null) ? row[idxSubDate] : ''
+        submissionDateVal: (idxClaimSubDt != null) ? row[idxClaimSubDt] : ''
       });
     }
   }
