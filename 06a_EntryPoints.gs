@@ -126,11 +126,14 @@ function buildRoutingIndex06_(routingMap) {
   const map = routingMap || {};
   const idx = {};
   Object.keys(map).forEach(sheetName => {
+    const sheetKey = String(sheetName || '').trim();
+    // Internal buckets are not real sheets and must not become relocation targets.
+    if (!sheetKey || /^__/.test(sheetKey)) return;
     (map[sheetName] || []).forEach(status => {
       const key = String(status || '').trim();
       if (!key) return;
       if (!idx[key]) idx[key] = [];
-      idx[key].push(sheetName);
+      idx[key].push(sheetKey);
     });
   });
   return idx;
@@ -535,7 +538,7 @@ function runSubFromFormDrive06a_(req, runId) {
     'OR - OLD',
     'SC - Farhan',
     'SC - Meilani',
-    'SC - Ivan',
+    'SC - Meindar',
     'Start',
     'Finish',
     'PO',
@@ -711,7 +714,7 @@ function ensureMasterSheets_(ss) {
 
   const mustHave = [
     // Operational
-    'Submission', 'Ask Detail', 'OR - OLD', 'Start', 'Finish', 'SC - Farhan', 'SC - Meilani', 'SC - Ivan', 'SC - Unmapped', 'PO', 'Exclusion',
+    'Submission', 'Ask Detail', 'OR - OLD', 'Start', 'Finish', 'SC - Farhan', 'SC - Meilani', 'SC - Meindar', 'SC - Unmapped', 'PO', 'Exclusion',
     // Optional
     'B2B', 'EV-Bike', 'Special Case'
   ];
@@ -875,6 +878,15 @@ function runEmailIngest(maxThreads) {
         logLine_('MAIL', 'Queued thread has no messages', '', '', 'WARN');
         return { severity: 'WARN', message: 'Queued thread has no messages.', processed: 0, failed: 1 };
       }
+      try {
+        if (typeof setLogEventContext_ === 'function') {
+          setLogEventContext_({
+            emailFrom: (msg && msg.getFrom) ? msg.getFrom() : '',
+            emailSubject: (msg && msg.getSubject) ? msg.getSubject() : '',
+            threadId: (thread && thread.getId) ? thread.getId() : ''
+          });
+        }
+      } catch (eCtx0) {}
 
       const att = pickDashboardXlsxAttachment_(msg, policy);
       if (!att) {
@@ -882,6 +894,15 @@ function runEmailIngest(maxThreads) {
         logLine_('MAIL', 'No XLSX attachment found (leave queued)', msg.getSubject(), '', 'ERROR');
         return { severity: 'ERROR', message: 'No XLSX attachment found.', processed: 0, failed: failed };
       }
+      try {
+        if (typeof setLogEventContext_ === 'function') {
+          setLogEventContext_({
+            attachmentName: att.getName(),
+            attachmentSize: (att.getSize ? att.getSize() : ''),
+            attachmentType: (att.getContentType ? att.getContentType() : '')
+          });
+        }
+      } catch (eCtx1) {}
       // Idempotency: prevent duplicate processing of the same queued email.
       try {
         const tok = ['MAIN', thread.getId(), msg.getId(), att.getName(), att.getSize()].join('|');
@@ -904,6 +925,14 @@ function runEmailIngest(maxThreads) {
 
         setProgress_(0.35, 'Processing pipeline...');
         const res = runPipeline_('Master', [tmpFileId], { flow: 'main', source: 'EMAIL_MAIN', subject: msg.getSubject() });
+        try {
+          if (typeof setLogEventContext_ === 'function' && res) {
+            setLogEventContext_({
+              opsUpdated: (res.routedTotal != null ? res.routedTotal : ''),
+              rawRows: (res.rawRows != null ? res.rawRows : '')
+            });
+          }
+        } catch (eCtx2) {}
 
         // Determine success strictly: no exception + not severity ERROR
         const sev = String((res && res.severity) ? res.severity : 'INFO').toUpperCase();
@@ -1015,9 +1044,11 @@ function runSubEmailIngest(maxThreads) {
 
     const query = buildDashboardEmailQuery_(pMerged);
     const limit = Math.max(1, Math.min(5, Number(maxThreads || 1) || 1));
+    try { setProgressForFlow_('SUB', 0.05, 'Searching queued email...', { prefixFlowInStep: true }); } catch (eP0) {}
 
     const threads = GmailApp.search(query, 0, limit);
     if (!threads || !threads.length) {
+      try { setProgressForFlow_('SUB', 1.0, 'No queued emails.', { prefixFlowInStep: true }); } catch (eP1) {}
       try { logLine_('SUB', 'No queued SUB emails', query, '', 'INFO'); } catch (e3) {}
       return { severity: 'INFO', message: 'No queued SUB emails', processed: 0, failed: 0 };
     }
@@ -1039,13 +1070,35 @@ function runSubEmailIngest(maxThreads) {
     if (!msg) msg = messages[messages.length - 1];
 
     const subject = String((msg && msg.getSubject) ? msg.getSubject() : '');
+    try {
+      if (typeof setLogEventContext_ === 'function') {
+        setLogEventContext_({
+          emailFrom: (msg && msg.getFrom) ? msg.getFrom() : '',
+          emailSubject: subject,
+          threadId: (thread && thread.getId) ? thread.getId() : ''
+        });
+      }
+    } catch (eCtx3) {}
     try { logLine_('SUB_EMAIL', 'Picked SUB email', subject, '', 'INFO'); } catch (e5) {}
 
     const atts = msg.getAttachments({ includeInlineImages: false, includeAttachments: true });
     const picked = __pickSubOldNewAttachments06a_(atts);
+    try {
+      if (typeof setLogEventContext_ === 'function') {
+        const names = [picked && picked.oldAtt ? picked.oldAtt.getName() : '', picked && picked.newAtt ? picked.newAtt.getName() : ''].filter(Boolean).join(' | ');
+        const sizeOld = (picked && picked.oldAtt && picked.oldAtt.getSize) ? Number(picked.oldAtt.getSize() || 0) : 0;
+        const sizeNew = (picked && picked.newAtt && picked.newAtt.getSize) ? Number(picked.newAtt.getSize() || 0) : 0;
+        setLogEventContext_({
+          attachmentName: names,
+          attachmentSize: (sizeOld + sizeNew) || '',
+          attachmentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        });
+      }
+    } catch (eCtx4) {}
 
     if (!picked.oldAtt || !picked.newAtt) {
       const names = (atts || []).map(a => (a && a.getName) ? a.getName() : '').join(' | ');
+      try { setProgressForFlow_('SUB', 1.0, 'Failed (OLD/NEW attachment missing)', { prefixFlowInStep: true }); } catch (eP2) {}
       try { logLine_('SUB_ERR', 'Missing OLD/NEW attachments (expected 2 XLSX)', names, '', 'ERROR'); } catch (e6) {}
       // Leave queued for retry.
       return { severity: 'ERROR', message: 'Missing OLD/NEW attachments', processed: 0, failed: 1 };
@@ -1062,6 +1115,7 @@ function runSubEmailIngest(maxThreads) {
     const subFlow = (typeof CONFIG === 'object' && CONFIG && CONFIG.subFlow) ? CONFIG.subFlow : {};
 
     // Ensure raw target sheets exist.
+    try { setProgressForFlow_('SUB', 0.15, 'Preparing workbook...', { prefixFlowInStep: true }); } catch (eP3) {}
     const rawOldName = String(subFlow.RAW_OLD_SHEET_NAME || pMerged.RAW_OLD_SHEET || 'Raw OLD').trim();
     const rawNewName = String(subFlow.RAW_NEW_SHEET_NAME || pMerged.RAW_NEW_SHEET || 'Raw NEW').trim();
     __ensureSheetByNameSub06a_(masterSs, rawOldName);
@@ -1074,7 +1128,7 @@ function runSubEmailIngest(maxThreads) {
       'OR - OLD',
       'SC - Farhan',
       'SC - Meilani',
-      'SC - Ivan',
+      'SC - Meindar',
       'Start',
       'Finish',
       'PO',
@@ -1115,6 +1169,7 @@ function runSubEmailIngest(maxThreads) {
 
 
 // WebApp Project (Movement Claim Tracking): take PREV snapshots BEFORE SUB overwrites Raw.
+try { setProgressForFlow_('SUB', 0.25, 'Snapshot PREV...', { prefixFlowInStep: true }); } catch (eP4) {}
 try {
   if (typeof webappMovementSnapshotPrevForSub06c_ === 'function') {
     const snapPrev = webappMovementSnapshotPrevForSub06c_(masterSs, rawOldName, rawNewName);
@@ -1125,6 +1180,7 @@ try {
 }
 
     // Process OLD then NEW; cleanup email only if both succeed.
+    try { setProgressForFlow_('SUB', 0.40, 'Process OLD...', { prefixFlowInStep: true }); } catch (eP5) {}
 
     const rOld = __processSubAttachment06a_(masterSs, picked.oldAtt, {
       dbTag: 'OLD',
@@ -1132,22 +1188,31 @@ try {
       operationalSheetNames: opSheets
     });
     if (!rOld || String(rOld.severity || '').toUpperCase() === 'ERROR') {
+      try { setProgressForFlow_('SUB', 1.0, 'Failed (OLD)', { prefixFlowInStep: true }); } catch (eP6) {}
       try { logLine_('SUB_FAIL', 'OLD processing failed; leave email queued', '', '', 'ERROR'); } catch (e7) {}
       return { severity: 'ERROR', message: 'SUB OLD failed', processed: 0, failed: 1, details: rOld };
     }
 
+    try { setProgressForFlow_('SUB', 0.62, 'Process NEW...', { prefixFlowInStep: true }); } catch (eP7) {}
     const rNew = __processSubAttachment06a_(masterSs, picked.newAtt, {
       dbTag: 'NEW',
       rawSheetName: rawNewName,
       operationalSheetNames: opSheets
     });
     if (!rNew || String(rNew.severity || '').toUpperCase() === 'ERROR') {
+      try { setProgressForFlow_('SUB', 1.0, 'Failed (NEW)', { prefixFlowInStep: true }); } catch (eP8) {}
       try { logLine_('SUB_FAIL', 'NEW processing failed; leave email queued', '', '', 'ERROR'); } catch (e8) {}
       return { severity: 'ERROR', message: 'SUB NEW failed', processed: 0, failed: 1, details: rNew };
     }
-
     // Relocate rows by Last Status mapping (move FULL row, dedupe by Claim Number).
+    try { setProgressForFlow_('SUB', 0.80, 'Relocate + sort...', { prefixFlowInStep: true }); } catch (eP9) {}
     const relocateRes = __relocateOperationalRowsByLastStatusSub06a_(masterSs, opSheets);
+    try {
+      if (typeof setLogEventContext_ === 'function') {
+        const moved = (relocateRes && relocateRes.moved != null) ? relocateRes.moved : '';
+        setLogEventContext_({ opsUpdated: moved, subInserted: moved });
+      }
+    } catch (eCtx5) {}
     try { logLine_('SUB_MOVE', 'Relocated rows after SUB updates', JSON.stringify(relocateRes || {}), '', 'INFO'); } catch (e9a) {}
 
     // Final: sort operational sheets (Submission Date -> Last Status Date -> Last Status) preserving filters.
@@ -1157,6 +1222,7 @@ try {
 
 
 // WebApp Project (Movement Claim Tracking): take CURR snapshots AFTER SUB, then emit Daily events (dedup by Event ID).
+try { setProgressForFlow_('SUB', 0.92, 'Snapshot CURR + movement...', { prefixFlowInStep: true }); } catch (eP10) {}
 try {
   if (typeof webappMovementSnapshotCurrAndTrackForSub06c_ === 'function') {
     const snapCurr = webappMovementSnapshotCurrAndTrackForSub06c_(masterSs, rawOldName, rawNewName);
@@ -1168,12 +1234,13 @@ try {
 
     // Cleanup email thread after both succeeded.
     try {
-      cleanupQueuedThreadSuccess_(thread, queueLabel);
-      logLine_('SUB_CLEAN', 'Cleaned SUB email thread', queueLabel, '', 'INFO');
+      cleanupQueuedThreadSuccess_(thread, queuedLabel);
+      logLine_('SUB_CLEAN', 'Cleaned SUB email thread', queuedLabel, '', 'INFO');
     } catch (e10) {}
 
     const durMs = new Date().getTime() - startedAt.getTime();
     try { logLine_('SUB_DONE', 'Completed SUB ingest', __formatProcessingDuration06_(durMs), '', 'INFO'); } catch (e11) {}
+    try { setProgressForFlow_('SUB', 1.0, 'Done.', { prefixFlowInStep: true }); } catch (eP11) {}
 
     return {
       severity: 'INFO',
@@ -1546,13 +1613,23 @@ function __buildSubRawIndex06a_(values) {
     'last_activity_log_datetime', 'last activity log datetime'
   ]);
 
-  const idxSubmitted = idxOfAny(['claim_submitted_datetime', 'claim submitted datetime', 'submission_date', 'submission date']);
+  const idxSubmitted = idxOfAny([
+    'claim_submission_date',
+    'claim submission date',
+    'claim_submitted_datetime',
+    'claim submitted datetime',
+    'submission_date',
+    'submission date'
+  ]);
   const idxLink = idxOfAny(['dashboard_link', 'db_link', 'dashboard link', 'db link', 'link']);
 
   const idxPartnerName = idxOfAny(['partner_name', 'partner name', 'partner_code', 'partner code']);
   const idxInsurance = idxOfAny(['insurance_partner_code', 'insurance', 'insurance_code', 'insurance partner code']);
   const idxDeviceType = idxOfAny(['device_type', 'device type']);
   const idxImei = idxOfAny(['device_imei', 'imei/sn', 'imei', 'sn', 'imei/sn']);
+  const idxStoreName = idxOfAny(['outlet_name', 'outlet name', 'store_name', 'store name']);
+  const idxPaName = idxOfAny(['pa_name', 'pa name']);
+  const idxSpaName = idxOfAny(['spa_name', 'spa name']);
 
   const map = new Map();
   for (let r = 1; r < v.length; r++) {
@@ -1580,7 +1657,10 @@ function __buildSubRawIndex06a_(values) {
       partner_name: idxPartnerName >= 0 ? row[idxPartnerName] : '',
       insurance: idxInsurance >= 0 ? row[idxInsurance] : '',
       device_type: idxDeviceType >= 0 ? row[idxDeviceType] : '',
-      device_imei: idxImei >= 0 ? row[idxImei] : ''
+      device_imei: idxImei >= 0 ? row[idxImei] : '',
+      store_name: idxStoreName >= 0 ? row[idxStoreName] : '',
+      pa_name: idxPaName >= 0 ? row[idxPaName] : '',
+      spa_name: idxSpaName >= 0 ? row[idxSpaName] : ''
     });
   }
 
@@ -1601,7 +1681,10 @@ function __buildSubRawIndex06a_(values) {
       partner_name: idxPartnerName,
       insurance: idxInsurance,
       device_type: idxDeviceType,
-      device_imei: idxImei
+      device_imei: idxImei,
+      store_name: idxStoreName,
+      pa_name: idxPaName,
+      spa_name: idxSpaName
     }
   };
 }
@@ -1617,7 +1700,7 @@ function __updateOperationalSheetsFromRaw06a_(ss, sheetNames, rawMap, ctx) {
   const sheetsPolicy = (opsPolicy && opsPolicy.SHEETS) ? opsPolicy.SHEETS : {};
   const scFarhanName = String(sheetsPolicy.SC_FARHAN || 'SC - Farhan');
   const scMeilaniName = String(sheetsPolicy.SC_MEILANI || 'SC - Meilani');
-  const scIvanName = String(sheetsPolicy.SC_IVAN || sheetsPolicy.SC_IVAN_NAME || 'SC - Ivan');
+  const scIvanName = String(sheetsPolicy.SC_IVAN || sheetsPolicy.SC_IVAN_NAME || 'SC - Meindar');
 
   // Type mapping (SC sheets) by Last Status.
   const typePolicy = (opsPolicy && opsPolicy.TYPE_BY_LAST_STATUS) ? opsPolicy.TYPE_BY_LAST_STATUS : null;
@@ -1703,6 +1786,14 @@ function __updateOperationalSheetsFromRaw06a_(ss, sheetNames, rawMap, ctx) {
     const idxLastStatusDate = idxOfAny(['last status date', 'last_status_date', 'claim_last_updated_datetime', 'claim last updated datetime']);
     const idxStatusType = idxOfAny(['status type']);
     const idxType = isScSheet ? idxOfAny(['type']) : -1;
+    const idxSubmissionDate = idxOfAny(['submission date', 'claim_submission_date', 'claim submitted datetime', 'submission_date']);
+    const idxStoreName = idxOfAny(['store name', 'outlet_name', 'outlet name', 'store_name']);
+    const idxPaName = idxOfAny(['pa name', 'pa_name']);
+    const idxSpaName = idxOfAny(['spa name', 'spa_name']);
+    const idxUpdateStatus = idxOfAny(['update status']);
+    const idxTimestamp = idxOfAny(['timestamp']);
+    const idxStatus = idxOfAny(['status']);
+    const idxRemarks = idxOfAny(['remarks', 'remark']);
     if (idxClaim < 0) {
       try { logLine_('SUB_WARN', 'Sheet missing Claim Number header (skip)', name, '', 'WARN'); } catch (e2) {}
       summary.sheets[name] = { updatedRows: 0, skipped: 'no Claim Number header' };
@@ -1729,6 +1820,14 @@ function __updateOperationalSheetsFromRaw06a_(ss, sheetNames, rawMap, ctx) {
     const outLastStatusDate = idxLastStatusDate >= 0 ? new Array(numDataRows) : null;
     const outStatusType = idxStatusType >= 0 ? new Array(numDataRows) : null;
     const outType = (idxType >= 0) ? new Array(numDataRows) : null;
+    const outSubmissionDate = idxSubmissionDate >= 0 ? new Array(numDataRows) : null;
+    const outStoreName = idxStoreName >= 0 ? new Array(numDataRows) : null;
+    const outPaName = idxPaName >= 0 ? new Array(numDataRows) : null;
+    const outSpaName = idxSpaName >= 0 ? new Array(numDataRows) : null;
+    const outUpdateStatus = idxUpdateStatus >= 0 ? new Array(numDataRows) : null;
+    const outTimestamp = idxTimestamp >= 0 ? new Array(numDataRows) : null;
+    const outStatus = idxStatus >= 0 ? new Array(numDataRows) : null;
+    const outRemarks = idxRemarks >= 0 ? new Array(numDataRows) : null;
 
     function isNonEmpty(v) {
       return v !== '' && v != null;
@@ -1750,6 +1849,14 @@ function __updateOperationalSheetsFromRaw06a_(ss, sheetNames, rawMap, ctx) {
       if (outLastStatusDate) outLastStatusDate[o] = [row[idxLastStatusDate]];
       if (outStatusType) outStatusType[o] = [row[idxStatusType]];
       if (outType) outType[o] = [row[idxType]];
+      if (outSubmissionDate) outSubmissionDate[o] = [row[idxSubmissionDate]];
+      if (outStoreName) outStoreName[o] = [row[idxStoreName]];
+      if (outPaName) outPaName[o] = [row[idxPaName]];
+      if (outSpaName) outSpaName[o] = [row[idxSpaName]];
+      if (outUpdateStatus) outUpdateStatus[o] = [row[idxUpdateStatus]];
+      if (outTimestamp) outTimestamp[o] = [row[idxTimestamp]];
+      if (outStatus) outStatus[o] = [row[idxStatus]];
+      if (outRemarks) outRemarks[o] = [row[idxRemarks]];
 
       if (!cn) continue;
 
@@ -1764,10 +1871,25 @@ function __updateOperationalSheetsFromRaw06a_(ss, sheetNames, rawMap, ctx) {
       if (outSc && isNonEmpty(rec.sc_name)) outSc[o] = [rec.sc_name];
 
       if (outActLog && isNonEmpty(rec.activity_log)) outActLog[o] = [rec.activity_log];
+      if (outSubmissionDate && isNonEmpty(rec.claim_submitted_datetime)) {
+        const subD = __toDate06_(rec.claim_submitted_datetime);
+        if (subD) outSubmissionDate[o] = [subD];
+      }
+      if (outStoreName && isNonEmpty(rec.store_name)) outStoreName[o] = [rec.store_name];
+      if (outPaName && isNonEmpty(rec.pa_name)) outPaName[o] = [rec.pa_name];
+      if (outSpaName && isNonEmpty(rec.spa_name)) outSpaName[o] = [rec.spa_name];
 
       if (outLastStatusDate && isNonEmpty(rec.claim_last_updated_datetime)) {
         const d = __parseClaimLastUpdatedDatetimeSub06a_(rec.claim_last_updated_datetime);
         if (d) outLastStatusDate[o] = [d];
+      }
+      const prevLast = String(idxLast >= 0 ? (row[idxLast] || '') : '').trim();
+      const nextLast = String(isNonEmpty(rec.last_status) ? rec.last_status : prevLast).trim();
+      if (prevLast && nextLast && prevLast !== nextLast) {
+        if (outUpdateStatus) outUpdateStatus[o] = [''];
+        if (outTimestamp) outTimestamp[o] = [''];
+        if (outStatus) outStatus[o] = [''];
+        if (outRemarks) outRemarks[o] = [''];
       }
 
       if (outStatusType) {
@@ -1801,6 +1923,14 @@ function __updateOperationalSheetsFromRaw06a_(ss, sheetNames, rawMap, ctx) {
       writeCol(idxLastStatusDate, outLastStatusDate);
       writeCol(idxStatusType, outStatusType);
       writeCol(idxType, outType);
+      writeCol(idxSubmissionDate, outSubmissionDate);
+      writeCol(idxStoreName, outStoreName);
+      writeCol(idxPaName, outPaName);
+      writeCol(idxSpaName, outSpaName);
+      writeCol(idxUpdateStatus, outUpdateStatus);
+      writeCol(idxTimestamp, outTimestamp);
+      writeCol(idxStatus, outStatus);
+      writeCol(idxRemarks, outRemarks);
 
       // Enforce SUB datetime format if Last Status Date exists.
       if (idxLastStatusDate >= 0) {
@@ -2301,11 +2431,13 @@ function __buildRoutingIndexLocalSub06a_(routingMap) {
   const map = routingMap || {};
   const idx = {};
   Object.keys(map).forEach(sheetName => {
+    const sheetKey = String(sheetName || '').trim();
+    if (!sheetKey || /^__/.test(sheetKey)) return;
     (map[sheetName] || []).forEach(status => {
       const key = String(status || '').trim();
       if (!key) return;
       if (!idx[key]) idx[key] = [];
-      idx[key].push(sheetName);
+      idx[key].push(sheetKey);
     });
   });
   return idx;
@@ -2313,7 +2445,7 @@ function __buildRoutingIndexLocalSub06a_(routingMap) {
 
 function __getScSheetAllowlistsSub06a_() {
   // Keyword routing by sheetName. Values are arrays of normalized lowercase keywords.
-  // Override via CONFIG.SC_SHEET_ALLOWLISTS = { 'SC - Farhan': ['Mitracare', ...], 'SC - Ivan': [...], 'SC - Meilani': [...] }
+  // Override via CONFIG.SC_SHEET_ALLOWLISTS = { 'SC - Farhan': ['Mitracare', ...], 'SC - Meindar': [...], 'SC - Meilani': [...] }
   const out = {};
 
   function norm(s) { return __normalizeScString06a_(s); }
@@ -2341,7 +2473,7 @@ function __getScSheetAllowlistsSub06a_() {
 
   // 3) hard fallback (should rarely be used)
   if (!out['SC - Farhan'] || !out['SC - Farhan'].length) out['SC - Farhan'] = ['mitracare', 'sitcomtara', 'gsi', 'ibox'].map(norm);
-  if (!out['SC - Ivan'] || !out['SC - Ivan'].length) out['SC - Ivan'] = [].map(norm);
+  if (!out['SC - Meindar'] || !out['SC - Meindar'].length) out['SC - Meindar'] = [].map(norm);
   if (!out['SC - Meilani'] || !out['SC - Meilani'].length) out['SC - Meilani'] = [].map(norm);
 
   return out;
