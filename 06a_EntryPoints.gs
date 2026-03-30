@@ -840,7 +840,6 @@ function runEmailIngest(maxThreads) {
       const limit = 1;
 
       setProgress_(0, 'Searching queued email...');
-      setProgress_(0, 'Searching queued email…');
       logLine_('MAIL', 'MAIN ingest started', 'query=' + query, 'limit=' + limit, 'INFO');
 
       const threads = GmailApp.search(query, 0, limit);
@@ -918,7 +917,6 @@ function runEmailIngest(maxThreads) {
 
         // Cleanup success (per spec)
         setProgress_(0.85, 'Cleaning up email...');
-        setProgress_(0.85, 'Cleaning up email…');
         try { msg.markRead(); } catch (e1) {}
         try { thread.markRead(); } catch (e2) {}
         try { if (queuedLabel) thread.removeLabel(queuedLabel); } catch (e3) {}
@@ -2451,7 +2449,6 @@ function runManual(picOrFileIdsCsv, fileIdsCsvMaybe) {
     try { ssTiming = __logOverviewStart06_(key, startedAt); } catch (e) {}
 
     setProgress_(0, 'Starting (manual)...');
-    setProgress_(0, 'Starting (manual)…');
     logLine_('BOOT', 'Manual run started', 'version=' + APP_VERSION, 'profile=' + key, 'INFO');
 
     const ids = String(fileIdsCsv || '')
