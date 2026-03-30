@@ -98,6 +98,9 @@ var SALVAGE_CONFIG = typeof SALVAGE_CONFIG !== 'undefined'
   progress: {
     blocks: 20,
   },
+  runtime: {
+    duplicateThreadWindowHours: 48,
+  },
 });
 
 var SALVAGE_TARGET_TO_SOURCE_ALIASES = typeof SALVAGE_TARGET_TO_SOURCE_ALIASES !== 'undefined'
@@ -138,11 +141,63 @@ var SALVAGE_TARGET_HEADER_ALIASES = typeof SALVAGE_TARGET_HEADER_ALIASES !== 'un
   'Partner Name': ['partner name'],
 });
 
+const SALVAGE_RUNTIME = {
+  props: PropertiesService.getScriptProperties(),
+  dedupeThreadKey: 'SALVAGE_LAST_PROCESSED_THREAD_ID',
+  dedupeMessageKey: 'SALVAGE_LAST_PROCESSED_MESSAGE_ID',
+  dedupeAtKey: 'SALVAGE_LAST_PROCESSED_AT_ISO',
+};
+
+function validateSalvageConfig_() {
+  const checks = [
+    ['gmail.labelName', SALVAGE_CONFIG.gmail && SALVAGE_CONFIG.gmail.labelName],
+    ['gmail.from', SALVAGE_CONFIG.gmail && SALVAGE_CONFIG.gmail.from],
+    ['gmail.subject', SALVAGE_CONFIG.gmail && SALVAGE_CONFIG.gmail.subject],
+    ['target.spreadsheetId', SALVAGE_CONFIG.target && SALVAGE_CONFIG.target.spreadsheetId],
+    ['target.sheetName', SALVAGE_CONFIG.target && SALVAGE_CONFIG.target.sheetName],
+    ['log.spreadsheetId', SALVAGE_CONFIG.log && SALVAGE_CONFIG.log.spreadsheetId],
+    ['log.sheetName', SALVAGE_CONFIG.log && SALVAGE_CONFIG.log.sheetName],
+    ['runtime.duplicateThreadWindowHours', SALVAGE_CONFIG.runtime && SALVAGE_CONFIG.runtime.duplicateThreadWindowHours],
+  ];
+  for (let i = 0; i < checks.length; i += 1) {
+    if (!String(checks[i][1] || '').trim()) {
+      throw new Error('Invalid SALVAGE_CONFIG: missing ' + checks[i][0]);
+    }
+  }
+}
+
+function wasThreadProcessedRecently_(threadId, messageId) {
+  const prevThreadId = SALVAGE_RUNTIME.props.getProperty(SALVAGE_RUNTIME.dedupeThreadKey);
+  if (!prevThreadId || prevThreadId !== String(threadId || '')) return false;
+
+  const prevMessageId = SALVAGE_RUNTIME.props.getProperty(SALVAGE_RUNTIME.dedupeMessageKey);
+  if (!prevMessageId || prevMessageId !== String(messageId || '')) return false;
+
+  const prevAtIso = SALVAGE_RUNTIME.props.getProperty(SALVAGE_RUNTIME.dedupeAtKey);
+  const prevAt = prevAtIso ? new Date(prevAtIso) : null;
+  if (!(prevAt && !Number.isNaN(prevAt.getTime()))) return false;
+
+  const windowHours = Number(SALVAGE_CONFIG.runtime.duplicateThreadWindowHours || 0);
+  if (!(windowHours > 0)) return false;
+
+  const cutoffMs = Date.now() - (windowHours * 60 * 60 * 1000);
+  return prevAt.getTime() >= cutoffMs;
+}
+
+function rememberProcessedThread_(threadId, messageId) {
+  SALVAGE_RUNTIME.props.setProperties({
+    SALVAGE_LAST_PROCESSED_THREAD_ID: String(threadId || ''),
+    SALVAGE_LAST_PROCESSED_MESSAGE_ID: String(messageId || ''),
+    SALVAGE_LAST_PROCESSED_AT_ISO: new Date().toISOString(),
+  });
+}
+
 /**
  * Run once manually after pasting the script.
  * Creates/recreates the daily trigger and prepares the log sheet layout.
  */
 function setupSalvageAutomation() {
+  validateSalvageConfig_();
   const lock = LockService.getScriptLock();
   lock.waitLock(30000);
   try {
@@ -154,6 +209,7 @@ function setupSalvageAutomation() {
       .timeBased()
       .everyDays(1)
       .atHour(9)
+      .inTimezone(SALVAGE_CONFIG.scriptTimeZone)
       .create();
   } finally {
     lock.releaseLock();
@@ -171,6 +227,7 @@ function removeSalvageAutomationTrigger() {
  * Main production job.
  */
 function runQueuedSalvage() {
+  validateSalvageConfig_();
   const lock = LockService.getScriptLock();
   if (!lock.tryLock(30000)) {
     throw new Error('Another salvage job is currently running. Please retry later.');
@@ -226,9 +283,23 @@ function runQueuedSalvage() {
     ctx.emailFrom = mailBundle.message.getFrom();
     ctx.emailSubject = mailBundle.message.getSubject();
     ctx.threadId = mailBundle.thread.getId();
+    ctx.messageId = mailBundle.message.getId();
     ctx.attachmentName = mailBundle.attachment.getName();
     ctx.attachmentSize = mailBundle.attachment.getSize();
     ctx.attachmentType = mailBundle.attachment.getContentType();
+
+    if (wasThreadProcessedRecently_(ctx.threadId, ctx.messageId)) {
+      updateProgress_(100, 'Skipped duplicate message');
+      logStage_(ctx, {
+        stage: 'EMAIL',
+        segment: 'duplicate_guard',
+        durationMs: Date.now() - emailStart,
+        status: 'SKIPPED',
+        severity: 'WARN',
+        notes: 'Skipped because the same thread+message was already processed within dedupe window.',
+      });
+      return;
+    }
 
     logStage_(ctx, {
       stage: 'EMAIL',
@@ -383,6 +454,7 @@ function runQueuedSalvage() {
     updateProgress_(95, 'Trashing processed email');
     const emailCleanupStart = Date.now();
     processedThread.moveToTrash();
+    rememberProcessedThread_(ctx.threadId, ctx.messageId);
     logStage_(ctx, {
       stage: 'CLEANUP',
       segment: 'trash_email_thread',
@@ -1340,6 +1412,11 @@ function inspectTargetSnapshot_() {
   const headers = sheet.getRange(headerRow, 1, 1, lastCol).getDisplayValues()[0];
   const claimCol = targetColumnMap['Claim Number'];
   const claimScan = getClaimColumnScan_(sheet, headerRow, claimCol);
+  const sheetLastRow = sheet.getLastRow();
+  const activeMode = String(SALVAGE_CONFIG.target.activeRangeMode || '').toLowerCase();
+  const effectiveLastRow = activeMode === 'sparse_claim_column'
+    ? Math.max(headerRow, claimScan.lastClaimRow)
+    : Math.max(sheetLastRow, headerRow);
 
   return {
     spreadsheetId: ss.getId(),
@@ -1348,7 +1425,8 @@ function inspectTargetSnapshot_() {
     headerRow: headerRow,
     columnMap: targetColumnMap,
     headers: headers,
-    lastRow: sheet.getLastRow(),
+    sheetLastRow: sheetLastRow,
+    lastRow: effectiveLastRow,
     lastCol: lastCol,
     claimRowCount: claimScan.claimRowCount,
     blankGapCount: claimScan.blankGapCount,
