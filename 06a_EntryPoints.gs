@@ -535,7 +535,7 @@ function runSubFromFormDrive06a_(req, runId) {
     'OR - OLD',
     'SC - Farhan',
     'SC - Meilani',
-    'SC - Ivan',
+    'SC - Meindar',
     'Start',
     'Finish',
     'PO',
@@ -711,7 +711,7 @@ function ensureMasterSheets_(ss) {
 
   const mustHave = [
     // Operational
-    'Submission', 'Ask Detail', 'OR - OLD', 'Start', 'Finish', 'SC - Farhan', 'SC - Meilani', 'SC - Ivan', 'SC - Unmapped', 'PO', 'Exclusion',
+    'Submission', 'Ask Detail', 'OR - OLD', 'Start', 'Finish', 'SC - Farhan', 'SC - Meilani', 'SC - Meindar', 'SC - Unmapped', 'PO', 'Exclusion',
     // Optional
     'B2B', 'EV-Bike', 'Special Case'
   ];
@@ -1074,7 +1074,7 @@ function runSubEmailIngest(maxThreads) {
       'OR - OLD',
       'SC - Farhan',
       'SC - Meilani',
-      'SC - Ivan',
+      'SC - Meindar',
       'Start',
       'Finish',
       'PO',
@@ -1546,13 +1546,23 @@ function __buildSubRawIndex06a_(values) {
     'last_activity_log_datetime', 'last activity log datetime'
   ]);
 
-  const idxSubmitted = idxOfAny(['claim_submitted_datetime', 'claim submitted datetime', 'submission_date', 'submission date']);
+  const idxSubmitted = idxOfAny([
+    'claim_submission_date',
+    'claim submission date',
+    'claim_submitted_datetime',
+    'claim submitted datetime',
+    'submission_date',
+    'submission date'
+  ]);
   const idxLink = idxOfAny(['dashboard_link', 'db_link', 'dashboard link', 'db link', 'link']);
 
   const idxPartnerName = idxOfAny(['partner_name', 'partner name', 'partner_code', 'partner code']);
   const idxInsurance = idxOfAny(['insurance_partner_code', 'insurance', 'insurance_code', 'insurance partner code']);
   const idxDeviceType = idxOfAny(['device_type', 'device type']);
   const idxImei = idxOfAny(['device_imei', 'imei/sn', 'imei', 'sn', 'imei/sn']);
+  const idxStoreName = idxOfAny(['outlet_name', 'outlet name', 'store_name', 'store name']);
+  const idxPaName = idxOfAny(['pa_name', 'pa name']);
+  const idxSpaName = idxOfAny(['spa_name', 'spa name']);
 
   const map = new Map();
   for (let r = 1; r < v.length; r++) {
@@ -1580,7 +1590,10 @@ function __buildSubRawIndex06a_(values) {
       partner_name: idxPartnerName >= 0 ? row[idxPartnerName] : '',
       insurance: idxInsurance >= 0 ? row[idxInsurance] : '',
       device_type: idxDeviceType >= 0 ? row[idxDeviceType] : '',
-      device_imei: idxImei >= 0 ? row[idxImei] : ''
+      device_imei: idxImei >= 0 ? row[idxImei] : '',
+      store_name: idxStoreName >= 0 ? row[idxStoreName] : '',
+      pa_name: idxPaName >= 0 ? row[idxPaName] : '',
+      spa_name: idxSpaName >= 0 ? row[idxSpaName] : ''
     });
   }
 
@@ -1601,7 +1614,10 @@ function __buildSubRawIndex06a_(values) {
       partner_name: idxPartnerName,
       insurance: idxInsurance,
       device_type: idxDeviceType,
-      device_imei: idxImei
+      device_imei: idxImei,
+      store_name: idxStoreName,
+      pa_name: idxPaName,
+      spa_name: idxSpaName
     }
   };
 }
@@ -1617,7 +1633,7 @@ function __updateOperationalSheetsFromRaw06a_(ss, sheetNames, rawMap, ctx) {
   const sheetsPolicy = (opsPolicy && opsPolicy.SHEETS) ? opsPolicy.SHEETS : {};
   const scFarhanName = String(sheetsPolicy.SC_FARHAN || 'SC - Farhan');
   const scMeilaniName = String(sheetsPolicy.SC_MEILANI || 'SC - Meilani');
-  const scIvanName = String(sheetsPolicy.SC_IVAN || sheetsPolicy.SC_IVAN_NAME || 'SC - Ivan');
+  const scIvanName = String(sheetsPolicy.SC_IVAN || sheetsPolicy.SC_IVAN_NAME || 'SC - Meindar');
 
   // Type mapping (SC sheets) by Last Status.
   const typePolicy = (opsPolicy && opsPolicy.TYPE_BY_LAST_STATUS) ? opsPolicy.TYPE_BY_LAST_STATUS : null;
@@ -1703,6 +1719,14 @@ function __updateOperationalSheetsFromRaw06a_(ss, sheetNames, rawMap, ctx) {
     const idxLastStatusDate = idxOfAny(['last status date', 'last_status_date', 'claim_last_updated_datetime', 'claim last updated datetime']);
     const idxStatusType = idxOfAny(['status type']);
     const idxType = isScSheet ? idxOfAny(['type']) : -1;
+    const idxSubmissionDate = idxOfAny(['submission date', 'claim_submission_date', 'claim submitted datetime', 'submission_date']);
+    const idxStoreName = idxOfAny(['store name', 'outlet_name', 'outlet name', 'store_name']);
+    const idxPaName = idxOfAny(['pa name', 'pa_name']);
+    const idxSpaName = idxOfAny(['spa name', 'spa_name']);
+    const idxUpdateStatus = idxOfAny(['update status']);
+    const idxTimestamp = idxOfAny(['timestamp']);
+    const idxStatus = idxOfAny(['status']);
+    const idxRemarks = idxOfAny(['remarks', 'remark']);
     if (idxClaim < 0) {
       try { logLine_('SUB_WARN', 'Sheet missing Claim Number header (skip)', name, '', 'WARN'); } catch (e2) {}
       summary.sheets[name] = { updatedRows: 0, skipped: 'no Claim Number header' };
@@ -1729,6 +1753,14 @@ function __updateOperationalSheetsFromRaw06a_(ss, sheetNames, rawMap, ctx) {
     const outLastStatusDate = idxLastStatusDate >= 0 ? new Array(numDataRows) : null;
     const outStatusType = idxStatusType >= 0 ? new Array(numDataRows) : null;
     const outType = (idxType >= 0) ? new Array(numDataRows) : null;
+    const outSubmissionDate = idxSubmissionDate >= 0 ? new Array(numDataRows) : null;
+    const outStoreName = idxStoreName >= 0 ? new Array(numDataRows) : null;
+    const outPaName = idxPaName >= 0 ? new Array(numDataRows) : null;
+    const outSpaName = idxSpaName >= 0 ? new Array(numDataRows) : null;
+    const outUpdateStatus = idxUpdateStatus >= 0 ? new Array(numDataRows) : null;
+    const outTimestamp = idxTimestamp >= 0 ? new Array(numDataRows) : null;
+    const outStatus = idxStatus >= 0 ? new Array(numDataRows) : null;
+    const outRemarks = idxRemarks >= 0 ? new Array(numDataRows) : null;
 
     function isNonEmpty(v) {
       return v !== '' && v != null;
@@ -1750,6 +1782,14 @@ function __updateOperationalSheetsFromRaw06a_(ss, sheetNames, rawMap, ctx) {
       if (outLastStatusDate) outLastStatusDate[o] = [row[idxLastStatusDate]];
       if (outStatusType) outStatusType[o] = [row[idxStatusType]];
       if (outType) outType[o] = [row[idxType]];
+      if (outSubmissionDate) outSubmissionDate[o] = [row[idxSubmissionDate]];
+      if (outStoreName) outStoreName[o] = [row[idxStoreName]];
+      if (outPaName) outPaName[o] = [row[idxPaName]];
+      if (outSpaName) outSpaName[o] = [row[idxSpaName]];
+      if (outUpdateStatus) outUpdateStatus[o] = [row[idxUpdateStatus]];
+      if (outTimestamp) outTimestamp[o] = [row[idxTimestamp]];
+      if (outStatus) outStatus[o] = [row[idxStatus]];
+      if (outRemarks) outRemarks[o] = [row[idxRemarks]];
 
       if (!cn) continue;
 
@@ -1764,10 +1804,25 @@ function __updateOperationalSheetsFromRaw06a_(ss, sheetNames, rawMap, ctx) {
       if (outSc && isNonEmpty(rec.sc_name)) outSc[o] = [rec.sc_name];
 
       if (outActLog && isNonEmpty(rec.activity_log)) outActLog[o] = [rec.activity_log];
+      if (outSubmissionDate && isNonEmpty(rec.claim_submitted_datetime)) {
+        const subD = __toDate06_(rec.claim_submitted_datetime);
+        if (subD) outSubmissionDate[o] = [subD];
+      }
+      if (outStoreName && isNonEmpty(rec.store_name)) outStoreName[o] = [rec.store_name];
+      if (outPaName && isNonEmpty(rec.pa_name)) outPaName[o] = [rec.pa_name];
+      if (outSpaName && isNonEmpty(rec.spa_name)) outSpaName[o] = [rec.spa_name];
 
       if (outLastStatusDate && isNonEmpty(rec.claim_last_updated_datetime)) {
         const d = __parseClaimLastUpdatedDatetimeSub06a_(rec.claim_last_updated_datetime);
         if (d) outLastStatusDate[o] = [d];
+      }
+      const prevLast = String(idxLast >= 0 ? (row[idxLast] || '') : '').trim();
+      const nextLast = String(isNonEmpty(rec.last_status) ? rec.last_status : prevLast).trim();
+      if (prevLast && nextLast && prevLast !== nextLast) {
+        if (outUpdateStatus) outUpdateStatus[o] = [''];
+        if (outTimestamp) outTimestamp[o] = [''];
+        if (outStatus) outStatus[o] = [''];
+        if (outRemarks) outRemarks[o] = [''];
       }
 
       if (outStatusType) {
@@ -1801,6 +1856,14 @@ function __updateOperationalSheetsFromRaw06a_(ss, sheetNames, rawMap, ctx) {
       writeCol(idxLastStatusDate, outLastStatusDate);
       writeCol(idxStatusType, outStatusType);
       writeCol(idxType, outType);
+      writeCol(idxSubmissionDate, outSubmissionDate);
+      writeCol(idxStoreName, outStoreName);
+      writeCol(idxPaName, outPaName);
+      writeCol(idxSpaName, outSpaName);
+      writeCol(idxUpdateStatus, outUpdateStatus);
+      writeCol(idxTimestamp, outTimestamp);
+      writeCol(idxStatus, outStatus);
+      writeCol(idxRemarks, outRemarks);
 
       // Enforce SUB datetime format if Last Status Date exists.
       if (idxLastStatusDate >= 0) {
@@ -2313,7 +2376,7 @@ function __buildRoutingIndexLocalSub06a_(routingMap) {
 
 function __getScSheetAllowlistsSub06a_() {
   // Keyword routing by sheetName. Values are arrays of normalized lowercase keywords.
-  // Override via CONFIG.SC_SHEET_ALLOWLISTS = { 'SC - Farhan': ['Mitracare', ...], 'SC - Ivan': [...], 'SC - Meilani': [...] }
+  // Override via CONFIG.SC_SHEET_ALLOWLISTS = { 'SC - Farhan': ['Mitracare', ...], 'SC - Meindar': [...], 'SC - Meilani': [...] }
   const out = {};
 
   function norm(s) { return __normalizeScString06a_(s); }
@@ -2341,7 +2404,7 @@ function __getScSheetAllowlistsSub06a_() {
 
   // 3) hard fallback (should rarely be used)
   if (!out['SC - Farhan'] || !out['SC - Farhan'].length) out['SC - Farhan'] = ['mitracare', 'sitcomtara', 'gsi', 'ibox'].map(norm);
-  if (!out['SC - Ivan'] || !out['SC - Ivan'].length) out['SC - Ivan'] = [].map(norm);
+  if (!out['SC - Meindar'] || !out['SC - Meindar'].length) out['SC - Meindar'] = [].map(norm);
   if (!out['SC - Meilani'] || !out['SC - Meilani'].length) out['SC - Meilani'] = [].map(norm);
 
   return out;

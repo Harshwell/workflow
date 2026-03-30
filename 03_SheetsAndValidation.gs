@@ -139,6 +139,9 @@ const SV03_TEMPLATES = Object.freeze({
     'Activity Log',
     'Activity Log Aging',
     'TAT',
+    'Start Date',
+    'End Date',
+    'Details',
     'Sum Insured Amount',
     'Claim Amount',
     'Claim Own Risk Amount',
@@ -313,6 +316,9 @@ const SV03_TEMPLATES = Object.freeze({
     'Last Status Aging',
     'Activity Log Aging',
     'TAT',
+    'Start Date',
+    'End Date',
+    'Details',
     'Sum Insured Amount',
     'Claim Amount',
     'Claim Own Risk Amount',
@@ -333,7 +339,7 @@ const SV03_TEMPLATES = Object.freeze({
   ]),
 
   EV_BIKE: Object.freeze([
-    'Submission Date','Claim Number','DB Link','Owner Name','Policy Number','Partner Name','Insurance','Sum Insured','Status'
+    'Submission Date','Claim Number','DB Link','Owner Name','Policy Number','Partner Name','Insurance','Sum Insured','Start Date','End Date','Details','Status'
   ])
 });
 
@@ -398,7 +404,7 @@ function sv03_getProfileSpec_(profile) {
       : ((CONFIG.sheetsByPic && Array.isArray(CONFIG.sheetsByPic.picOperational)) ? CONFIG.sheetsByPic.picOperational : []));
 
 
-  // Auto-include SC sheets from routing policy (prevents missing newly added SC sheets like "SC - Ivan").
+  // Auto-include SC sheets from routing policy (prevents missing newly added SC sheets like "SC - Meindar").
   try {
     const scSet = new Set(operational || []);
     const routingSheets =
