@@ -848,12 +848,12 @@ function preflightRoutableCount_(rawValues, headerIndexRaw, pic) {
   const opsPolicy = (CONFIG && (CONFIG.opsRouting || CONFIG.opsRoutingPolicy || CONFIG.OPS_ROUTING_POLICY)) || null;
   const scFarhanName = (opsPolicy && opsPolicy.SHEETS && opsPolicy.SHEETS.SC_FARHAN) ? opsPolicy.SHEETS.SC_FARHAN : 'SC - Farhan';
   const scMeilaniName = (opsPolicy && opsPolicy.SHEETS && opsPolicy.SHEETS.SC_MEILANI) ? opsPolicy.SHEETS.SC_MEILANI : 'SC - Meilani';
-  const scIvanName = (opsPolicy && opsPolicy.SHEETS && opsPolicy.SHEETS.SC_IVAN) ? opsPolicy.SHEETS.SC_IVAN : 'SC - Ivan';
+  const scIvanName = (opsPolicy && opsPolicy.SHEETS && opsPolicy.SHEETS.SC_IVAN) ? opsPolicy.SHEETS.SC_IVAN : 'SC - Meindar';
 
   const scKeywords = (opsPolicy && opsPolicy.SC_NAME_KEYWORDS) ? opsPolicy.SC_NAME_KEYWORDS : {};
   const kwFarhan = scKeywords[scFarhanName] || scKeywords['SC - Farhan'] || [];
   const kwMeilani = scKeywords[scMeilaniName] || scKeywords['SC - Meilani'] || [];
-  const kwIvan = scKeywords[scIvanName] || scKeywords['SC - Ivan'] || [];
+  const kwIvan = scKeywords[scIvanName] || scKeywords['SC - Meindar'] || [];
 
   const idxScName = headerIndexRaw[h.scName];
 
@@ -890,7 +890,7 @@ function __getScSheetNames06_() {
   const opsPolicy = (CONFIG && (CONFIG.opsRouting || CONFIG.opsRoutingPolicy || CONFIG.OPS_ROUTING_POLICY)) || null;
   const scFarhanName = (opsPolicy && opsPolicy.SHEETS && opsPolicy.SHEETS.SC_FARHAN) ? opsPolicy.SHEETS.SC_FARHAN : 'SC - Farhan';
   const scMeilaniName = (opsPolicy && opsPolicy.SHEETS && opsPolicy.SHEETS.SC_MEILANI) ? opsPolicy.SHEETS.SC_MEILANI : 'SC - Meilani';
-  const scIvanName = (opsPolicy && opsPolicy.SHEETS && opsPolicy.SHEETS.SC_IVAN) ? opsPolicy.SHEETS.SC_IVAN : 'SC - Ivan';
+  const scIvanName = (opsPolicy && opsPolicy.SHEETS && opsPolicy.SHEETS.SC_IVAN) ? opsPolicy.SHEETS.SC_IVAN : 'SC - Meindar';
   return [scFarhanName, scMeilaniName, scIvanName].filter(Boolean);
 }
 
