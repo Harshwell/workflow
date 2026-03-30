@@ -98,6 +98,9 @@ var SALVAGE_CONFIG = typeof SALVAGE_CONFIG !== 'undefined'
   progress: {
     blocks: 20,
   },
+  runtime: {
+    duplicateThreadWindowHours: 48,
+  },
 });
 
 var SALVAGE_TARGET_TO_SOURCE_ALIASES = typeof SALVAGE_TARGET_TO_SOURCE_ALIASES !== 'undefined'
@@ -153,6 +156,7 @@ function validateSalvageConfig_() {
     ['target.sheetName', SALVAGE_CONFIG.target && SALVAGE_CONFIG.target.sheetName],
     ['log.spreadsheetId', SALVAGE_CONFIG.log && SALVAGE_CONFIG.log.spreadsheetId],
     ['log.sheetName', SALVAGE_CONFIG.log && SALVAGE_CONFIG.log.sheetName],
+    ['runtime.duplicateThreadWindowHours', SALVAGE_CONFIG.runtime && SALVAGE_CONFIG.runtime.duplicateThreadWindowHours],
   ];
   for (let i = 0; i < checks.length; i += 1) {
     if (!String(checks[i][1] || '').trim()) {
@@ -167,6 +171,13 @@ function wasThreadProcessedRecently_(threadId) {
 
   const prevAtIso = SALVAGE_RUNTIME.props.getProperty(SALVAGE_RUNTIME.dedupeAtKey);
   const prevAt = prevAtIso ? new Date(prevAtIso) : null;
+  if (!(prevAt && !Number.isNaN(prevAt.getTime()))) return false;
+
+  const windowHours = Number(SALVAGE_CONFIG.runtime.duplicateThreadWindowHours || 0);
+  if (!(windowHours > 0)) return false;
+
+  const cutoffMs = Date.now() - (windowHours * 60 * 60 * 1000);
+  return prevAt.getTime() >= cutoffMs;
   return !!(prevAt && !Number.isNaN(prevAt.getTime()));
 }
 
@@ -194,6 +205,7 @@ function setupSalvageAutomation() {
       .timeBased()
       .everyDays(1)
       .atHour(9)
+      .inTimezone(SALVAGE_CONFIG.scriptTimeZone)
       .create();
   } finally {
     lock.releaseLock();

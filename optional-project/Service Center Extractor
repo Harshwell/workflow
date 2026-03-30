@@ -1079,14 +1079,23 @@ function _findHeaderIndex_(headers, candidates) {
   var exactHeaders = headers.map(function (h) { return String(h || "").trim(); });
   var normalizedHeaders = exactHeaders.map(_norm_);
   var normalizedCandidates = candidates.map(_norm_);
+  var exactIndex = {};
+  var normalizedIndex = {};
+
+  for (var hi = 0; hi < exactHeaders.length; hi++) {
+    if (!exactIndex.hasOwnProperty(exactHeaders[hi])) exactIndex[exactHeaders[hi]] = hi;
+    if (!normalizedIndex.hasOwnProperty(normalizedHeaders[hi])) normalizedIndex[normalizedHeaders[hi]] = hi;
+  }
 
   for (var i = 0; i < candidates.length; i++) {
-    var exactIdx = exactHeaders.indexOf(String(candidates[i]));
+    var exactCandidate = String(candidates[i] || "").trim();
+    var exactIdx = exactIndex.hasOwnProperty(exactCandidate) ? exactIndex[exactCandidate] : -1;
     if (exactIdx >= 0) return exactIdx;
   }
 
   for (var j = 0; j < normalizedCandidates.length; j++) {
-    var normIdx = normalizedHeaders.indexOf(normalizedCandidates[j]);
+    var normKey = normalizedCandidates[j];
+    var normIdx = normalizedIndex.hasOwnProperty(normKey) ? normalizedIndex[normKey] : -1;
     if (normIdx >= 0) return normIdx;
   }
 

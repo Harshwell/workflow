@@ -198,6 +198,14 @@ function validateCfg_() {
       throw new Error('Invalid CFG: required key is empty -> ' + key);
     }
   }
+
+  var seen = {};
+  for (var j = 0; j < CFG.SOURCE_SHEETS.length; j++) {
+    var sheetName = String(CFG.SOURCE_SHEETS[j] || '').trim();
+    if (!sheetName) throw new Error('Invalid CFG: SOURCE_SHEETS contains empty value.');
+    if (seen[sheetName]) throw new Error('Invalid CFG: duplicate SOURCE_SHEETS entry -> ' + sheetName);
+    seen[sheetName] = true;
+  }
 }
 
 
@@ -577,6 +585,7 @@ function startRun_(opts) {
  * Worker trigger: process some tasks; finalize if queue drained.
  */
 function runWorker() {
+  validateCfg_();
   var runId = RunIds.newId();
   var log = LoggerFactory.scoped(runId, 'runWorker', null);
 
