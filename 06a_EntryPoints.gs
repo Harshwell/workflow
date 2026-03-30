@@ -126,11 +126,14 @@ function buildRoutingIndex06_(routingMap) {
   const map = routingMap || {};
   const idx = {};
   Object.keys(map).forEach(sheetName => {
+    const sheetKey = String(sheetName || '').trim();
+    // Internal buckets are not real sheets and must not become relocation targets.
+    if (!sheetKey || /^__/.test(sheetKey)) return;
     (map[sheetName] || []).forEach(status => {
       const key = String(status || '').trim();
       if (!key) return;
       if (!idx[key]) idx[key] = [];
-      idx[key].push(sheetName);
+      idx[key].push(sheetKey);
     });
   });
   return idx;
@@ -1015,9 +1018,11 @@ function runSubEmailIngest(maxThreads) {
 
     const query = buildDashboardEmailQuery_(pMerged);
     const limit = Math.max(1, Math.min(5, Number(maxThreads || 1) || 1));
+    try { setProgressForFlow_('SUB', 0.05, 'Searching queued email...', { prefixFlowInStep: true }); } catch (eP0) {}
 
     const threads = GmailApp.search(query, 0, limit);
     if (!threads || !threads.length) {
+      try { setProgressForFlow_('SUB', 1.0, 'No queued emails.', { prefixFlowInStep: true }); } catch (eP1) {}
       try { logLine_('SUB', 'No queued SUB emails', query, '', 'INFO'); } catch (e3) {}
       return { severity: 'INFO', message: 'No queued SUB emails', processed: 0, failed: 0 };
     }
@@ -1046,6 +1051,7 @@ function runSubEmailIngest(maxThreads) {
 
     if (!picked.oldAtt || !picked.newAtt) {
       const names = (atts || []).map(a => (a && a.getName) ? a.getName() : '').join(' | ');
+      try { setProgressForFlow_('SUB', 1.0, 'Failed (OLD/NEW attachment missing)', { prefixFlowInStep: true }); } catch (eP2) {}
       try { logLine_('SUB_ERR', 'Missing OLD/NEW attachments (expected 2 XLSX)', names, '', 'ERROR'); } catch (e6) {}
       // Leave queued for retry.
       return { severity: 'ERROR', message: 'Missing OLD/NEW attachments', processed: 0, failed: 1 };
@@ -1062,6 +1068,7 @@ function runSubEmailIngest(maxThreads) {
     const subFlow = (typeof CONFIG === 'object' && CONFIG && CONFIG.subFlow) ? CONFIG.subFlow : {};
 
     // Ensure raw target sheets exist.
+    try { setProgressForFlow_('SUB', 0.15, 'Preparing workbook...', { prefixFlowInStep: true }); } catch (eP3) {}
     const rawOldName = String(subFlow.RAW_OLD_SHEET_NAME || pMerged.RAW_OLD_SHEET || 'Raw OLD').trim();
     const rawNewName = String(subFlow.RAW_NEW_SHEET_NAME || pMerged.RAW_NEW_SHEET || 'Raw NEW').trim();
     __ensureSheetByNameSub06a_(masterSs, rawOldName);
@@ -1115,6 +1122,7 @@ function runSubEmailIngest(maxThreads) {
 
 
 // WebApp Project (Movement Claim Tracking): take PREV snapshots BEFORE SUB overwrites Raw.
+try { setProgressForFlow_('SUB', 0.25, 'Snapshot PREV...', { prefixFlowInStep: true }); } catch (eP4) {}
 try {
   if (typeof webappMovementSnapshotPrevForSub06c_ === 'function') {
     const snapPrev = webappMovementSnapshotPrevForSub06c_(masterSs, rawOldName, rawNewName);
@@ -1125,6 +1133,7 @@ try {
 }
 
     // Process OLD then NEW; cleanup email only if both succeed.
+    try { setProgressForFlow_('SUB', 0.40, 'Process OLD...', { prefixFlowInStep: true }); } catch (eP5) {}
 
     const rOld = __processSubAttachment06a_(masterSs, picked.oldAtt, {
       dbTag: 'OLD',
@@ -1132,21 +1141,25 @@ try {
       operationalSheetNames: opSheets
     });
     if (!rOld || String(rOld.severity || '').toUpperCase() === 'ERROR') {
+      try { setProgressForFlow_('SUB', 1.0, 'Failed (OLD)', { prefixFlowInStep: true }); } catch (eP6) {}
       try { logLine_('SUB_FAIL', 'OLD processing failed; leave email queued', '', '', 'ERROR'); } catch (e7) {}
       return { severity: 'ERROR', message: 'SUB OLD failed', processed: 0, failed: 1, details: rOld };
     }
 
+    try { setProgressForFlow_('SUB', 0.62, 'Process NEW...', { prefixFlowInStep: true }); } catch (eP7) {}
     const rNew = __processSubAttachment06a_(masterSs, picked.newAtt, {
       dbTag: 'NEW',
       rawSheetName: rawNewName,
       operationalSheetNames: opSheets
     });
     if (!rNew || String(rNew.severity || '').toUpperCase() === 'ERROR') {
+      try { setProgressForFlow_('SUB', 1.0, 'Failed (NEW)', { prefixFlowInStep: true }); } catch (eP8) {}
       try { logLine_('SUB_FAIL', 'NEW processing failed; leave email queued', '', '', 'ERROR'); } catch (e8) {}
       return { severity: 'ERROR', message: 'SUB NEW failed', processed: 0, failed: 1, details: rNew };
     }
 
     // Relocate rows by Last Status mapping (move FULL row, dedupe by Claim Number).
+    try { setProgressForFlow_('SUB', 0.80, 'Relocate + sort...', { prefixFlowInStep: true }); } catch (eP9) {}
     const relocateRes = __relocateOperationalRowsByLastStatusSub06a_(masterSs, opSheets);
     try { logLine_('SUB_MOVE', 'Relocated rows after SUB updates', JSON.stringify(relocateRes || {}), '', 'INFO'); } catch (e9a) {}
 
@@ -1157,6 +1170,7 @@ try {
 
 
 // WebApp Project (Movement Claim Tracking): take CURR snapshots AFTER SUB, then emit Daily events (dedup by Event ID).
+try { setProgressForFlow_('SUB', 0.92, 'Snapshot CURR + movement...', { prefixFlowInStep: true }); } catch (eP10) {}
 try {
   if (typeof webappMovementSnapshotCurrAndTrackForSub06c_ === 'function') {
     const snapCurr = webappMovementSnapshotCurrAndTrackForSub06c_(masterSs, rawOldName, rawNewName);
@@ -1174,6 +1188,7 @@ try {
 
     const durMs = new Date().getTime() - startedAt.getTime();
     try { logLine_('SUB_DONE', 'Completed SUB ingest', __formatProcessingDuration06_(durMs), '', 'INFO'); } catch (e11) {}
+    try { setProgressForFlow_('SUB', 1.0, 'Done.', { prefixFlowInStep: true }); } catch (eP11) {}
 
     return {
       severity: 'INFO',
@@ -2364,11 +2379,13 @@ function __buildRoutingIndexLocalSub06a_(routingMap) {
   const map = routingMap || {};
   const idx = {};
   Object.keys(map).forEach(sheetName => {
+    const sheetKey = String(sheetName || '').trim();
+    if (!sheetKey || /^__/.test(sheetKey)) return;
     (map[sheetName] || []).forEach(status => {
       const key = String(status || '').trim();
       if (!key) return;
       if (!idx[key]) idx[key] = [];
-      idx[key].push(sheetName);
+      idx[key].push(sheetKey);
     });
   });
   return idx;
