@@ -1333,6 +1333,14 @@ function __findHeaderIndexFlexible06_(headers, desiredHeader) {
   const want = __normalizeHeaderText06_(desiredHeader);
   if (!want) return -1;
 
+  // 0) shared utility exact normalized lookup
+  try {
+    if (typeof findHeaderIndexByCandidates_ === 'function') {
+      const ix = findHeaderIndexByCandidates_(headers, [want]);
+      if (ix > -1) return ix;
+    }
+  } catch (e0) {}
+
   // 1) exact match
   let idx0 = headers.indexOf(want);
   if (idx0 > -1) return idx0;
@@ -1519,112 +1527,8 @@ function getStatusTypeMap06c_() {
     }
   } catch (e2) {}
 
-  // Fallback: local mapping kept for resilience.
-  return {
-    'CLAIM_INITIATE': 'OPEN',
-    'QOALA_ASK_DETAIL': 'FOLLOW UP',
-    'CUSTOMER_RESUBMIT_DOCUMENT': 'OPEN',
-    'QOALA_CLAIM_RESUBMIT_DOCUMENT_REQ_QOALA': 'OPEN',
-    'CLAIM_EXPIRE': 'CLOSE',
-    'QOALA_CLAIM_REOPEN': 'OPEN',
-    'QOALA_CLAIM_APPROVE_WALKIN': 'FOLLOW UP',
-    'WAITING_WALKIN_START': 'FOLLOW UP',
-    'CLAIM_EXPIRE_WALKIN': 'CLOSE',
-    'QOALA_CLAIM_REOPEN_WALKIN': 'FOLLOW UP',
-    'QOALA_CLAIM_APPROVE_PICKUP': 'FOLLOW UP',
-    'WAITING_PICKUP_START': 'FOLLOW UP',
-    'COURIER_PICKUP_START': 'FOLLOW UP',
-    'COURIER_PICKUP_START_DONE': 'FOLLOW UP',
-    'SUBMITTED': 'OPEN',
-    'QOALA_CLAIM_ASK_DETAIL': 'FOLLOW UP',
-    'QOALA_CLAIM_RESUBMIT_DOC': 'OPEN',
-    'WAITING_PAYMENT': 'FOLLOW UP',
-    'DONE_EXPIRED': 'CLOSE',
-    'WAITING_COURIER_START': 'FOLLOW UP',
-    'CLAIM_ADDED_SC': 'FOLLOW UP',
-    'RECEIVED_SC': 'FOLLOW UP',
-    'ESTIMATE_COST': 'OPEN',
-    'ON_PROGRESS': 'FOLLOW UP',
-    'INSURANCE_ASK_DETAIL': 'FOLLOW UP',
-    'CX_UPLOAD_DOC': 'FOLLOW UP',
-    'APPROVED': 'FOLLOW UP',
-    'INSURANCE_APPROVED': 'FOLLOW UP',
-    'REPLACED': 'OPEN',
-    'DONE_REPAIR': 'DONE - FOLLOW UP',
-    'WAITING_WALKIN_FINISH': 'DONE - FOLLOW UP',
-    'COURIER_PICKED_UP': 'FOLLOW UP',
-    'WAITING_COURIER_FINISH': 'DONE - FOLLOW UP',
-    'SERVICE_CENTER_CLAIM_RECEIVE': 'FOLLOW UP',
-    'SERVICE_CENTER_CLAIM_ESTIMATE': 'OPEN',
-    'QOALA_CLAIM_RESUBMIT_ESTIMATE': 'FOLLOW UP',
-    'SERVICE_CENTER_CLAIM_RESUBMIT_ESTIMATE': 'OPEN',
-    'SERVICE_CENTER_CLAIM_WAITING_REPAIR': 'FOLLOW UP',
-    'SERVICE_CENTER_CLAIM_ON_PROGRESS': 'FOLLOW UP',
-    'SERVICE_CENTER_CLAIM_CHANGE_IMEI': 'FOLLOW UP',
-    'QOALA_CLAIM_APPROVE_REPAIR': 'FOLLOW UP',
-    'QOALA_CLAIM_APPROVE_REPLACE': 'FOLLOW UP',
-    'INSURANCE_CLAIM_REVIEW': 'FOLLOW UP',
-    'INSURANCE_CLAIM_APPROVE_REPAIR': 'FOLLOW UP',
-    'INSURANCE_CLAIM_ASK_DETAIL_ADDITIONAL': 'FOLLOW UP',
-    'QOALA_CLAIM_RESUBMIT_DOCUMENT_ADDITIONAL': 'FOLLOW UP',
-    'CLAIM_EXPIRE_INSURANCE': 'FOLLOW UP',
-    'QOALA_CLAIM_REOPEN_INSURANCE_CASHLESS': 'OPEN',
-    'CUSTOMER_WAITING_PAYMENT_DEDUCTIBLE_EXCESS_FEE_REPAIR': 'FOLLOW UP',
-    'CUSTOMER_APPROVE_DEDUCTIBLE_EXCESS_FEE_REPAIR': 'FOLLOW UP',
-    'CUSTOMER_APPROVE_DEDUCTIBLE_EXCESS_FEE_REPAIR_EXPIRED': 'FOLLOW UP',
-    'CUSTOMER_PAID_DEDUCTIBLE_EXCESS_FEE_REPAIR': 'FOLLOW UP',
-    'SERVICE_CENTER_CLAIM_DONE_REPAIR_WALKIN': 'FOLLOW UP',
-    'SERVICE_CENTER_CLAIM_WAITING_WALKIN_FINISH': 'DONE - FOLLOW UP',
-    'SERVICE_CENTER_CLAIM_DONE': 'DONE',
-    'SERVICE_CENTER_CLAIM_DONE_REPAIR_PICKUP': 'FOLLOW UP',
-    'SERVICE_CENTER_CLAIM_WAITING_PICKUP_FINISH': 'DONE - FOLLOW UP',
-    'COURIER_CLAIM_PICKUP_FINISH': 'FOLLOW UP',
-    'COURIER_CLAIM_PICKUP_FINISH_DONE': 'DONE',
-    'INSURANCE_APPROVED_REPLACED': 'FOLLOW UP',
-    'DONE_REJECTED': 'CLOSE',
-    'DONE': 'DONE',
-    'DONE_REPLACED': 'DONE',
-    'DONE_REJECT': 'CLOSE',
-    'QOALA_REQUEST_SALVAGE': 'FOLLOW UP',
-    'PAYMENT_NOT_COMPLETE': 'CLOSE',
-    'DONE_CANCEL': 'CLOSE',
-    'INSURANCE_REJECTED': 'FOLLOW UP',
-    'CUSTOMER_WAITING_PAYMENT_DEDUCTIBLE_EXCESS_FEE_REPLACE': 'FOLLOW UP',
-    'CUSTOMER_APPROVE_DEDUCTIBLE_EXCESS_FEE_REPLACE': 'FOLLOW UP',
-    'CUSTOMER_APPROVE_DEDUCTIBLE_EXCESS_FEE_REPLACE_EXPIRED': 'FOLLOW UP',
-    'CUSTOMER_PAID_DEDUCTIBLE_EXCESS_FEE_RREPLACE': 'FOLLOW UP',
-    'CUSTOMER_PAID_DEDUCTIBLE_EXCESS_FEE_REPLACE': 'FOLLOW UP',
-    'INSURANCE_CLAIM_APPROVE_REPLACE': 'FOLLOW UP',
-    'SERVICE_CENTER_REPAIR_CANCELLED_FOR_REPLACE': 'OPEN',
-    'QOALA_PROCESS_REPLACE': 'OPEN',
-    'QOALA_PROCESS_REPLACE_WALKIN': 'OPEN',
-    'CUSTOMER_WAITING_EXCESS_REPLACE_WALKIN': 'FOLLOW UP',
-    'CUSTOMER_PAID_EXCESS_REPLACE_WALKIN': 'FOLLOW UP',
-    'QOALA_WAITING_CUSTOMER_REPLACE': 'FOLLOW UP',
-    'CUSTOMER_RECEIVE_REPLACE': 'DONE',
-    'QOALA_PROCESS_REPLACE_PICKUP': 'OPEN',
-    'CUSTOMER_WAITING_EXCESS_REPLACE_PICKUP': 'FOLLOW UP',
-    'CUSTOMER_PAID_EXCESS_REPLACE_PICKUP': 'FOLLOW UP',
-    'COURIER_WAITING_REPLACE_PICKUP': 'FOLLOW UP',
-    'COURIER_REPLACE_PICKUP': 'FOLLOW UP',
-    'COURIER_REPLACE_PICKUP_DONE': 'DONE',
-    'QOALA_CLAIM_REJECT': 'CLOSE',
-    'QOALA_CLAIM_REJECT_PICKUP': 'CLOSE - FOLLOW UP',
-    'QOALA_CLAIM_REJECT_WALKIN': 'CLOSE - FOLLOW UP',
-    'CUSTOMER_REJECT_PAYMENT_DEDUCTIBLE_EXCESS_FEE_WALKIN': 'FOLLOW UP',
-    'CUSTOMER_REJECT_PAYMENT_DEDUCTIBLE_EXCESS_FEE_PICKUP': 'FOLLOW UP',
-    'INSURANCE_CLAIM_REJECT_WALKIN': 'FOLLOW UP',
-    'INSURANCE_CLAIM_REJECT_PICKUP': 'FOLLOW UP',
-    'SERVICE_CENTER_CLAIM_WAITING_WALKIN_REJECT': 'CLOSE - FOLLOW UP',
-    'SERVICE_CENTER_CLAIM_DONE_REJECT': 'CLOSE - REJECT',
-    'SERVICE_CENTER_CLAIM_WAITING_PICKUP_REJECT': 'CLOSE - FOLLOW UP',
-    'COURIER_CLAIM_PICKUP_REJECT': 'FOLLOW UP',
-    'COURIER_CLAIM_PICKUP_REJECT_DONE': 'CLOSE - REJECT',
-    'INSURANCE_CLAIM_WAITING_PAID_REPAIR': 'DONE - WAIT INSURANCE',
-    'INSURANCE_CLAIM_PAID_REPAIR': 'DONE - INSURANCE',
-    'INSURANCE_CLAIM_WAITING_PAID_REPLACE': 'DONE - WAIT INSURANCE',
-    'INSURANCE_CLAIM_PAID_REPLACE': 'DONE - INSURANCE'
-  };
+  // Strict fallback: source-of-truth only.
+  return {};
 }
 
 function getStatusType06c_(lastStatus) {
@@ -1686,65 +1590,10 @@ function upsertStatusTypeColumnInOperationalSheet06c_(sheet) {
  * Returns null if parsing fails.
  */
 function parseClaimLastUpdatedDatetime06c_(v) {
-  if (v == null || v === '') return null;
-  if (Object.prototype.toString.call(v) === '[object Date]' && !isNaN(v.getTime())) return v;
-
-  const s = String(v || '').trim();
-  if (!s) return null;
-
-  const tz = (() => {
-    try { return Session.getScriptTimeZone() || 'Asia/Jakarta'; } catch (e) { return 'Asia/Jakarta'; }
-  })();
-
-  // STRICT parsing (WIB) to avoid server-timezone shifts.
-  const patterns = [
-    'MMMM d, yyyy, h:mm a',      // "February 16, 2026, 5:49 PM"
-    'MMMM d, yyyy, h:mm:ss a',   // with seconds
-    'MMM d, yyyy, h:mm a',       // abbreviated month
-    'yyyy-MM-dd HH:mm:ss',
-    'yyyy-MM-dd HH:mm',
-    'dd/MM/yyyy HH:mm',
-    'd/M/yyyy H:mm'
-  ];
-
-  for (let i = 0; i < patterns.length; i++) {
-    try {
-      const d = Utilities.parseDate(s, tz, patterns[i]);
-      if (d && !isNaN(d.getTime())) return d;
-    } catch (e1) {}
-  }
-
-  // Manual month-name parse (English) -> parse as ISO in WIB.
-  const m = s.match(/^\s*([A-Za-z]+)\s+(\d{1,2})\s*,\s*(\d{4})\s*,\s*(\d{1,2})\s*:\s*(\d{2})(?::(\d{2}))?\s*([AaPp][Mm])\s*$/);
-  if (!m) return null;
-
-  const monthName = String(m[1] || '').toLowerCase();
-  const day = parseInt(m[2], 10);
-  const year = parseInt(m[3], 10);
-  let hh = parseInt(m[4], 10);
-  const mm = parseInt(m[5], 10);
-  const ss = m[6] ? parseInt(m[6], 10) : 0;
-  const ampm = String(m[7] || '').toUpperCase();
-
-  const months = {
-    january: 1, february: 2, march: 3, april: 4, may: 5, june: 6,
-    july: 7, august: 8, september: 9, october: 10, november: 11, december: 12
-  };
-  const month = months[monthName];
-  if (!month || isNaN(day) || isNaN(year) || isNaN(hh) || isNaN(mm) || isNaN(ss)) return null;
-
-  if (ampm === 'PM' && hh < 12) hh += 12;
-  if (ampm === 'AM' && hh === 12) hh = 0;
-
-  function pad2(n) { return (n < 10 ? '0' : '') + String(n); }
-
-  const iso = year + '-' + pad2(month) + '-' + pad2(day) + ' ' + pad2(hh) + ':' + pad2(mm) + ':' + pad2(ss);
   try {
-    const d2 = Utilities.parseDate(iso, tz, 'yyyy-MM-dd HH:mm:ss');
-    return (d2 && !isNaN(d2.getTime())) ? d2 : null;
-  } catch (e2) {
-    return null;
-  }
+    if (typeof parseClaimLastUpdatedDatetime_ === 'function') return parseClaimLastUpdatedDatetime_(v);
+  } catch (e) {}
+  return null;
 }
 
 /**
@@ -2400,11 +2249,21 @@ function webappMovementSnapshotCurrAndTrackForSub06c_(masterSs, rawOldName, rawN
   };
 }
 
+function __getPastEventScanMaxRows06c_() {
+  try {
+    if (typeof WEBAPP_MOVEMENT_POLICY !== 'undefined' && WEBAPP_MOVEMENT_POLICY) {
+      const n = Number(WEBAPP_MOVEMENT_POLICY.PAST_EVENT_SCAN_MAX_ROWS || 0);
+      if (isFinite(n) && n > 0) return Math.floor(n);
+    }
+  } catch (e) {}
+  return 5000;
+}
+
 /** Load existing Event IDs from Daily and Past. */
 function __loadExistingEventIds06c_(webappSs, dailyName, pastName) {
   const set = Object.create(null);
 
-  function loadOne(name) {
+  function loadOne(name, maxRows) {
     const sh = webappSs.getSheetByName(name);
     if (!sh) return;
     const lr = sh.getLastRow();
@@ -2413,16 +2272,19 @@ function __loadExistingEventIds06c_(webappSs, dailyName, pastName) {
     const header = sh.getRange(1, 1, 1, lc).getValues()[0].map(__normalizeHeaderText06_);
     const idxEvent = __findHeaderIndexFlexible06_(header, 'Event ID');
     if (idxEvent === -1) return;
-    const n = lr - 1;
-    const vals = sh.getRange(2, idxEvent + 1, n, 1).getValues();
+    const nAll = lr - 1;
+    const n = (maxRows && maxRows > 0) ? Math.min(nAll, maxRows) : nAll;
+    if (n <= 0) return;
+    const startRow = lr - n + 1;
+    const vals = sh.getRange(startRow, idxEvent + 1, n, 1).getValues();
     for (let i = 0; i < n; i++) {
       const v = String(vals[i][0] || '').trim();
       if (v) set[v] = true;
     }
   }
 
-  loadOne(dailyName);
-  loadOne(pastName);
+  loadOne(dailyName, 0);
+  loadOne(pastName, __getPastEventScanMaxRows06c_());
   return set;
 }
 
