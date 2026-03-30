@@ -11,6 +11,17 @@ Formatnya sengaja sederhana: **Added / Changed / Fixed**. Tidak perlu sok formal
 - Konsolidasi modul `06d_IntegratedMaintenance.gs`, `06e_SubHelpers.gs`, dan `06f_RuntimeAssertions.gs` ke `06c_PostProcessAndUtils.gs` agar footprint script tinggal `00` sampai `06c`.
 - `static_smoke_check.js` diperbarui agar load-order source hanya memakai modul `00` sampai `06c`.
 - Dokumentasi arsitektur (`README.md`, `docs/WORKFLOW_MAP.md`) disesuaikan mengikuti konsolidasi modul 06.
+- Rename routing sheet `SC - Ivan` -> `SC - Meindar` di policy + flow terkait.
+- SUB ingest progress kini ter-update per stage melalui `setProgressForFlow_` (search, prep, OLD/NEW, relocate, snapshot, done/fail).
+- Relocation routing index kini mengabaikan bucket internal (`__*`) agar tidak jadi target pseudo-sheet.
+- Log compaction default ke `LOG_COMPACTION_USE_V2_ONLY = true` untuk mengurangi duplikasi log legacy B:H.
+- SUB enrichment diperluas untuk `Submission Date` alias + optional fields `Store Name`/`PA Name`/`SPA Name`.
+- Optional sheets (`B2B`, `EV-Bike`) menambah self-heal kolom wajib komputasi (`Claim Number`, `Start Date`, `End Date`, `Details`) bila belum ada.
+
+### Fixed
+- Perbaikan cleanup SUB email thread: konsisten memakai variabel label `queuedLabel` (sebelumnya typo `queueLabel`).
+- Main routing `Submission Date` dibuat fallback-safe ke beberapa alias header (`claim_submission_date`, `claim_submitted_datetime`, `submission_date`).
+- SUB reset kolom workflow (`Update Status`, `Timestamp`, `Status`, `Remarks`) saat `Last Status` berubah untuk menghindari stale state.
 
 
 ## 2026-03-29

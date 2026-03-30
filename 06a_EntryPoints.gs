@@ -1182,8 +1182,8 @@ try {
 
     // Cleanup email thread after both succeeded.
     try {
-      cleanupQueuedThreadSuccess_(thread, queueLabel);
-      logLine_('SUB_CLEAN', 'Cleaned SUB email thread', queueLabel, '', 'INFO');
+      cleanupQueuedThreadSuccess_(thread, queuedLabel);
+      logLine_('SUB_CLEAN', 'Cleaned SUB email thread', queuedLabel, '', 'INFO');
     } catch (e10) {}
 
     const durMs = new Date().getTime() - startedAt.getTime();
