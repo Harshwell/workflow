@@ -903,11 +903,6 @@ function runEmailIngest(maxThreads) {
         tmpFileId = conv.fileId;
 
         setProgress_(0.35, 'Processing pipeline...');
-        setProgress_(0.15, 'Converting XLSX…');
-        const conv = convertXlsxBlobToTempSpreadsheet_(att.copyBlob(), att.getName());
-        tmpFileId = conv.fileId;
-
-        setProgress_(0.35, 'Processing pipeline…');
         const res = runPipeline_('Master', [tmpFileId], { flow: 'main', source: 'EMAIL_MAIN', subject: msg.getSubject() });
 
         // Determine success strictly: no exception + not severity ERROR
