@@ -527,10 +527,19 @@ function sanitizeProblematicDataValidations06_(ss, pic) {
       const header = sh.getRange(1, 1, 1, lastCol).getValues()[0];
       const idxSubmissionDate = __findHeaderIndexFlexible06_(header, 'Submission Date');
       if (idxSubmissionDate !== -1) {
-        sh.getRange(2, idxSubmissionDate + 1, rows, 1).clearDataValidations();
+        const subDateRng = sh.getRange(2, idxSubmissionDate + 1, rows, 1);
+        // Clear any stale checkbox / dropdown DV
+        subDateRng.clearDataValidations();
+        // FIX: also enforce date number format so cells cannot display as checkbox/serial
+        // number regardless of what the template row previously had.
+        try {
+          const dateFmt = (typeof FORMATS !== 'undefined' && FORMATS && FORMATS.DATE)
+            ? FORMATS.DATE
+            : 'd mmm yy';
+          subDateRng.setNumberFormat(dateFmt);
+        } catch (_eFmtSub) {}
       }
     } catch (e0) {}
-  });
 
   // 2) EV-Bike: clear DV on Last Status to avoid validation violations when writing statuses
   try {
