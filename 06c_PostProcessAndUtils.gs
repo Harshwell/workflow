@@ -540,6 +540,7 @@ function sanitizeProblematicDataValidations06_(ss, pic) {
         } catch (_eFmtSub) {}
       }
     } catch (e0) {}
+  });
 
   // 2) EV-Bike: clear DV on Last Status to avoid validation violations when writing statuses
   try {
@@ -555,6 +556,7 @@ function sanitizeProblematicDataValidations06_(ss, pic) {
       ev.getRange(2, idxLastStatusEv + 1, mr - 1, 1).clearDataValidations();
     }
   } catch (e1) {}
+}
 
 /**
  * Restore operational fields from Raw backup after CLR + ROUTE.
