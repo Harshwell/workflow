@@ -318,12 +318,18 @@ function processB2B_(ss, rawValues, headerIndexRaw, pic) { // `pic` kept for bac
     header = __ensureAppendColumnIfMissing05c_(sh, header, 'Status Type');
     idxH = buildHeaderIndex_(header);
   }
-  // Schema guard (no auto-add columns). Missing columns are logged and simply skipped.
+  // Schema guard + self-heal for required computed columns.
   try {
     const need = ['Claim Number','Start Date','End Date','Details'].map(__normalizeHeaderText05c_);
     const missing = need.filter(n => idxH[n] == null);
-    if (missing.length && typeof logLine_ === 'function') {
-      logLine_('ERROR', 'B2B_SCHEMA_MISSING', 'Missing columns: ' + missing.join(', '), '', '');
+    if (missing.length) {
+      for (let mi = 0; mi < missing.length; mi++) {
+        header = __ensureAppendColumnIfMissing05c_(sh, header, missing[mi]);
+      }
+      idxH = buildHeaderIndex_(header);
+      if (typeof logLine_ === 'function') {
+        logLine_('WARN', 'B2B_SCHEMA_HEAL', 'Auto-added columns: ' + missing.join(', '), '', '');
+      }
     }
   } catch (e) {}
 
@@ -1056,12 +1062,18 @@ function processEVBike_(ss, rawValues, headerIndexRaw, pic) { // `pic` kept for 
     header = __ensureAppendColumnIfMissing05c_(sh, header, 'Status Type');
     idxH = buildHeaderIndex_(header);
   }
-  // Schema guard (no auto-add columns). Missing columns are logged and simply skipped.
+  // Schema guard + self-heal for required computed columns.
   try {
     const need = ['Claim Number','Start Date','End Date','Details'].map(__normalizeHeaderText05c_);
     const missing = need.filter(n => idxH[n] == null);
-    if (missing.length && typeof logLine_ === 'function') {
-      logLine_('ERROR', 'EVBIKE_SCHEMA_MISSING', 'Missing columns: ' + missing.join(', '), '', '');
+    if (missing.length) {
+      for (let mi = 0; mi < missing.length; mi++) {
+        header = __ensureAppendColumnIfMissing05c_(sh, header, missing[mi]);
+      }
+      idxH = buildHeaderIndex_(header);
+      if (typeof logLine_ === 'function') {
+        logLine_('WARN', 'EVBIKE_SCHEMA_HEAL', 'Auto-added columns: ' + missing.join(', '), '', '');
+      }
     }
   } catch (e) {}
 
@@ -1234,7 +1246,21 @@ function processEVBike_(ss, rawValues, headerIndexRaw, pic) { // `pic` kept for 
   } catch (e) {}
 
   if (!values.length) return 0;
-  safeSetValues_(sh.getRange(2, 1, values.length, header.length), values);
+  // Never overwrite manual Status dropdown column on EV-Bike.
+  // Write left/right segments around "Status" when column exists.
+  const idxStatus = (idxH['Status'] != null) ? idxH['Status'] : -1;
+  if (idxStatus === -1) {
+    safeSetValues_(sh.getRange(2, 1, values.length, header.length), values);
+  } else {
+    if (idxStatus > 0) {
+      const left = values.map(r => r.slice(0, idxStatus));
+      safeSetValues_(sh.getRange(2, 1, values.length, idxStatus), left);
+    }
+    if (idxStatus < header.length - 1) {
+      const right = values.map(r => r.slice(idxStatus + 1));
+      safeSetValues_(sh.getRange(2, idxStatus + 2, values.length, header.length - idxStatus - 1), right);
+    }
+  }
 
   // Apply RichText hyperlink only for touched rows
   if (dbLinkCol0 != null && touchedRowNums.length) __setDbLinkRichTextSegments_(sh, dbLinkCol0, touchedRowNums, urlMap);

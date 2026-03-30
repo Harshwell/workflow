@@ -8,6 +8,20 @@ Dokumen ini sengaja dibuat tetap ramping. Untuk self-project, dokumentasi yang e
 
 ---
 
+## Update implementasi terbaru (2026-03-30)
+
+Perubahan terbaru yang sudah masuk ke script:
+
+- rename sheet routing `SC - Ivan` -> `SC - Meindar` pada policy + flow SUB
+- hardening SUB relocate agar bucket internal seperti `__SC_SHARED__` tidak dianggap sebagai target sheet nyata
+- update progress SUB di `Log` (`Progress`, `%`, `Current Step`, `Updated At`) dibuat konsisten sepanjang lifecycle run
+- compaction log default ke mode v2-only (mengurangi duplikasi log legacy B:H)
+- perbaikan mapping `Submission Date` (MAIN + SUB) agar lebih toleran pada variasi header source
+- SUB reset workflow columns (`Update Status`, `Timestamp`, `Status`, `Remarks`) saat `Last Status` berubah
+- optional sheet schema self-heal untuk `B2B` dan `EV-Bike` pada kolom `Claim Number`, `Start Date`, `End Date`, `Details`
+
+---
+
 ## Tujuan dokumentasi
 
 Layer dokumentasi repo ini dibuat dengan prinsip:

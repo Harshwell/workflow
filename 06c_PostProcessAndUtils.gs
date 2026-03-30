@@ -205,9 +205,11 @@ function snapshotOpsManualColumnsRich06c_(ss, pic) {
     const idxClaim = __findHeaderIndexFlexible06_(header, 'Claim Number');
     if (idxClaim === -1) continue;
 
+    const isEvBike = String(sh.getName() || '').trim().toLowerCase() === 'ev-bike';
+
     const idxUpdate = __findHeaderIndexFlexible06_(header, 'Update Status');
     const idxTs = __findHeaderIndexFlexible06_(header, 'Timestamp');
-    const idxStatus = __findHeaderIndexFlexible06_(header, 'Status');
+    const idxStatus = isEvBike ? -1 : __findHeaderIndexFlexible06_(header, 'Status');
     const idxRemarks = __findHeaderIndexFlexible06_(header, 'Remarks');
 
     if (idxUpdate === -1 && idxTs === -1 && idxStatus === -1 && idxRemarks === -1) continue;
@@ -308,9 +310,11 @@ function restoreOpsManualColumnsRich06c_(ss, pic, snapshot) {
     const idxClaim = __findHeaderIndexFlexible06_(header, 'Claim Number');
     if (idxClaim === -1) continue;
 
+    const isEvBike = String(sh.getName() || '').trim().toLowerCase() === 'ev-bike';
+
     const idxUpdate = __findHeaderIndexFlexible06_(header, 'Update Status');
     const idxTs = __findHeaderIndexFlexible06_(header, 'Timestamp');
-    const idxStatus = __findHeaderIndexFlexible06_(header, 'Status');
+    const idxStatus = isEvBike ? -1 : __findHeaderIndexFlexible06_(header, 'Status');
     const idxRemarks = __findHeaderIndexFlexible06_(header, 'Remarks');
 
     if (idxUpdate === -1 && idxTs === -1 && idxStatus === -1 && idxRemarks === -1) continue;
@@ -476,11 +480,16 @@ function applyTemplateRowToOperationalSheets_(ss, pic) {
       const dstDv = sh.getRange(2, 1, dvRowCount, lastCol);
       try { src.copyTo(dstDv, SpreadsheetApp.CopyPasteType.PASTE_DATA_VALIDATION, false); } catch (e) {}
       // Do NOT apply DV to "Status Type" (derived by script; must remain non-dropdown).
+      // Do NOT apply DV to "Submission Date" (must stay date/plain, never checkbox).
       try {
         const hdr1 = sh.getRange(1, 1, 1, lastCol).getValues()[0].map(__normalizeHeaderText06_);
         const idxStatusType = __findHeaderIndexFlexible06_(hdr1, 'Status Type');
         if (idxStatusType !== -1) {
           sh.getRange(2, idxStatusType + 1, dvRowCount, 1).clearDataValidations();
+        }
+        const idxSubmissionDate = __findHeaderIndexFlexible06_(hdr1, 'Submission Date');
+        if (idxSubmissionDate !== -1) {
+          sh.getRange(2, idxSubmissionDate + 1, dvRowCount, 1).clearDataValidations();
         }
       } catch (e2) {}
     }
@@ -559,7 +568,8 @@ function restoreOpsFieldsFromRawBackup_(ss, rawSheet, headerIndexRaw, pic) {
     const idxClaimOps = __findHeaderIndexFlexible06_(header, 'Claim Number');
     if (idxClaimOps === -1) return;
 
-    const idxStatusOps = __findHeaderIndexFlexible06_(header, 'Status');
+    const isEvBike = String(name || '').trim().toLowerCase() === 'ev-bike';
+    const idxStatusOps = isEvBike ? -1 : __findHeaderIndexFlexible06_(header, 'Status');
     const idxOrOps = __findHeaderIndexFlexible06_(header, 'OR');
     const idxTsOps = __findHeaderIndexFlexible06_(header, 'Timestamp');
 
@@ -848,12 +858,12 @@ function preflightRoutableCount_(rawValues, headerIndexRaw, pic) {
   const opsPolicy = (CONFIG && (CONFIG.opsRouting || CONFIG.opsRoutingPolicy || CONFIG.OPS_ROUTING_POLICY)) || null;
   const scFarhanName = (opsPolicy && opsPolicy.SHEETS && opsPolicy.SHEETS.SC_FARHAN) ? opsPolicy.SHEETS.SC_FARHAN : 'SC - Farhan';
   const scMeilaniName = (opsPolicy && opsPolicy.SHEETS && opsPolicy.SHEETS.SC_MEILANI) ? opsPolicy.SHEETS.SC_MEILANI : 'SC - Meilani';
-  const scIvanName = (opsPolicy && opsPolicy.SHEETS && opsPolicy.SHEETS.SC_IVAN) ? opsPolicy.SHEETS.SC_IVAN : 'SC - Ivan';
+  const scIvanName = (opsPolicy && opsPolicy.SHEETS && opsPolicy.SHEETS.SC_IVAN) ? opsPolicy.SHEETS.SC_IVAN : 'SC - Meindar';
 
   const scKeywords = (opsPolicy && opsPolicy.SC_NAME_KEYWORDS) ? opsPolicy.SC_NAME_KEYWORDS : {};
   const kwFarhan = scKeywords[scFarhanName] || scKeywords['SC - Farhan'] || [];
   const kwMeilani = scKeywords[scMeilaniName] || scKeywords['SC - Meilani'] || [];
-  const kwIvan = scKeywords[scIvanName] || scKeywords['SC - Ivan'] || [];
+  const kwIvan = scKeywords[scIvanName] || scKeywords['SC - Meindar'] || [];
 
   const idxScName = headerIndexRaw[h.scName];
 
@@ -890,7 +900,7 @@ function __getScSheetNames06_() {
   const opsPolicy = (CONFIG && (CONFIG.opsRouting || CONFIG.opsRoutingPolicy || CONFIG.OPS_ROUTING_POLICY)) || null;
   const scFarhanName = (opsPolicy && opsPolicy.SHEETS && opsPolicy.SHEETS.SC_FARHAN) ? opsPolicy.SHEETS.SC_FARHAN : 'SC - Farhan';
   const scMeilaniName = (opsPolicy && opsPolicy.SHEETS && opsPolicy.SHEETS.SC_MEILANI) ? opsPolicy.SHEETS.SC_MEILANI : 'SC - Meilani';
-  const scIvanName = (opsPolicy && opsPolicy.SHEETS && opsPolicy.SHEETS.SC_IVAN) ? opsPolicy.SHEETS.SC_IVAN : 'SC - Ivan';
+  const scIvanName = (opsPolicy && opsPolicy.SHEETS && opsPolicy.SHEETS.SC_IVAN) ? opsPolicy.SHEETS.SC_IVAN : 'SC - Meindar';
   return [scFarhanName, scMeilaniName, scIvanName].filter(Boolean);
 }
 
@@ -2977,4 +2987,3 @@ function runtimePreflight06f_(contextTag) {
   return { ok: false, issues: issues };
 }
 // ---- END MERGED: 06f_RuntimeAssertions.gs ----
-

@@ -89,7 +89,7 @@ const FINISH_STATUSES = Object.freeze([
 const SC_SHEET_NAMES = Object.freeze([
   'SC - Farhan',
   'SC - Meilani',
-  'SC - Ivan'
+  'SC - Meindar'
 ]);
 
 const SC_TYPE_DROPDOWN_OPTIONS = Object.freeze([
@@ -337,7 +337,7 @@ const SUB_FLOW_SPEC = Object.freeze({
     'OR - OLD',
     'SC - Farhan',
     'SC - Meilani',
-    'SC - Ivan',
+    'SC - Meindar',
     'Start',
     'Finish',
     'PO',
@@ -1380,7 +1380,7 @@ const RAW_DATA_CUSTOM_TAIL_HEADERS = Object.freeze([
  * Operational routing (single master workbook)
  * =========================
  * Notes:
- * - SC - Farhan, SC - Meilani, and SC - Ivan share the same last_status universe, but are split by sc_name keywords.
+ * - SC - Farhan, SC - Meilani, and SC - Meindar share the same last_status universe, but are split by sc_name keywords.
  * - "Type" (dropdown) on both SC sheets is filled from last_status categories.
  */
 const OPS_ROUTING_POLICY = Object.freeze({
@@ -1392,7 +1392,7 @@ const OPS_ROUTING_POLICY = Object.freeze({
     FINISH: 'Finish',
     SC_FARHAN: 'SC - Farhan',
     SC_MEILANI: 'SC - Meilani',
-    SC_IVAN: 'SC - Ivan',
+    SC_IVAN: 'SC - Meindar',
     PO: 'PO',
     EXCLUSION: 'Exclusion'
   }),
@@ -1540,7 +1540,7 @@ const OPS_ROUTING_POLICY = Object.freeze({
       'iBox',
       'GSI'
     ]),
-    'SC - Ivan': Object.freeze([
+    'SC - Meindar': Object.freeze([
       'Klikcare',
       'J-Bros',
       'Makmur Era Abadi',
