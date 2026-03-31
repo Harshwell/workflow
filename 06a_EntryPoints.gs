@@ -1613,11 +1613,12 @@ function __buildSubRawIndex06a_(values) {
     'last_activity_log_datetime', 'last activity log datetime'
   ]);
 
+  // Keep sampling priority: prefer claim_submitted_datetime over claim_submission_date.
   const idxSubmitted = idxOfAny([
-    'claim_submission_date',
-    'claim submission date',
     'claim_submitted_datetime',
     'claim submitted datetime',
+    'claim_submission_date',
+    'claim submission date',
     'submission_date',
     'submission date'
   ]);
