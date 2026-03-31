@@ -1,0 +1,1480 @@
+/***************************************************************
+ * 03_SheetsAndValidation.gs
+ * Enterprise Edition — Sheet assurance, header healing,
+ * dropdown preservation (incl. colors), auto-heal validations,
+ * deterministic formatting (safe).
+ *
+ * Patched: 2025-12-27 (per user spec)
+ * - PIC Farhan/Meilani/Suci/Adi: DO NOT auto-add "Associate" on destination sheets (non-Raw Data)
+ * - Admin: MUST keep "Associate" on operational sheets
+ * - Dropdown: prefer COPY existing rule (keeps chip style + colors), avoid rebuild
+ * - Remove wrong "Last Status Date" dropdown sync (it is NOT a dropdown)
+ ***************************************************************/
+'use strict';
+
+
+/** ---------- Header normalization (NBSP/spacing/BOM safe) ---------- */
+function sv03_normHeaderText_(v) {
+  let s = String(v == null ? '' : v);
+  // Remove BOM
+  s = s.replace(/^\uFEFF/, '');
+  // Normalize NBSP to normal space
+  s = s.replace(/\u00A0/g, ' ');
+  // Collapse whitespace & trim
+  s = s.replace(/\s+/g, ' ').trim();
+  return s;
+}
+
+
+/** ---------- Safe access to registries (no ReferenceError) ---------- */
+const _SV03_VALIDATION_FALLBACK = (typeof VALIDATION_LISTS !== 'undefined') ? VALIDATION_LISTS : Object.freeze({
+  PIC: Object.freeze(['Meilani', 'Farhan', 'Suci', 'Adi']),
+  UPDATE_STATUS: Object.freeze([
+    'Pending Admin','Pending SC','Pending Partner','DONE','Pending Insurance',
+    'Pending TO','Pending Finance','Pending Meilani','Pending Cust'
+  ])
+});
+
+const _SV03_VALIDATION_POLICY = (typeof VALIDATION_POLICY !== 'undefined') ? VALIDATION_POLICY : Object.freeze({
+  ENABLE_AUTO_HEAL: true,
+  MODE: 'BIDIR',               // 'RAW'|'TARGET'|'BIDIR'
+  PRESERVE_RULE_BY_COPY: true, // keep dropdown chip + colors
+  ALLOW_BLANK: true,
+  USE_FALLBACK_WHEN_EMPTY: true
+});
+
+const _SV03_FORMATS = (typeof FORMATS !== 'undefined') ? FORMATS : Object.freeze({
+  DATE: 'd mmm yy',
+  DATE_AUTO: 'd mmm yy',
+  DATETIME: 'd mmm yy, HH:mm',
+  DATETIME_LONG: 'MMMM d, yyyy, h:mm AM/PM',
+  TIMESTAMP: 'd mmm, HH:mm',
+  INT: '0',
+  MONEY0: '#,##0',
+  PERCENT: '0%'
+});
+
+const _SV03_DEST_COMMON_TYPES = (typeof COLUMN_TYPES !== 'undefined' && COLUMN_TYPES && COLUMN_TYPES.DEST_COMMON)
+  ? COLUMN_TYPES.DEST_COMMON
+  : Object.freeze({
+
+      'Submission Date': 'DATE',
+      'Submitted Datetime': 'DATETIME',
+      'Timestamp': 'TIMESTAMP',
+      'Last Status Date': 'DATE_AUTO',
+      'Last Status Aging': 'INT',
+      'LSA': 'INT',
+      'ALA': 'INT',
+      'TAT': 'INT',
+      'Activity Log Aging': 'INT',
+      'Sum Insured': 'MONEY0',
+      'Sum Insured Amount': 'MONEY0',
+      'Claim Amount': 'MONEY0',
+      'Repair/Replace Amount': 'MONEY0',
+      'Claim Own Risk Amount': 'MONEY0',
+      'OR': 'CHECKBOX',
+      'OR Amount': 'MONEY0',
+      'Nett Claim Amount': 'MONEY0',
+      'Selisih': 'MONEY0',
+      '% Approval': 'PERCENT',
+      'Q-L (Months)': 'INT'
+    });
+
+const _SV03_ALIGNMENT = (typeof COLUMN_ALIGNMENT !== 'undefined') ? COLUMN_ALIGNMENT : Object.freeze({
+  CENTER: Object.freeze(['Submission Date', 'Submitted Datetime', 'Timestamp', 'Last Status Date', 'OR']),
+  RIGHT: Object.freeze([
+    'Sum Insured', 'Sum Insured Amount',
+    'Claim Amount', 'Repair/Replace Amount', 'Claim Own Risk Amount', 'OR Amount', 'Nett Claim Amount', 'Selisih', '% Approval',
+    'Q-L (Months)', 'M-L (Months)', 'M-Q (Months)',
+    'LSA', 'ALA', 'TAT', 'Last Status Aging', 'Activity Log Aging'
+  ]),
+  LEFT: Object.freeze(['Branch'])
+});
+
+
+/** ---------- Per-PIC policy ---------- */
+// Spec: Associate must exist on operational sheets and be carried through flows; allow auto-ensure everywhere
+const SV03_PIC_NO_AUTO_ASSOCIATE = new Set([]);
+
+/** ---------- Dropdown sync tuning ---------- */
+const SV03_DROPDOWN_SYNC = Object.freeze({
+  BUFFER_ROWS: 500,
+  SCAN_MAX_ROWS: 2000,              // scan values to auto-heal (perf-safe)
+  FORCE_ALLOW_BLANK: true,          // always allow blank
+  PREFER_VALUE_IN_RANGE: true,      // best for colored dropdown options
+  APPLY_TO_ALL_SHEETS: true,        // sync across workbook sheets that contain the column
+
+  SKIP_SYNC_FOR_ADMIN: true,       // Admin dropdowns preserved via template-row copy
+  ADMIN_TEMPLATE_ROW: 2,           // Row index used as dropdown+format template
+  ADMIN_TEMPLATE_START_ROW: 2,     // Apply template from this row down
+
+
+  // If template rule is VALUE_IN_LIST, rebuilding will likely drop chip/colors.
+  // We default to NOT rebuilding list rules.
+  ALLOW_REBUILD_LIST_RULE: false
+});
+
+/** ---------- Templates (PER PROFILE) ----------
+ * Rule from user:
+ * - Special Case columns are user-managed (fixed schema); script must NOT auto-add columns
+ * - "OR" ONLY in Special Case + PO
+ * - Admin: no Device Type / LSA / ALA / TAT / OR / OR Amount
+ */
+const SV03_TEMPLATES = Object.freeze({
+  OPS_PIC_DEFAULT: Object.freeze([
+    'Submission Date',
+    'Claim Number',
+    'DB Link',
+    'DB',
+    'Partner Name',
+    'Insurance',
+    'Device Type',
+    'Product',
+    'Device Brand',
+    'IMEI/SN',
+    'Last Status',
+    'Last Status Date',
+    'Service Center',
+    'Last Status Aging',
+    'Activity Log',
+    'Activity Log Aging',
+    'TAT',
+    'Sum Insured Amount',
+    'Claim Amount',
+    'Claim Own Risk Amount',
+    'Nett Claim Amount',
+    '% Approval',
+    'Update Status',
+    'Timestamp',
+    'Status',
+    'Status Type',
+  ]),
+
+  OPS_PIC_SC: Object.freeze([
+    'Submission Date',
+    'Claim Number',
+    'DB Link',
+    'DB',
+    'Partner Name',
+    'Insurance',
+    'Device Type',
+    'Product',
+    'Device Brand',
+    'IMEI/SN',
+    'Last Status',
+    'Last Status Date',
+    'Type',
+    'Service Center',
+    'Branch',
+    'Last Status Aging',
+    'Activity Log',
+    'Activity Log Aging',
+    'TAT',
+    'Sum Insured Amount',
+    'Claim Amount',
+    'Claim Own Risk Amount',
+    'Nett Claim Amount',
+    '% Approval',
+    'Update Status',
+    'Timestamp',
+    'Status',
+    'Status Type',
+  ]),
+
+
+  OPS_PIC_PO: Object.freeze([
+    'Submission Date',
+    'Claim Number',
+    'DB Link',
+    'DB',
+    'Partner Name',
+    'Insurance',
+    'Device Type',
+    'Product',
+    'Device Brand',
+    'IMEI/SN',
+    'Last Status',
+    'Last Status Date',
+    'Service Center',
+    'Last Status Aging',
+    'Activity Log',
+    'Activity Log Aging',
+    'TAT',
+    'Sum Insured Amount',
+    'Claim Amount',
+    'Claim Own Risk Amount',
+    'Nett Claim Amount',
+    '% Approval',
+    'OR',
+    'Update Status',
+    'Timestamp',
+    'Status',
+    'Status Type',
+  ]),
+
+  OPS_PIC_WORKFLOW: Object.freeze([
+    'Submission Date',
+    'Claim Number',
+    'DB Link',
+    'DB',
+    'Partner Name',
+    'Insurance',
+    'Device Type',
+    'Product',
+    'Device Brand',
+    'IMEI/SN',
+    'Last Status',
+    'Last Status Date',
+    'Service Center',
+    'Last Status Aging',
+    'Activity Log',
+    'Activity Log Aging',
+    'TAT',
+    'Sum Insured Amount',
+    'Claim Amount',
+    'Claim Own Risk Amount',
+    'Nett Claim Amount',
+    '% Approval',
+    'Update Status Asso',
+    'Timestamp Asso',
+    'Update Status Admin',
+    'Timestamp Admin',
+    'Status',
+    'Status Type',
+  ]),
+
+  OPS_ADMIN_WORKFLOW: Object.freeze([
+    'Submission Date',
+    'Claim Number',
+    'DB Link',
+    'DB',
+    'Partner Name',
+    'Insurance',
+    'Device Type',
+    'Product',
+    'Device Brand',
+    'IMEI/SN',
+    'Last Status',
+    'Last Status Date',
+    'Service Center',
+    'Activity Log',
+    'Sum Insured Amount',
+    'Claim Amount',
+    'Claim Own Risk Amount',
+    'Nett Claim Amount',
+    '% Approval',
+    'Update Status Asso',
+    'Timestamp Asso',
+    'Update Status Admin',
+    'Timestamp Admin',
+    'Status',
+    'Status Type',
+  ]),
+
+  OPS_ADMIN_DEFAULT: Object.freeze([
+    'Submission Date',
+    'Claim Number',
+    'DB Link',
+    'DB',
+    'Partner Name',
+    'Insurance',
+    'Device Type',
+    'Product',
+    'Device Brand',
+    'IMEI/SN',
+    'Last Status',
+    'Last Status Date',
+    'Service Center',
+    'Activity Log',
+    'Sum Insured Amount',
+    'Claim Amount',
+    'Claim Own Risk Amount',
+    'Nett Claim Amount',
+    '% Approval',
+    'Update Status',
+    'Timestamp',
+    'Status',
+    'Status Type',
+  ]),
+
+  B2B: Object.freeze([
+    'Submission Date',
+    'Claim Number',
+    'DB Link',
+    'DB',
+    'Partner Name',
+    'Insurance',
+    'Device Type',
+    'Product',
+    'Device Brand',
+    'IMEI/SN',
+    'Last Status',
+    'Service Center',
+    'Last Status Aging',
+    'Activity Log Aging',
+    'TAT',
+    'Sum Insured Amount',
+    'Claim Amount',
+    'Claim Own Risk Amount',
+    'Nett Claim Amount',
+    '% Approval'
+  ]),
+
+  SPECIAL_CASE: Object.freeze([
+    'Submission Date','Claim Number','DB Link','DB','Partner Name','Insurance','Device Type',
+    'Last Status','Service Center','Last Status Aging','Activity Log Aging','TAT',
+    'Last Status Date',
+    'Q-L (Months)',
+    'Product','Sum Insured Amount',
+    'Claim Amount','OR','Claim Own Risk Amount',
+    'Nett Claim Amount',
+    'Selisih',
+    'Reason'
+  ]),
+
+  EV_BIKE: Object.freeze([
+    'Submission Date','Claim Number','DB Link','Owner Name','Policy Number','Partner Name','Insurance','Sum Insured','Status'
+  ])
+});
+
+// Optional sheets used in the single-master workbook (always enabled)
+const SV03_OPTIONAL_SHEETS_DEFAULT = Object.freeze(['B2B', 'EV-Bike', 'Special Case']);
+
+
+/** ---------- Fixed schema guard ---------- */
+// Fixed-schema sheets must NOT have headers/columns auto-healed or auto-added.
+// If headers change, user will adjust them manually.
+const SV03_FIXED_SCHEMA_SHEETS = new Set(['Special Case', 'Exclusion']);
+// Sheets that have specific Update Status/Timestamp columns (Asso/Admin) and must NOT receive generic ones.
+const SV03_WORKFLOW_SHEETS = new Set(['Ask Detail', 'Start', 'Finish']);
+
+
+function sv03_isFixedSchemaSheet_(name) {
+  const n = String(name || '').trim();
+  try {
+    if (typeof CONFIG !== 'undefined' && CONFIG && CONFIG.fixedSchemaPolicy) {
+      const p = CONFIG.fixedSchemaPolicy;
+      if (p.specialCase && n === 'Special Case') return true;
+      if (p.exclusion && n === 'Exclusion') return true;
+      if (Array.isArray(p.fixedSheets) && p.fixedSheets.indexOf(n) !== -1) return true;
+    }
+    if (typeof FIXED_SCHEMA_POLICY !== 'undefined' && FIXED_SCHEMA_POLICY) {
+      const p2 = FIXED_SCHEMA_POLICY;
+      if (p2.specialCase && n === 'Special Case') return true;
+      if (p2.exclusion && n === 'Exclusion') return true;
+      if (Array.isArray(p2.fixedSheets) && p2.fixedSheets.indexOf(n) !== -1) return true;
+    }
+  } catch (e) {}
+  return SV03_FIXED_SCHEMA_SHEETS.has(n);
+}
+
+/** ---------- Profile helpers ---------- */
+function getWorkbookProfile_(picOrProfile) {
+  const p = String(picOrProfile || '').trim();
+  if (!p) return (typeof WORKBOOK_PROFILES !== 'undefined' && WORKBOOK_PROFILES && WORKBOOK_PROFILES.PIC) ? WORKBOOK_PROFILES.PIC : 'PIC';
+
+  const up = p.toUpperCase();
+  if (up === 'ADMIN') return (typeof WORKBOOK_PROFILES !== 'undefined' && WORKBOOK_PROFILES && WORKBOOK_PROFILES.ADMIN) ? WORKBOOK_PROFILES.ADMIN : 'ADMIN';
+
+  // In the new single-master workflow, any non-admin identifier is treated as PIC profile.
+  return (typeof WORKBOOK_PROFILES !== 'undefined' && WORKBOOK_PROFILES && WORKBOOK_PROFILES.PIC) ? WORKBOOK_PROFILES.PIC : 'PIC';
+}
+function sv03_getProfileSpec_(profile) {
+  const p = String(profile || '').trim() || 'PIC';
+  const isAdmin = (p === 'ADMIN');
+
+  // Prefer profile spec from 00_Config (CONFIG.workbookProfiles), but always normalize to a mutable copy.
+  let base = null;
+  if (typeof CONFIG !== 'undefined' && CONFIG && CONFIG.workbookProfiles && CONFIG.workbookProfiles[p]) {
+    base = CONFIG.workbookProfiles[p];
+  }
+
+  const core = (base && base.core) ? Array.from(base.core) : ['Raw Data'];
+
+  const operational = (base && base.operational)
+    ? Array.from(base.operational)
+    : (isAdmin
+      ? ((CONFIG.sheetsByPic && Array.isArray(CONFIG.sheetsByPic.adminOperational)) ? CONFIG.sheetsByPic.adminOperational : [])
+      : ((CONFIG.sheetsByPic && Array.isArray(CONFIG.sheetsByPic.picOperational)) ? CONFIG.sheetsByPic.picOperational : []));
+
+
+  // Auto-include SC sheets from routing policy (prevents missing newly added SC sheets like "SC - Ivan").
+  try {
+    const scSet = new Set(operational || []);
+    const routingSheets =
+      (typeof OPS_ROUTING_POLICY !== 'undefined' && OPS_ROUTING_POLICY && OPS_ROUTING_POLICY.SHEETS) ? OPS_ROUTING_POLICY.SHEETS
+      : ((typeof CONFIG !== 'undefined' && CONFIG && CONFIG.opsRoutingPolicy && CONFIG.opsRoutingPolicy.SHEETS) ? CONFIG.opsRoutingPolicy.SHEETS
+        : ((typeof CONFIG !== 'undefined' && CONFIG && CONFIG.opsRoutingPolicyV2 && CONFIG.opsRoutingPolicyV2.SHEETS) ? CONFIG.opsRoutingPolicyV2.SHEETS
+          : null));
+    if (routingSheets) {
+      Object.keys(routingSheets).forEach(k => {
+        if (String(k || '').indexOf('SC_') === 0) {
+          const v = String(routingSheets[k] || '').trim();
+          if (v) scSet.add(v);
+        }
+      });
+    }
+    operational = Array.from(scSet);
+  } catch (e) {}
+
+  let optional = (base && base.optional)
+    ? Array.from(base.optional)
+    : (!isAdmin && CONFIG.sheetsByPic && Array.isArray(CONFIG.sheetsByPic.optional) ? CONFIG.sheetsByPic.optional : []);
+
+  // Single-master requirement: optional sheets are not PIC-restricted anymore.
+  if (!isAdmin) {
+    const set = new Set(optional || []);
+    const defaults = (typeof SV03_OPTIONAL_SHEETS_DEFAULT !== 'undefined' && SV03_OPTIONAL_SHEETS_DEFAULT)
+      ? SV03_OPTIONAL_SHEETS_DEFAULT
+      : ['B2B', 'EV-Bike', 'Special Case'];
+    defaults.forEach(n => set.add(n));
+    optional = Array.from(set);
+  } else {
+    optional = [];
+  }
+
+  return {
+    core: Object.freeze((core || []).filter(Boolean)),
+    operational: Object.freeze((operational || []).filter(Boolean)),
+    optional: Object.freeze((optional || []).filter(Boolean))
+  };
+}
+
+/**
+ * Optional sheet gating by PIC.
+ * - EV-Bike: only for OPTIONAL_SHEETS_RULES.EVBIKE_ONLY_FOR_PIC (default Farhan)
+ * - B2B: only for OPTIONAL_SHEETS_RULES.B2B_ONLY_FOR_PIC (default Meilani)
+ * - Special Case: always enabled (exists as optional in profile spec)
+ */
+function sv03_isOptionalSheetEnabledForPic_(pic, sheetName) {
+  const n = String(sheetName || '').trim();
+  if (!n) return false;
+
+  // Single-master requirement: optional sheets are enabled regardless of PIC.
+  return true;
+}
+
+
+function sv03_shouldAutoEnsureAssociate_(pic, sheetName) {
+  // Spec: never auto-ensure Associate (legacy columns may remain).
+  return false;
+}
+
+
+
+function sv03_filterTemplateForPic_(pic, sheetName, headerArr) {
+  // Single-master workflow: do not filter template headers by PIC.
+  // Keep templates intact (non-destructive heal will append missing columns only).
+  return Array.isArray(headerArr) ? headerArr.slice() : [];
+}
+
+/** ---------- Sheet ensure + header healing ---------- */
+function sv03_ensureSheetWithHeader_(ss, name, headerArr, pic) {
+  let sh = ss.getSheetByName(name);
+  const isFixed = sv03_isFixedSchemaSheet_(name);
+
+  if (!sh) {
+    if (DRY_RUN) return null;
+    sh = ss.insertSheet(name);
+
+    // Fixed schema sheets are user-managed.
+    // Enterprise-safe behavior:
+    // - If a fixed-schema sheet is missing and we create it, we DO write the template header once
+    //   so the sheet is usable out-of-the-box.
+    // - After creation, we will NOT auto-heal/append columns for fixed-schema sheets.
+    const hdr = sv03_filterTemplateForPic_(pic, name, headerArr);
+    if (hdr && hdr.length && !DRY_RUN) {
+      try { sh.getRange(1, 1, 1, hdr.length).setValues([hdr]); } catch (e0) {}
+      try { sh.setFrozenRows(1); } catch (e1) {}
+    }
+    return sh;
+  }
+
+  // Non-destructive header heal (append missing columns) — skip for fixed-schema sheets
+  if (!isFixed && name !== 'Raw Data' && headerArr && headerArr.length) {
+    const hdr = sv03_filterTemplateForPic_(pic, name, headerArr);
+    sv03_ensureHeadersNonDestructive_(sh, hdr);
+  }
+  return sh;
+}
+
+
+function sv03_ensureHeadersNonDestructive_(sh, expectedHeaders) {
+  if (!sh || !expectedHeaders || !expectedHeaders.length) return;
+
+  // [Spec] "Activity Log" column is OPTIONAL: do NOT auto-append unless explicitly enabled.
+  const features = (typeof CONFIG !== 'undefined' && CONFIG && CONFIG.features) ? CONFIG.features : {};
+  const ensureActivityLog = !!(features && features.ensureActivityLogColumn);
+
+
+  const lc = Math.max(sh.getLastColumn(), 1);
+  const hdr = sh.getRange(1, 1, 1, lc).getValues()[0].map(v => sv03_normHeaderText_(v));
+
+  const missing = [];
+  for (let i = 0; i < expectedHeaders.length; i++) {
+    const hRaw = expectedHeaders[i];
+    const hNorm = sv03_normHeaderText_(hRaw);
+    if (!hNorm) continue;
+    if (!ensureActivityLog && hNorm === 'activity log') continue;
+    if (hdr.indexOf(hNorm) === -1) missing.push(sv03_normHeaderText_(hRaw));
+  }
+  if (!missing.length) return;
+
+  if (DRY_RUN) return;
+  const startCol = hdr.length + 1;
+  sh.insertColumnsAfter(hdr.length, missing.length);
+  sh.getRange(1, startCol, 1, missing.length).setValues([missing]);
+}
+
+/**
+ * Ensure sheets per profile (strict to user spec):
+ * - ADMIN: Raw Data + Ask Detail + Start + Finish + OR (no optional)
+ * - PIC: Raw Data + operational + optional (B2B/Special Case/EV-Bike)
+ */
+function ensurePicSheets_(ss, pic) {
+  // [Schema] Keep a lightweight system record (versioning/governance)
+  try { sv03_ensureSystemSheet_(ss); } catch (eSys) {}
+
+  // Defensive: avoid warm-instance residue if this function is used as an entrypoint.
+  try { if (typeof resetRuntime_ === 'function') resetRuntime_(); } catch (e) {}
+
+  const profile = getWorkbookProfile_(pic);
+  const spec = sv03_getProfileSpec_(profile);
+
+  // Raw Data must exist (anchor minimal; full header handled later by ensureRawHeaders_)
+  let raw = ss.getSheetByName('Raw Data');
+  if (!raw) {
+    if (DRY_RUN) return;
+    raw = ss.insertSheet('Raw Data');
+    raw.getRange(1, 1).setValue(CONFIG.headers.updateStatus); // anchor
+    try { raw.setFrozenRows(1); } catch (e) {}
+  }
+
+  // Ensure operational sheets (profile-specific templates)
+  (spec.operational || []).forEach(name => {
+    if (profile === 'ADMIN') {
+      const tpl = SV03_WORKFLOW_SHEETS.has(String(name || '').trim())
+        ? SV03_TEMPLATES.OPS_ADMIN_WORKFLOW
+        : SV03_TEMPLATES.OPS_ADMIN_DEFAULT;
+      sv03_ensureSheetWithHeader_(ss, name, tpl, pic);
+    } else {
+      // PIC (single-master): all operational sheets live in one workbook.
+      if (SV03_WORKFLOW_SHEETS.has(String(name || '').trim())) {
+        sv03_ensureSheetWithHeader_(ss, name, SV03_TEMPLATES.OPS_PIC_WORKFLOW, pic);
+      } else if (name === 'PO') {
+        sv03_ensureSheetWithHeader_(ss, 'PO', SV03_TEMPLATES.OPS_PIC_PO, pic);
+      } else if (name === (OPS_ROUTING_POLICY && OPS_ROUTING_POLICY.SHEETS ? OPS_ROUTING_POLICY.SHEETS.SC_FARHAN : 'SC - Farhan')
+              || name === (OPS_ROUTING_POLICY && OPS_ROUTING_POLICY.SHEETS ? OPS_ROUTING_POLICY.SHEETS.SC_MEILANI : 'SC - Meilani')
+              || String(name || '').indexOf('SC - ') === 0) {
+        // SC sheets require a "Type" dropdown column.
+        sv03_ensureSheetWithHeader_(ss, name, SV03_TEMPLATES.OPS_PIC_SC, pic);
+      } else {
+        sv03_ensureSheetWithHeader_(ss, name, SV03_TEMPLATES.OPS_PIC_DEFAULT, pic);
+      }
+    }
+  });
+
+  // Ensure optional sheets ONLY for PIC profile + PIC gating rules
+  if (profile !== 'ADMIN') {
+    (spec.optional || []).forEach(name => {
+      if (!sv03_isOptionalSheetEnabledForPic_(pic, name)) return;
+
+      if (name === 'B2B') {
+        sv03_ensureSheetWithHeader_(ss, 'B2B', SV03_TEMPLATES.B2B, pic);
+        return;
+      }
+
+      if (name === 'EV-Bike') {
+        sv03_ensureSheetWithHeader_(ss, 'EV-Bike', SV03_TEMPLATES.EV_BIKE, pic);
+        return;
+      }
+
+      if (name === 'Special Case') {
+        // Fixed schema: do not auto-heal columns; only ensure sheet exists
+        sv03_ensureSheetWithHeader_(ss, 'Special Case', SV03_TEMPLATES.SPECIAL_CASE, pic);
+        return;
+      }
+
+      sv03_ensureSheetWithHeader_(ss, name, SV03_TEMPLATES.OPS_PIC_DEFAULT, pic);
+    });
+  }
+
+  // Post setup: remove filters (except EV-Bike) + enforce formatting + enforce dropdown sync
+  sv03_removeAllFiltersForPic_(ss, raw, pic);
+  enforceStandardLayoutForPic_(ss, pic);
+}
+
+/** ---------- Filters ---------- */
+function sv03_removeSheetFilter_(sheet) {
+  if (!sheet) return;
+  const f = sheet.getFilter();
+  if (f && !DRY_RUN) f.remove();
+}
+
+function sv03_removeAllFiltersForPic_(ss, rawSheet, pic) {
+  if (!ss) return;
+  sv03_removeSheetFilter_(rawSheet);
+
+  const profile = getWorkbookProfile_(pic);
+  const spec = sv03_getProfileSpec_(profile);
+
+  const targets = [].concat(spec.operational || []);
+  if (profile !== 'ADMIN') {
+    (spec.optional || []).forEach(name => {
+      if (sv03_isOptionalSheetEnabledForPic_(pic, name)) targets.push(name);
+    });
+  }
+
+  targets.forEach(name => {
+    // Requirement: never reset/unfilter EV-Bike sheet.
+    if (String(name || '').trim() === 'EV-Bike') return;
+    const sh = ss.getSheetByName(name);
+    if (sh) sv03_removeSheetFilter_(sh);
+  });
+}
+
+/** ---------- Hard clear: keep header row ---------- */
+function clearSheetDataHard_(sh, opts) {
+  opts = opts || {};
+  const bufferRows = (opts.bufferRows != null) ? opts.bufferRows : 300;
+  const clearFormats = (opts.clearFormats != null) ? !!opts.clearFormats : true;
+  const preserveTemplateRow = !!opts.preserveTemplateRow; // keep row 2 formatting/DV as template when requested
+
+  const lastCol = sh.getLastColumn();
+  if (lastCol <= 0) return;
+
+  const maxRows = sh.getMaxRows();
+  const lastRowContent = sh.getLastRow();
+  const targetLastRow = Math.min(maxRows, Math.max(1, lastRowContent) + bufferRows);
+  if (targetLastRow <= 1) return;
+
+  const rng = sh.getRange(2, 1, targetLastRow - 1, lastCol);
+  if (DRY_RUN) return;
+
+  // Always clear values + notes for all data rows (row 2..targetLastRow)
+  rng.clearContent();
+  rng.clearNote();
+
+  if (!clearFormats) return;
+
+  // IMPORTANT: preserve row 2 formats when used as a dropdown/template row.
+  if (preserveTemplateRow && targetLastRow >= 3) {
+    const fmt = sh.getRange(3, 1, targetLastRow - 2, lastCol);
+    fmt.clearFormat();
+  } else {
+    rng.clearFormat();
+  }
+}
+
+/** ---------- Hyperlink styling helper ---------- */
+function applyDbLinkFormatting_(sheet, header, dataRowCount, startRow) {
+  if (!sheet || !header || dataRowCount <= 0) return;
+  startRow = startRow || 2;
+  const idx = header.indexOf('DB Link');
+  if (idx === -1) return;
+  const range = sheet.getRange(startRow, idx + 1, dataRowCount, 1);
+  safeSetFontColor_(range, '#1155cc');
+  safeSetUnderline_(range);
+}
+
+/** ---------- Raw header helpers ---------- */
+function getRawHeader_(rawSheet) {
+  const lastCol = Math.max(rawSheet.getLastColumn(), 1);
+  return rawSheet.getRange(1, 1, 1, lastCol).getValues()[0].map(h => String(h || '').trim());
+}
+
+/** Batch ensure columns before an anchor header */
+function ensureColumnsBefore_(sheet, anchorHeader, colsToEnsure) {
+  const header = getRawHeader_(sheet);
+  let anchorIdx = header.indexOf(anchorHeader);
+
+  // ensure anchor exists
+  if (anchorIdx === -1) {
+    if (!DRY_RUN) {
+      sheet.insertColumnAfter(header.length);
+      sheet.getRange(1, header.length + 1).setValue(anchorHeader);
+    }
+    header.push(anchorHeader);
+    anchorIdx = header.length - 1;
+  }
+
+  const missing = [];
+  (colsToEnsure || []).forEach(c => {
+    const name = String(c || '').trim();
+    if (!name) return;
+    if (header.indexOf(name) > -1) return;
+    missing.push(name);
+  });
+  if (!missing.length) return buildHeaderIndex_(header);
+
+  // insert in one shot
+  const anchorCol1 = anchorIdx + 1;
+  if (!DRY_RUN) {
+    sheet.insertColumnsBefore(anchorCol1, missing.length);
+    sheet.getRange(1, anchorCol1, 1, missing.length).setValues([missing]);
+  }
+
+  header.splice(anchorIdx, 0, ...missing);
+  return buildHeaderIndex_(header);
+}
+
+/** Ensure main + required columns are before Update Status */
+function ensureRawHeaders_(rawSheet, mainHeaderArr) {
+  const h = CONFIG.headers;
+
+  // Canonical rename support: LSA/ALA -> Last Status Aging / Activity Log Aging
+  const rawHdr0 = getRawHeader_(rawSheet);
+  const LSA_CANON = 'Last Status Aging';
+  const ALA_CANON = 'Activity Log Aging';
+  const hasLsa = rawHdr0.indexOf(LSA_CANON) > -1 || rawHdr0.indexOf(String(h.lastStatusAging || 'LSA')) > -1 || rawHdr0.indexOf('LSA') > -1;
+  const hasAla = rawHdr0.indexOf(ALA_CANON) > -1 || rawHdr0.indexOf(String(h.activityLogAging || 'ALA')) > -1 || rawHdr0.indexOf('ALA') > -1;
+  const lsaToEnsure = hasLsa ? null : LSA_CANON;
+  const alaToEnsure = hasAla ? null : ALA_CANON;
+
+  // 1) main header before Update Status
+  let idx = ensureColumnsBefore_(rawSheet, h.updateStatus, (mainHeaderArr || []).filter(Boolean));
+
+  // 2) critical support fields before Update Status
+  idx = ensureColumnsBefore_(rawSheet, h.updateStatus, [
+    h.claimSubmittedDatetime,
+    lsaToEnsure,
+    alaToEnsure,
+    h.lastUpdate,
+    h.lastActivityLogDate,
+    h.claimSubmissionDate,
+    h.nettClaimAmount,
+    h.ownRiskAmount
+  ].filter(Boolean));
+
+  // 3) derived/auto fields before Update Status
+  idx = ensureColumnsBefore_(rawSheet, h.updateStatus, [
+    h.qLMonths || 'Q-L (Months)',
+    'M-L (Months)',
+    'M-Q (Months)',
+    h.orColumn,
+    h.timestamp,
+    h.status
+  ]);
+
+  // 4) ensure custom tail columns exist (non-destructive append)
+  const tail = (typeof CONFIG !== 'undefined' && CONFIG && Array.isArray(CONFIG.rawDataCustomTailHeaders))
+    ? CONFIG.rawDataCustomTailHeaders
+    : [
+      'Update Status',
+      'Timestamp',
+      'Status',
+      'Q-L (Months)',
+      'M-L (Months)',
+      'M-Q (Months)',
+      'Update Status Asso',
+      'Timestamp Asso',
+      'Update Status Admin',
+      'Timestamp Admin'
+    ];
+  const tailFiltered = (tail || []).filter(x => String(x || '').trim().toLowerCase() !== 'associate');
+  try { sv03_ensureHeadersNonDestructive_(rawSheet, tailFiltered); } catch (e) {}
+
+  // Header index may change after tail healing.
+  try { idx = buildHeaderIndex_(getRawHeader_(rawSheet)); } catch (e2) {}
+  return idx;
+}
+
+/** Clear Raw contents (values only) */
+function clearRawDataContents_(rawSheet) {
+  const lastRow = rawSheet.getLastRow();
+  const lastCol = rawSheet.getLastColumn();
+  if (lastRow <= 1 || lastCol <= 0) return;
+  safeClearContents_(rawSheet.getRange(2, 1, lastRow - 1, lastCol));
+}
+
+/** =========================================================
+ * Dropdown validation: preserve colors + (optional) auto-heal
+ * ========================================================= */
+
+function sv03_findHeaderCol1_(sh, headerName) {
+  if (!sh) return -1;
+  const lc = Math.max(sh.getLastColumn(), 1);
+  const header = sh.getRange(1, 1, 1, lc).getValues()[0].map(v => sv03_normHeaderText_(v));
+  const idx0 = header.indexOf(sv03_normHeaderText_(headerName));
+  return (idx0 === -1) ? -1 : (idx0 + 1);
+}
+
+function sv03_getTemplateRuleCell_(ss, sheetNames, headerName) {
+  for (let i = 0; i < (sheetNames || []).length; i++) {
+    const sh = ss.getSheetByName(sheetNames[i]);
+    if (!sh) continue;
+    const col1 = sv03_findHeaderCol1_(sh, headerName);
+    if (col1 < 1) continue;
+    try {
+      const cell = sh.getRange(2, col1);
+      const rule = cell.getDataValidation();
+      if (rule) return { sh, cell, col1, rule };
+    } catch (e) {}
+  }
+  return null;
+}
+
+function sv03_scanColumnValues_(sh, col1, maxRows) {
+  const set = new Set();
+  if (!sh || col1 < 1) return set;
+
+  const lr = sh.getLastRow();
+  const n = Math.max(0, Math.min(lr - 1, maxRows || SV03_DROPDOWN_SYNC.SCAN_MAX_ROWS));
+  if (n <= 0) return set;
+
+  const vals = sh.getRange(2, col1, n, 1).getValues();
+  for (let i = 0; i < vals.length; i++) {
+    const v = vals[i][0];
+    const s = String(v == null ? '' : v).trim();
+    if (s) set.add(s);
+  }
+  return set;
+}
+
+function sv03_unionSetsToArray_(sets, forceBlank) {
+  const out = [];
+  const seen = new Set();
+
+  if (forceBlank) {
+    out.push('');
+    seen.add('');
+  }
+
+  for (let i = 0; i < sets.length; i++) {
+    const s = sets[i];
+    if (!s) continue;
+    s.forEach(v => {
+      const x = String(v == null ? '' : v).trim();
+      if (seen.has(x)) return;
+      seen.add(x);
+      out.push(x);
+    });
+  }
+  return out;
+}
+
+function sv03_ruleCriteriaToList_(rule) {
+  if (!rule) return null;
+  try {
+    const type = rule.getCriteriaType();
+    const vals = rule.getCriteriaValues();
+
+    if (String(type) === String(SpreadsheetApp.DataValidationCriteria.VALUE_IN_LIST)) {
+      const arr = vals && vals[0] ? vals[0] : [];
+      const list = [];
+      for (let i = 0; i < arr.length; i++) {
+        const x = arr[i];
+        if (x == null) continue;
+        list.push(String(x));
+      }
+      return { kind: 'LIST', list };
+    }
+
+    if (String(type) === String(SpreadsheetApp.DataValidationCriteria.VALUE_IN_RANGE)) {
+      const rng = vals && vals[0] ? vals[0] : null;
+      return rng ? { kind: 'RANGE', range: rng } : null;
+    }
+  } catch (e) {}
+  return null;
+}
+
+function sv03_applyRuleCopyToColumn_(srcCell, dstSheet, dstCol1, rows, opt) {
+  opt = opt || {};
+  const dryRun = (typeof DRY_RUN !== 'undefined') ? DRY_RUN : false;
+  if (dryRun) return;
+  if (!srcCell || !dstSheet || dstCol1 < 1 || rows <= 0) return;
+
+  try {
+    const dst = dstSheet.getRange(2, dstCol1, rows, 1);
+
+    // Data validation is the key to preserve dropdown "chip" UI + option colors.
+    try { srcCell.copyTo(dst, SpreadsheetApp.CopyPasteType.PASTE_DATA_VALIDATION, false); } catch (e1) {}
+
+    // Optional: copy only non-destructive formatting (NO background fill) to avoid "mass fill" bugs.
+    if (opt.copyFormat) {
+      try { dst.setNumberFormat(srcCell.getNumberFormat()); } catch (e2) {}
+      try { dst.setHorizontalAlignment(srcCell.getHorizontalAlignment()); } catch (e3) {}
+      try { dst.setVerticalAlignment(srcCell.getVerticalAlignment()); } catch (e4) {}
+      try { dst.setWrap(srcCell.getWrap()); } catch (e5) {}
+      try { dst.setTextStyle(srcCell.getTextStyle()); } catch (e6) {}
+      try { dst.setFontColor(srcCell.getFontColor()); } catch (e7) {}
+    }
+  } catch (e) {}
+}
+/**
+ * Auto-heal dropdown rule:
+ * - ONLY safe (preserve chip/colors) when rule is VALUE_IN_RANGE and the source range has capacity.
+ * - If rule is VALUE_IN_LIST, rebuilding usually kills chip/colors => we skip unless explicitly allowed.
+ */
+function sv03_healTemplateRule_(template, mergedOptions) {
+  if (DRY_RUN) return { mode: 'dry_run', changed: false, notes: '' };
+  if (!_SV03_VALIDATION_POLICY.ENABLE_AUTO_HEAL) return { mode: 'policy_off', changed: false, notes: '' };
+  if (!template || !template.cell || !template.rule) return { mode: 'missing_template', changed: false, notes: '' };
+
+  const info = sv03_ruleCriteriaToList_(template.rule);
+  if (!info) return { mode: 'unknown_rule', changed: false, notes: 'criteria_unreadable' };
+
+  const allowBlank = (_SV03_VALIDATION_POLICY.ALLOW_BLANK || SV03_DROPDOWN_SYNC.FORCE_ALLOW_BLANK);
+  const want = new Set((mergedOptions || []).map(x => String(x == null ? '' : x).trim()));
+  if (allowBlank) want.add('');
+
+  if (info.kind === 'RANGE' && info.range) {
+    try {
+      const r = info.range;
+      const vals = r.getValues(); // 2D
+      const flat = [];
+      for (let i = 0; i < vals.length; i++) flat.push(String(vals[i][0] == null ? '' : vals[i][0]).trim());
+
+      const have = new Set(flat);
+
+      // Ensure at least one blank exists in the source range (blank-safe)
+      if (allowBlank && !have.has('')) {
+        let hasEmptySlot = false;
+        for (let i = 0; i < flat.length; i++) { if (!flat[i]) { hasEmptySlot = true; break; } }
+        if (!hasEmptySlot && r.getNumRows() >= 1) {
+          r.getCell(1, 1).setValue('');
+          have.add('');
+        }
+      }
+
+      const toAdd = [];
+      want.forEach(v => { if (!have.has(v)) toAdd.push(v); });
+
+      if (!toAdd.length) return { mode: 'range', changed: false, notes: 'no_change' };
+
+      // Fill existing blank slots only (no rule rebuild)
+      for (let i = 0; i < vals.length && toAdd.length; i++) {
+        const cur = String(vals[i][0] == null ? '' : vals[i][0]).trim();
+        if (!cur) r.getCell(i + 1, 1).setValue(toAdd.shift());
+      }
+
+      if (toAdd.length) {
+        // Not enough capacity => do NOT rebuild (color-safe). Just report.
+        return { mode: 'range', changed: true, notes: 'range_capacity_insufficient_left=' + toAdd.length };
+      }
+      return { mode: 'range', changed: true, notes: 'filled_empty_slots' };
+    } catch (e1) {
+      return { mode: 'range', changed: false, notes: 'range_heal_failed: ' + e1 };
+    }
+  }
+
+  if (info.kind === 'LIST') {
+    if (SV03_DROPDOWN_SYNC.ALLOW_REBUILD_LIST_RULE) {
+      // Optional escape hatch (will likely drop chip/colors)
+      try {
+        const arr = [];
+        want.forEach(v => arr.push(v));
+        if (arr.length > 300) arr.length = 300;
+
+        const rule = SpreadsheetApp.newDataValidation()
+          .requireValueInList(arr, true)
+          .setAllowInvalid(false)
+          .build();
+
+        template.cell.setDataValidation(rule);
+        return { mode: 'list', changed: true, notes: 'rebuilt_list' };
+      } catch (e2) {
+        return { mode: 'list', changed: false, notes: 'list_rebuild_failed: ' + e2 };
+      }
+    }
+    return { mode: 'list', changed: false, notes: 'skip_list_rebuild_preserve_colors' };
+  }
+
+  return { mode: 'unknown', changed: false, notes: 'no_action' };
+}
+
+/**
+ * Sync dropdown across workbook for a given headerName:
+ * - Find a template rule cell (priority order)
+ * - Build merged options depending on policy MODE:
+ *   - RAW    => only Raw Data values
+ *   - TARGET => only operational/optional values
+ *   - BIDIR  => union
+ * - Heal template (range-safe only)
+ * - Copy template rule to all sheets that contain that header
+ *
+ * IMPORTANT:
+ * - We do NOT "invent" chip-style. If no template rule exists, fallback is classic validation (arrow).
+ *   For chip+colors: ensure at least 1 template cell has the correct dropdown (manual once), then script propagates it.
+ */
+function sv03_syncDropdownForWorkbook_(ss, pic, headerName, fallbackSeed, opts) {
+  opts = opts || {};
+  if (!ss) return { ok: false, notes: 'missing_ss' };
+
+  const profile = getWorkbookProfile_(pic);
+  const spec = sv03_getProfileSpec_(profile);
+
+  const allSheets = ['Raw Data']
+    .concat(spec.operational || [])
+    .concat(profile !== 'ADMIN' ? (spec.optional || []) : []);
+
+  // template priority order
+  const templateSheets = (opts.templateSheets && opts.templateSheets.length) ? opts.templateSheets : allSheets;
+  const tpl = sv03_getTemplateRuleCell_(ss, templateSheets, headerName);
+
+  // build options sets per policy MODE
+  const sets = [];
+  const mode = String((_SV03_VALIDATION_POLICY.MODE || 'BIDIR')).toUpperCase();
+
+  const allowBlank = (_SV03_VALIDATION_POLICY.ALLOW_BLANK || SV03_DROPDOWN_SYNC.FORCE_ALLOW_BLANK);
+
+  if (fallbackSeed && fallbackSeed.length) sets.push(new Set(fallbackSeed));
+
+  function addScanFromSheetList_(sheetList) {
+    (sheetList || []).forEach(name => {
+      const sh = ss.getSheetByName(name);
+      if (!sh) return;
+      const col1 = sv03_findHeaderCol1_(sh, headerName);
+      if (col1 < 1) return;
+      sets.push(sv03_scanColumnValues_(sh, col1, SV03_DROPDOWN_SYNC.SCAN_MAX_ROWS));
+    });
+  }
+
+  if (mode === 'RAW') {
+    addScanFromSheetList_(['Raw Data']);
+  } else if (mode === 'TARGET') {
+    addScanFromSheetList_((spec.operational || []).concat(profile !== 'ADMIN' ? (spec.optional || []) : []));
+  } else {
+    addScanFromSheetList_(allSheets);
+  }
+
+  const merged = sv03_unionSetsToArray_(sets, allowBlank);
+
+  // choose a template target if missing
+  let template = tpl;
+  if (!template) {
+    // pick first sheet that has the header
+    for (let i = 0; i < templateSheets.length; i++) {
+      const sh = ss.getSheetByName(templateSheets[i]);
+      if (!sh) continue;
+      const col1 = sv03_findHeaderCol1_(sh, headerName);
+      if (col1 < 1) continue;
+      template = { sh, cell: sh.getRange(2, col1), col1, rule: null };
+      break;
+    }
+  }
+  if (!template || !template.cell) return { ok: false, notes: 'no_target_column_found' };
+
+  // Create minimal fallback validation IF no rule exists at all (chip/colors won't exist)
+  if (!template.cell.getDataValidation()) {
+    if (!DRY_RUN) {
+      try {
+        const base = merged.length ? merged : (allowBlank ? [''] : []);
+        const rule = SpreadsheetApp.newDataValidation()
+          .requireValueInList(base.slice(0, 300), true)
+          .setAllowInvalid(false)
+          .build();
+        template.cell.setDataValidation(rule);
+      } catch (e0) {}
+    }
+  }
+
+  // refresh rule handle
+  template.rule = template.cell.getDataValidation();
+
+  // heal template rule (range-safe only)
+  const heal = sv03_healTemplateRule_(template, merged);
+
+  // copy rule to all sheets where column exists
+  const applyToSheets = (opts.applyToSheets && opts.applyToSheets.length) ? opts.applyToSheets : allSheets;
+
+  applyToSheets.forEach(name => {
+    const sh = ss.getSheetByName(name);
+    if (!sh) return;
+    const col1 = sv03_findHeaderCol1_(sh, headerName);
+    if (col1 < 1) return;
+
+    const lastRow = Math.max(sh.getLastRow(), 2);
+    const rows = Math.min(sh.getMaxRows() - 1, Math.max(1, (lastRow - 1) + SV03_DROPDOWN_SYNC.BUFFER_ROWS));
+    sv03_applyRuleCopyToColumn_(template.cell, sh, col1, rows, { copyFormat: (headerName === 'Status') });
+  });
+
+  return { ok: true, mode: heal.mode, changed: heal.changed, notes: heal.notes, mergedCount: merged.length };
+}
+
+/** =========================================================
+ * Formatting enforcement (number formats + alignment)
+ * ========================================================= */
+
+function sv03_applyNumberFormatsByType_(sh, headerRow) {
+  if (!sh || !headerRow || DRY_RUN) return;
+
+  const lastRow = Math.max(sh.getLastRow(), 2);
+  const rows = Math.min(sh.getMaxRows() - 1, Math.max(1, (lastRow - 1) + SV03_DROPDOWN_SYNC.BUFFER_ROWS));
+
+  const typeMap = Object.assign({}, _SV03_DEST_COMMON_TYPES, {
+    'LSA': 'INT',
+    'ALA': 'INT',
+    'TAT': 'INT'
+  });
+
+  headerRow.forEach((name, i) => {
+    const t = typeMap[name];
+    if (!t) return;
+
+    let fmt = null;
+    if (t === 'DATE') fmt = _SV03_FORMATS.DATE;
+    else if (t === 'DATE_AUTO') fmt = sv03_getDateAutoNumberFormatForColumn_(sh, i + 1, rows);
+    else if (t === 'DATETIME') fmt = _SV03_FORMATS.DATETIME;
+    else if (t === 'TIMESTAMP') fmt = _SV03_FORMATS.TIMESTAMP;
+    else if (t === 'INT') fmt = _SV03_FORMATS.INT;
+    else if (t === 'MONEY0') fmt = _SV03_FORMATS.MONEY0;
+    else if (t === 'PERCENT') fmt = _SV03_FORMATS.PERCENT || '0%';
+
+    if (!fmt) return;
+    try { sh.getRange(2, i + 1, rows, 1).setNumberFormat(fmt); } catch (e) {}
+  });
+}
+
+function sv03_applyAlignment_(sh, headerRow) {
+  if (!sh || !headerRow || DRY_RUN) return;
+
+  const lastRow = Math.max(sh.getLastRow(), 2);
+  const rows = Math.min(sh.getMaxRows() - 1, Math.max(1, (lastRow - 1) + SV03_DROPDOWN_SYNC.BUFFER_ROWS));
+
+  const centerSet = new Set(_SV03_ALIGNMENT.CENTER || []);
+  const rightSet = new Set(_SV03_ALIGNMENT.RIGHT || []);
+
+  headerRow.forEach((name, i) => {
+    let align = null;
+    if (centerSet.has(name)) align = 'center';
+    else if (rightSet.has(name)) align = 'right';
+    else return;
+
+    try { sh.getRange(1, i + 1, rows + 1, 1).setHorizontalAlignment(align); } catch (e) {}
+  });
+}
+
+function sv03_applyCheckboxesIfExists_(sh, headerRow, headerName) {
+  if (!sh || !headerRow || DRY_RUN) return false;
+  const idx = headerRow.indexOf(headerName);
+  if (idx === -1) return false;
+
+  const lastRow = Math.max(sh.getLastRow(), 2);
+  const rows = Math.min(sh.getMaxRows() - 1, Math.max(1, (lastRow - 1) + SV03_DROPDOWN_SYNC.BUFFER_ROWS));
+  try { sh.getRange(2, idx + 1, rows, 1).insertCheckboxes(); } catch (e) {}
+  return true;
+}
+
+
+/**
+ * Apply Data Validation + cell formatting from a template row to a target data region.
+ * Purpose: preserve dropdown "chip" styling that tends to go flat when validations are rebuilt.
+ *
+ * Notes:
+ * - Does NOT touch values (only format + validation).
+ * - Intended to be called after routing writes values into operational sheets (especially Admin).
+ *
+ * @param {GoogleAppsScript.Spreadsheet.Sheet} sh
+ * @param {Object=} opt
+ *   - templateRow {number=} row index for template (default: SV03_DROPDOWN_SYNC.ADMIN_TEMPLATE_ROW || 2)
+ *   - startRow {number=} first row to apply (default: SV03_DROPDOWN_SYNC.ADMIN_TEMPLATE_START_ROW || 2)
+ *   - endRow {number=} last row to apply (default: sh.getLastRow())
+ *   - startCol {number=} first col (default: 1)
+ *   - endCol {number=} last col (default: sh.getLastColumn())
+ * @return {{ok:boolean, applied:boolean, rows:number, cols:number, reason:string}}
+ */
+function sv03_applyTemplateRowDvAndFormat_(sh, opt) {
+  if (!sh) return { ok: false, applied: false, rows: 0, cols: 0, reason: 'no_sheet' };
+  const dryRun = (typeof DRY_RUN !== 'undefined') ? DRY_RUN : false;
+  if (dryRun) return { ok: true, applied: false, rows: 0, cols: 0, reason: 'dry_run' };
+
+  opt = opt || {};
+  const templateRow = Number(opt.templateRow || (SV03_DROPDOWN_SYNC.ADMIN_TEMPLATE_ROW || 2));
+  const startRow = Number(opt.startRow || (SV03_DROPDOWN_SYNC.ADMIN_TEMPLATE_START_ROW || 2));
+  const endRow = Number(opt.endRow || sh.getLastRow() || startRow - 1);
+
+  const rows = Math.max(0, endRow - startRow + 1);
+  if (rows <= 0) return { ok: true, applied: false, rows: 0, cols: 0, reason: 'no_target_rows' };
+
+  // IMPORTANT:
+  // For Admin workbooks we must not "paste format" across the whole sheet, because it can propagate a flagged
+  // row's background fill to every row (mass-fill bug). We only copy dropdown rules (and optional safe formatting)
+  // for specific columns.
+  const colsToApply = (opt.columns && opt.columns.length) ? opt.columns : ['Status'];
+  const applied = [];
+
+  for (let i = 0; i < colsToApply.length; i++) {
+    const headerName = colsToApply[i];
+    const col1 = sv03_findHeaderCol1_(sh, headerName);
+    if (col1 < 1) continue;
+
+    try {
+      const srcCell = sh.getRange(templateRow, col1, 1, 1);
+      const dst = sh.getRange(startRow, col1, rows, 1);
+
+      // Preserve dropdown chip UI + option colors via DV copy.
+      try { srcCell.copyTo(dst, SpreadsheetApp.CopyPasteType.PASTE_DATA_VALIDATION, false); } catch (e1) {}
+
+      // Optional safe formatting (NO background).
+      if (opt.copyFormat) {
+        try { dst.setNumberFormat(srcCell.getNumberFormat()); } catch (e2) {}
+        try { dst.setHorizontalAlignment(srcCell.getHorizontalAlignment()); } catch (e3) {}
+        try { dst.setVerticalAlignment(srcCell.getVerticalAlignment()); } catch (e4) {}
+        try { dst.setWrap(srcCell.getWrap()); } catch (e5) {}
+        try { dst.setTextStyle(srcCell.getTextStyle()); } catch (e6) {}
+        try { dst.setFontColor(srcCell.getFontColor()); } catch (e7) {}
+      }
+
+      applied.push(headerName);
+    } catch (e) {}
+  }
+
+  return { ok: true, applied: applied.length > 0, rows, cols: applied.length, appliedCols: applied, reason: 'applied' };
+}
+
+
+/**
+ * Ensure "Type" dropdown exists for SC sheets (or any sheet that has a "Type" column).
+ * We only add validation when the column exists but has no rule yet.
+ */
+function sv03_ensureTypeDropdownIfMissing_(sh, header) {
+  if (!sh || !header || !header.length) return;
+  const idx = header.indexOf('Type');
+  if (idx === -1) return;
+
+  // Preserve existing rule (chip/colors/etc.)
+  try {
+    const dv = sh.getRange(2, idx + 1).getDataValidation();
+    if (dv) return;
+  } catch (e) {}
+
+  const buffer = (SV03_DROPDOWN_SYNC && SV03_DROPDOWN_SYNC.BUFFER_ROWS) ? SV03_DROPDOWN_SYNC.BUFFER_ROWS : 500;
+  const maxRows = sh.getMaxRows();
+  const last = Math.max(2, sh.getLastRow() || 2);
+  const endRow = Math.min(maxRows, last + buffer);
+  const rows = Math.max(0, endRow - 1);
+  if (rows <= 0) return;
+
+  // Preferred: copy data validation (and safe format) from an existing template cell in this workbook.
+  // This preserves dropdown-chip colors & the exact option set.
+  try {
+    const ss = sh.getParent();
+    const sheetNames = ss.getSheets().map(s => s.getName());
+    const tpl = sv03_getTemplateRuleCell_(ss, sheetNames, 'Type');
+    if (tpl && tpl.cell) {
+      sv03_applyRuleCopyToColumn_(tpl.cell, sh, idx + 1, rows, { copyFormat: true });
+      return;
+    }
+  } catch (eTpl) {}
+
+  // Last resort fallback: create classic list-based DV (may degrade chip/colors).
+  try {
+    const typeOpts = (typeof getScTypeDropdownOptions_ === 'function')
+      ? getScTypeDropdownOptions_()
+      : ['SC - Rcvd','SC - Est','Insurance','OR','Finish','SC - Wait Rep','SC - On Rep'];
+
+    const rule = SpreadsheetApp.newDataValidation()
+      .requireValueInList(typeOpts, true)
+      .setAllowInvalid(true)
+      .build();
+
+    sh.getRange(2, idx + 1, rows, 1).setDataValidation(rule);
+  } catch (e) {}
+}
+
+
+function sv03_enforceStandardLayoutForSheet_(sh) {
+  if (!sh) return;
+
+  const lc = Math.max(sh.getLastColumn(), 1);
+  const header = sh.getRange(1, 1, 1, lc).getValues()[0].map(v => sv03_normHeaderText_(v));
+
+  // Spec: header row (row 1) must be center + middle.
+  try { sh.getRange(1, 1, 1, lc).setHorizontalAlignment('center').setVerticalAlignment('middle'); } catch (e0) {}
+
+  try { sh.setFrozenRows(1); } catch (e) {}
+
+  sv03_applyNumberFormatsByType_(sh, header);
+  sv03_applyAlignment_(sh, header);
+
+  // Checkbox: ONLY where OR column exists (PO + Special Case)
+  sv03_applyCheckboxesIfExists_(sh, header, 'OR');
+
+  // Ensure SC Type dropdown exists when column is present.
+  sv03_ensureTypeDropdownIfMissing_(sh, header);
+}
+
+/**
+ * Enforce workbook-wide layout:
+ * - Formatting per sheet
+ * - Dropdown sync (Status) with preservation + auto-heal
+ */
+function enforceStandardLayoutForPic_(ss, pic) {
+  if (!ss) return;
+
+  const profile = getWorkbookProfile_(pic);
+  const spec = sv03_getProfileSpec_(profile);
+
+  // 1) format ops sheets
+  (spec.operational || []).forEach(name => {
+    const sh = ss.getSheetByName(name);
+    if (sh) sv03_enforceStandardLayoutForSheet_(sh);
+  });
+
+  // 2) format optional sheets only for PIC (and only when enabled for the PIC)
+  if (profile !== 'ADMIN') {
+    (spec.optional || []).forEach(name => {
+      if (!sv03_isOptionalSheetEnabledForPic_(pic, name)) return;
+      const sh = ss.getSheetByName(name);
+      if (sh) sv03_enforceStandardLayoutForSheet_(sh);
+    });
+  }
+
+  // 3) Raw Data: freeze only (formats handled elsewhere)
+  const raw = ss.getSheetByName('Raw Data');
+  if (raw) { try { raw.setFrozenRows(1); } catch (e) {} }
+
+
+  // 4) Dropdown sync (key for chip + colors + consistency)
+  const seedStatus = (_SV03_VALIDATION_FALLBACK && _SV03_VALIDATION_FALLBACK.UPDATE_STATUS)
+    ? Array.from(_SV03_VALIDATION_FALLBACK.UPDATE_STATUS)
+    : [];
+
+  // STATUS dropdown policy:
+  // - Admin: DO NOT rebuild/sync rules (can flatten chip styling). Preserve via template-row copy.
+  // - PIC: allow workbook-level sync (preserve by copy, auto-heal).
+  const adminSkip = (profile === 'ADMIN' && SV03_DROPDOWN_SYNC.SKIP_SYNC_FOR_ADMIN);
+
+  let resStatus = null;
+
+  if (adminSkip) {
+    resStatus = { ok: true, mode: 'admin_template', changed: false, notes: 'skip_sync_preserve_template', mergedCount: 0 };
+
+    // Apply template row -> data region (DV only) for Admin operational sheets only.
+    (spec.operational || []).forEach(name => {
+      const sh = ss.getSheetByName(name);
+      if (!sh) return;
+      sv03_applyTemplateRowDvAndFormat_(sh, {
+        templateRow: SV03_DROPDOWN_SYNC.ADMIN_TEMPLATE_ROW,
+        startRow: SV03_DROPDOWN_SYNC.ADMIN_TEMPLATE_START_ROW,
+        columns: ['Status'],
+        copyFormat: false
+      });
+    });
+  } else {
+    // STATUS: default policy MODE
+    resStatus = sv03_syncDropdownForWorkbook_(ss, pic, 'Status', seedStatus, {});
+  }
+
+  // DO NOT sync "Last Status Date" as a dropdown (it is a date field, not a dropdown).
+
+
+
+
+  // Log only as INFO/WARN (no crash)
+  try {
+    logLine_(
+      'VAL',
+      'Dropdown sync',
+      'status=' + (resStatus && resStatus.ok ? 'ok' : 'skip'),
+      'Status(' + ((resStatus && resStatus.mode) || '-') + ',' + ((resStatus && resStatus.mergedCount) || 0) + ',' + ((resStatus && resStatus.notes) || '-') + ')',
+      (resStatus && resStatus.ok) ? 'INFO' : 'WARN'
+    );
+  } catch (e) {}
+
+}
+
+/** ---------- Basic workbook validation (fast, non-fatal) ---------- */
+function validateWorkbook_(ss, pic) {
+  const profile = getWorkbookProfile_(pic);
+  const isAdmin = (profile === 'ADMIN');
+
+  const routingMap = (pic === 'Admin') ? CONFIG.statusRoutingAdmin : CONFIG.statusRoutingPIC;
+  const spec = sv03_getProfileSpec_(profile);
+
+  const problems = [];
+  const checkExists = name => {
+    const sh = ss.getSheetByName(name);
+    if (!sh) problems.push('Missing sheet: "' + name + '"');
+    return sh;
+  };
+  const checkClaimHeader = (sh, name) => {
+    try {
+      const lc = sh.getLastColumn();
+      if (!lc) return;
+      const hdr = sh.getRange(1, 1, 1, lc).getValues()[0].map(v => sv03_normHeaderText_(v));
+      if (name !== 'Raw Data' && hdr.indexOf('Claim Number') === -1) problems.push('Sheet "' + name + '" missing header "Claim Number"');
+    } catch (e) { problems.push('Sheet "' + name + '" header read failed: ' + e); }
+  };
+
+  // Raw must exist
+  const raw = checkExists('Raw Data');
+  if (raw) {
+    const rh = getRawHeader_(raw);
+    if (rh.indexOf(CONFIG.headers.claimNumber) === -1) problems.push('Raw Data missing "' + CONFIG.headers.claimNumber + '" (will be inserted).');
+    if (rh.indexOf(CONFIG.headers.claimSubmissionDate) === -1) problems.push('Raw Data missing "' + CONFIG.headers.claimSubmissionDate + '" (will be inserted).');
+  }
+
+  // Required operational sheets
+  (spec.operational || []).forEach(n => checkExists(n));
+
+  // Routing map sheets should exist + have Claim Number header
+  Object.keys(routingMap).forEach(n => {
+    const sh = checkExists(n);
+    if (sh) checkClaimHeader(sh, n);
+  });
+
+  // Optional sheets are NOT required for Admin
+  if (!isAdmin) {
+    (spec.optional || []).forEach(n => {
+      const sh = ss.getSheetByName(n);
+      if (!sh) problems.push('Missing sheet: "' + n + '"');
+      else checkClaimHeader(sh, n);
+    });
+  }
+
+  if (problems.length) {
+    logLine_('VALID', 'Workbook validation', 'issues=' + problems.length, problems.join(' | '), 'WARN');
+    appendDetailsRows_(problems.map(p => ({
+      targetSheet: pic + ' - Workbook',
+      claim: '',
+      partner: '',
+      lastStatus: '',
+      reason: p,
+      submissionDateVal: ''
+    })));
+  } else {
+    logLine_('VALID', 'Workbook validation', '0 issues', 'OK', 'INFO');
+  }
+
+  return { issues: problems.length, problems };
+}
+
+/** Ensure _System sheet has schema/app version metadata (best-effort). */
+function sv03_ensureSystemSheet_(ss) {
+  if (!ss) return null;
+  if (DRY_RUN) return null;
+  const name = '_System';
+  let sh = ss.getSheetByName(name);
+  if (!sh) sh = ss.insertSheet(name);
+  const header = ['Key','Value','Updated At'];
+  if (sh.getLastRow() < 1) {
+    sh.getRange(1,1,1,header.length).setValues([header]);
+    try { sh.setFrozenRows(1); } catch (eF) {}
+  }
+  const data = sh.getDataRange().getValues();
+  const idx = {};
+  for (let r=1; r<data.length; r++) {
+    const k = String(data[r][0] || '').trim();
+    if (k) idx[k]=r+1;
+  }
+  const tz = (function(){ try { return Session.getScriptTimeZone(); } catch (e){ return ''; } })();
+  const pairs = [
+    ['schema_version', (typeof SCHEMA_VERSION !== 'undefined') ? String(SCHEMA_VERSION) : '' ],
+    ['app_version', (typeof APP_VERSION !== 'undefined') ? String(APP_VERSION) : '' ],
+    ['timezone', tz ]
+  ];
+  const now = new Date();
+  for (let i=0;i<pairs.length;i++) {
+    const k=pairs[i][0];
+    const v=pairs[i][1];
+    const row=[k,v,now];
+    if (idx[k]) {
+      sh.getRange(idx[k],1,1,row.length).setValues([row]);
+    } else {
+      sh.getRange(sh.getLastRow()+1,1,1,row.length).setValues([row]);
+    }
+  }
+  return sh;
+}
