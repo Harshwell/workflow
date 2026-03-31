@@ -1026,6 +1026,22 @@ function buildSheetWriters_(ss, routingMap, headerIndexRaw, pic) {
       }
       return '';
     };
+    // Read from one logical raw source only, but tolerate header formatting variants
+    // of that exact source key (e.g. "claim submitted datetime" vs "claim_submitted_datetime").
+    const getRawByCanonicalKey = (rawRow, canonicalKey) => {
+      const target = String(canonicalKey || '').trim().toLowerCase();
+      if (!target) return '';
+      const rawKeys = Object.keys(headerIndexRaw || {});
+      for (let i = 0; i < rawKeys.length; i++) {
+        const k = rawKeys[i];
+        if (!k) continue;
+        if (canonicalizeHeaderSnake_(k) !== target) continue;
+        const ix = headerIndexRaw[k];
+        if (ix == null) continue;
+        return rawRow[ix];
+      }
+      return '';
+    };
 
     writers[sheetName] = {
       sheet: sh,
@@ -1099,14 +1115,17 @@ function buildSheetWriters_(ss, routingMap, headerIndexRaw, pic) {
 
         // Dates (submission)
         if (idxH['Submission Date'] != null) {
-          const rawSubmissionVal = getRaw(rawRow, 'claim_submitted_datetime');
+          // Source of truth remains ONE field: claim_submitted_datetime.
+          // Only tolerate formatting variants of this exact header name.
+          const rawSubmissionVal = getRawByCanonicalKey(rawRow, 'claim_submitted_datetime');
           const d = coerceDate_(rawSubmissionVal);
           // IMPORTANT: never blank-out when parser misses a valid source representation.
           // Keep raw value as fallback so Submission Date is still populated.
           set('Submission Date', d ? d : (rawSubmissionVal != null ? rawSubmissionVal : ''));
         }
         if (idxH['Submission Datetime'] != null) {
-          const dt = coerceDateTime_(getRaw(rawRow, h.claimSubmittedDatetime));
+          const rawSubmissionDatetimeVal = getRawByCanonicalKey(rawRow, 'claim_submitted_datetime');
+          const dt = coerceDateTime_(rawSubmissionDatetimeVal);
           set('Submission Datetime', dt ? dt : '');
         }
 
