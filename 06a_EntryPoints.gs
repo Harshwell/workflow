@@ -1613,11 +1613,12 @@ function __buildSubRawIndex06a_(values) {
     'last_activity_log_datetime', 'last activity log datetime'
   ]);
 
+  // Keep sampling priority: prefer claim_submitted_datetime over claim_submission_date.
   const idxSubmitted = idxOfAny([
-    'claim_submission_date',
-    'claim submission date',
     'claim_submitted_datetime',
     'claim submitted datetime',
+    'claim_submission_date',
+    'claim submission date',
     'submission_date',
     'submission date'
   ]);
@@ -1872,8 +1873,9 @@ function __updateOperationalSheetsFromRaw06a_(ss, sheetNames, rawMap, ctx) {
 
       if (outActLog && isNonEmpty(rec.activity_log)) outActLog[o] = [rec.activity_log];
       if (outSubmissionDate && isNonEmpty(rec.claim_submitted_datetime)) {
-        const subD = __toDate06_(rec.claim_submitted_datetime);
-        if (subD) outSubmissionDate[o] = [subD];
+        // Align with sampling flow: write source value directly from claim_submitted_datetime.
+        // This preserves valid source formats like "31 Dec 24, 00:00" / "31 Dec 24".
+        outSubmissionDate[o] = [rec.claim_submitted_datetime];
       }
       if (outStoreName && isNonEmpty(rec.store_name)) outStoreName[o] = [rec.store_name];
       if (outPaName && isNonEmpty(rec.pa_name)) outPaName[o] = [rec.pa_name];
@@ -1923,6 +1925,11 @@ function __updateOperationalSheetsFromRaw06a_(ss, sheetNames, rawMap, ctx) {
       writeCol(idxLastStatusDate, outLastStatusDate);
       writeCol(idxStatusType, outStatusType);
       writeCol(idxType, outType);
+      // Clear stale checkbox/dropdown DV FIRST; otherwise writing date/text into checkbox
+      // cells may be coerced into blank/boolean values.
+      if (idxSubmissionDate >= 0) {
+        try { sh.getRange(2, idxSubmissionDate + 1, numDataRows, 1).clearDataValidations(); } catch (eDvSubPre) {}
+      }
       writeCol(idxSubmissionDate, outSubmissionDate);
       writeCol(idxStoreName, outStoreName);
       writeCol(idxPaName, outPaName);
