@@ -52,8 +52,36 @@ function getTzSafe_() {
 /** =========================
  * Safe write helpers (DRY_RUN aware)
  * ========================= */
-function safeSetValues_(range, values)         { if (range && !isDryRun_()) range.setValues(values); }
-function safeSetValue_(range, value)           { if (range && !isDryRun_()) range.setValue(value); }
+function safeSetValues_(range, values) {
+  if (!range || isDryRun_()) return;
+  try {
+    range.setValues(values);
+  } catch (e) {
+    const msg = String(e && e.message ? e.message : e);
+    // Fail-open for strict dropdown validation conflicts:
+    // clear DV and retry so pipeline can continue writing source-of-truth values.
+    if (/data validation rules/i.test(msg)) {
+      try { range.clearDataValidations(); } catch (e0) {}
+      range.setValues(values);
+      return;
+    }
+    throw e;
+  }
+}
+function safeSetValue_(range, value) {
+  if (!range || isDryRun_()) return;
+  try {
+    range.setValue(value);
+  } catch (e) {
+    const msg = String(e && e.message ? e.message : e);
+    if (/data validation rules/i.test(msg)) {
+      try { range.clearDataValidations(); } catch (e0) {}
+      range.setValue(value);
+      return;
+    }
+    throw e;
+  }
+}
 function safeSetFormulas_(range, formulas)     { if (range && !isDryRun_()) range.setFormulas(formulas); }
 function safeSetFormula_(range, f)             { if (range && !isDryRun_()) range.setFormula(f); }
 function safeSetRichTextValues_(range, richText2d) { if (range && !isDryRun_()) range.setRichTextValues(richText2d); }
