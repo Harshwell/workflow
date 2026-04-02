@@ -445,6 +445,11 @@ function runPipeline_(pic, fileIds, opts) {
   }
   endSegment_(segSort, 'ok', '', 'INFO');
 
+  // Refresh Overview Claim -> Report Base snapshot (best effort; all flows using MAIN pipeline).
+  try {
+    if (typeof refreshReportBaseFromOperational06_ === 'function') refreshReportBaseFromOperational06_(ss);
+  } catch (eRb) { try { logLine_('WARN', 'Report Base refresh failed', '', String(eRb), 'WARN'); } catch (e2) {} }
+
   setProgress_(1.0, 'Done.');
   logLine_(
     'DONE',

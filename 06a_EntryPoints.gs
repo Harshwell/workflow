@@ -1221,6 +1221,11 @@ try {
     const sortRes = __sortOperationalSheetsSub06a_(masterSs, opSheets, sortSpecs);
     try { logLine_('SUB_SORT', 'Sorted operational sheets', JSON.stringify(sortRes || {}), '', 'INFO'); } catch (e9) {}
 
+    // Refresh Overview Claim -> Report Base snapshot after SUB updates.
+    try {
+      if (typeof refreshReportBaseFromOperational06_ === 'function') refreshReportBaseFromOperational06_(masterSs, { incremental: true });
+    } catch (eRb) { try { logLine_('SUB_WARN', 'Report Base refresh failed', String(eRb), '', 'WARN'); } catch (eRb2) {} }
+
 
 
 // WebApp Project (Movement Claim Tracking): take CURR snapshots AFTER SUB, then emit Daily events (dedup by Event ID).
