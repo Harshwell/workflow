@@ -1550,11 +1550,13 @@ const OPS_ROUTING_POLICY = Object.freeze({
       'EzCare',
       'Ez Care',
       'B-Store',
-      'Multikom'
+      'Multikom',
+      'GH Store'
     ]),
     'SC - Meilani': Object.freeze([
       'Andalas',
       'Unicom',
+      'Authorized Service Centre by Unicom',
       'Xiaomi Authorized',
       'Samsung Exclusive',
       'Carlcare'
