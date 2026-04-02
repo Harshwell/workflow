@@ -1841,12 +1841,13 @@ function __updateOperationalSheetsFromRaw06a_(ss, sheetNames, rawMap, ctx) {
     const outServiceCenterPic = idxServiceCenterPic >= 0 ? new Array(numDataRows) : null;
     const outUpdateStatus = idxUpdateStatus >= 0 ? new Array(numDataRows) : null;
     const outTimestamp = idxTimestamp >= 0 ? new Array(numDataRows) : null;
-    const outStatus = idxStatus >= 0 ? new Array(numDataRows) : null;
+    const outStatus = idxStatus >= 0 ? new Array(numDataRows).fill(null) : null;
     const outRemarks = idxRemarks >= 0 ? new Array(numDataRows) : null;
 
     function isNonEmpty(v) {
       return v !== '' && v != null;
     }
+    const statusResetValue = (idxStatus >= 0) ? __getStatusResetValueSub06a_(sh, idxStatus) : 'Pending Admin';
 
     let updatedRows = 0;
 
@@ -1872,7 +1873,7 @@ function __updateOperationalSheetsFromRaw06a_(ss, sheetNames, rawMap, ctx) {
       if (outServiceCenterPic) outServiceCenterPic[o] = [row[idxServiceCenterPic]];
       if (outUpdateStatus) outUpdateStatus[o] = [row[idxUpdateStatus]];
       if (outTimestamp) outTimestamp[o] = [row[idxTimestamp]];
-      if (outStatus) outStatus[o] = [row[idxStatus]];
+      if (outStatus) outStatus[o] = null;
       if (outRemarks) outRemarks[o] = [row[idxRemarks]];
 
       if (!cn) continue;
@@ -1914,7 +1915,7 @@ function __updateOperationalSheetsFromRaw06a_(ss, sheetNames, rawMap, ctx) {
       if (prevLast && nextLast && prevLast !== nextLast) {
         if (outUpdateStatus) outUpdateStatus[o] = [''];
         if (outTimestamp) outTimestamp[o] = [''];
-        if (outStatus) outStatus[o] = [''];
+        if (outStatus) outStatus[o] = [statusResetValue];
         if (outRemarks) outRemarks[o] = [''];
       }
 
@@ -1962,7 +1963,15 @@ function __updateOperationalSheetsFromRaw06a_(ss, sheetNames, rawMap, ctx) {
       writeCol(idxServiceCenterPic, outServiceCenterPic);
       writeCol(idxUpdateStatus, outUpdateStatus);
       writeCol(idxTimestamp, outTimestamp);
-      writeCol(idxStatus, outStatus);
+      if (idxStatus >= 0 && outStatus) {
+        for (let rr = 0; rr < outStatus.length; rr++) {
+          const cell = outStatus[rr];
+          if (!cell) continue;
+          const rgStatus = sh.getRange(2 + rr, idxStatus + 1, 1, 1);
+          if (typeof safeSetValue_ === 'function') safeSetValue_(rgStatus, cell[0]);
+          else rgStatus.setValue(cell[0]);
+        }
+      }
       writeCol(idxRemarks, outRemarks);
 
       // Defensive: Submission Date must stay date-type, not checkbox.
@@ -2020,6 +2029,25 @@ function __formatSubmissionMonthSub06a_(v) {
   const tz = (Session && Session.getScriptTimeZone) ? (Session.getScriptTimeZone() || 'Asia/Jakarta') : 'Asia/Jakarta';
   try { return Utilities.formatDate(d, tz, 'MMMM yyyy'); } catch (e2) {}
   return '';
+}
+
+function __getStatusResetValueSub06a_(sh, idxStatus) {
+  const fallback = 'Pending Admin';
+  try {
+    if (!sh || idxStatus == null || idxStatus < 0) return fallback;
+    const rowProbe = Math.min(Math.max(sh.getLastRow(), 2), 10);
+    for (let r = 2; r <= rowProbe; r++) {
+      const dv = sh.getRange(r, idxStatus + 1, 1, 1).getDataValidation();
+      if (!dv) continue;
+      const t = dv.getCriteriaType();
+      const vals = dv.getCriteriaValues() || [];
+      if (t === SpreadsheetApp.DataValidationCriteria.VALUE_IN_LIST && vals.length && vals[0].length) {
+        const first = String(vals[0][0] || '').trim();
+        if (first) return first;
+      }
+    }
+  } catch (e) {}
+  return fallback;
 }
 
 function __parseClaimLastUpdatedDatetimeSub06a_(v) {
