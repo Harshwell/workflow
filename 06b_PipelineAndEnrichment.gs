@@ -532,6 +532,28 @@ function toNumber06_(v) {
   return isFinite(n) ? n : null;
 }
 
+function normalizeSubmissionMonthName06b_(v) {
+  const raw = String(v == null ? '' : v).trim();
+  if (!raw) return '';
+
+  const key = raw.toLowerCase().replace(/\./g, '');
+  const map = {
+    jan: 'January', january: 'January',
+    feb: 'February', february: 'February',
+    mar: 'March', march: 'March',
+    apr: 'April', april: 'April',
+    may: 'May',
+    jun: 'June', june: 'June',
+    jul: 'July', july: 'July',
+    aug: 'August', august: 'August',
+    sep: 'September', sept: 'September', september: 'September',
+    oct: 'October', october: 'October',
+    nov: 'November', november: 'November',
+    dec: 'December', december: 'December'
+  };
+  return map[key] || raw;
+}
+
 function buildRawClaimMap06_(rawValues, idxClaimRaw) {
   const map = Object.create(null);
   if (!rawValues || !rawValues.length || idxClaimRaw == null) return map;
@@ -707,6 +729,7 @@ function enrichOperationalSheetsFromRaw06_(ss, rawValues, headerIndexRaw, pic, o
   const idxClaimAmtRaw = rawIdx.idxClaimAmtRaw;
   const idxOwnRiskRaw = rawIdx.idxOwnRiskRaw;
   const idxNettRaw = rawIdx.idxNettRaw;
+  const idxSubmissionMonthRaw = rawIdx.idxSubmissionMonthRaw;
   const idxActivityLogRaw = rawIdx.idxActivityLogRaw;
   const idxClaimLastUpdatedRaw = rawIdx.idxClaimLastUpdatedRaw;
   const idxLastUpdateRaw = rawIdx.idxLastUpdateRaw;
@@ -739,6 +762,7 @@ function enrichOperationalSheetsFromRaw06_(ss, rawValues, headerIndexRaw, pic, o
     // Ensure mandatory columns everywhere
     // Mandatory (new): Status Type
     try { ensureHeadersAtEnd06_(sh, ['Status Type']); } catch (e) {}
+    try { ensureHeadersAtEnd06_(sh, ['Submission by Month']); } catch (e) {}
     try { ensureHeadersAtEnd06_(sh, mandatoryOpsHeaders); } catch (e) {}
 
     // Re-read header after possible insertions
@@ -772,6 +796,7 @@ function enrichOperationalSheetsFromRaw06_(ss, rawValues, headerIndexRaw, pic, o
     const idxApprovalOps = resolveOpsColIdx06_(hidx, ['% Approval']);
     const idxLastStatusOps = resolveOpsColIdx06_(hidx, ['Last Status', (CONFIG && CONFIG.headers && CONFIG.headers.lastStatus) ? CONFIG.headers.lastStatus : null, 'last_status']);
     const idxStatusTypeOps = resolveOpsColIdx06_(hidx, ['Status Type']);
+    const idxSubmissionMonthOps = resolveOpsColIdx06_(hidx, ['Submission by Month']);
     const idxActivityLogOps = resolveOpsColIdx06_(hidx, ['Activity Log']);
     const idxLastStatusDateOps = resolveOpsColIdx06_(hidx, ['Last Status Date']);
 
@@ -800,6 +825,7 @@ function enrichOperationalSheetsFromRaw06_(ss, rawValues, headerIndexRaw, pic, o
     const outNett = colOut(idxNettOps);
     const outApproval = colOut(idxApprovalOps);
     const outStatusType = colOut(idxStatusTypeOps);
+    const outSubmissionMonth = colOut(idxSubmissionMonthOps);
     const outActivityLog = colOut(idxActivityLogOps);
     const outLastStatusDate = colOut(idxLastStatusDateOps);
 
@@ -875,6 +901,7 @@ function enrichOperationalSheetsFromRaw06_(ss, rawValues, headerIndexRaw, pic, o
         const ls = lastStatuses ? String((lastStatuses[r] && lastStatuses[r][0]) || '').trim() : '';
         outStatusType[r] = [ getStatusTypeFromLastStatus06b_(ls) ];
       }
+      if (outSubmissionMonth) outSubmissionMonth[r] = [ normalizeSubmissionMonthName06b_(idxSubmissionMonthRaw != null ? rawGet(idxSubmissionMonthRaw) : '') ];
 
       if (outApproval) {
         const ratio = (sumN && claimN != null) ? (claimN / sumN) : null;
@@ -916,6 +943,7 @@ function enrichOperationalSheetsFromRaw06_(ss, rawValues, headerIndexRaw, pic, o
     setCol(idxLastStatusDateOps, outLastStatusDate, dtFmt);
 
     setCol(idxStatusTypeOps, outStatusType, null);
+    setCol(idxSubmissionMonthOps, outSubmissionMonth, null);
   });
 }
 
@@ -1059,6 +1087,11 @@ function __resolveEnrichRawIndexes06b_(headerIndexRaw) {
       'nett_claim_amount',
       'Nett Claim Amount',
       'Net Claim Amount'
+    ]),
+    idxSubmissionMonthRaw: resolveRawIdx06_(headerIndexRaw, [
+      (CONFIG && CONFIG.headers && (CONFIG.headers.claimSubmissionMonths || CONFIG.headers.claim_submission_months)) ? (CONFIG.headers.claimSubmissionMonths || CONFIG.headers.claim_submission_months) : null,
+      'claim_submission_months',
+      'Submission by Month'
     ]),
     idxActivityLogRaw: resolveRawIdx06_(headerIndexRaw, [
       (CONFIG && CONFIG.headers && (CONFIG.headers.lastActivityLog || CONFIG.headers.last_activity_log)) ? (CONFIG.headers.lastActivityLog || CONFIG.headers.last_activity_log) : null,
