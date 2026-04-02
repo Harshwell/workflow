@@ -1121,7 +1121,7 @@ function runSubEmailIngest(maxThreads) {
     __ensureSheetByNameSub06a_(masterSs, rawOldName);
     __ensureSheetByNameSub06a_(masterSs, rawNewName);
 
-    // Operational sheets to update (explicit allow-list; excludes EV-Bike & Exclusion by design).
+    // Operational sheets to update (explicit allow-list).
     const defaultOpSheets = [
       'Submission',
       'Ask Detail',
@@ -1132,7 +1132,9 @@ function runSubEmailIngest(maxThreads) {
       'Start',
       'Finish',
       'PO',
+      'Exclusion',
       'B2B',
+      'EV-Bike',
       'Special Case'
     ];
     const opSheets = (Array.isArray(subFlow.OPERATIONAL_SHEETS) && subFlow.OPERATIONAL_SHEETS.length)
@@ -1140,6 +1142,9 @@ function runSubEmailIngest(maxThreads) {
       : (Array.isArray(pMerged.OPERATIONAL_SHEETS) && pMerged.OPERATIONAL_SHEETS.length
         ? pMerged.OPERATIONAL_SHEETS.map(s => String(s || '').trim()).filter(Boolean)
         : defaultOpSheets);
+
+    // Align required operational column layout for SUB updates too.
+    try { if (typeof enforceOperationalLayout06_ === 'function') enforceOperationalLayout06_(masterSs); } catch (eLay) {}
 
     // Ensure SC fallback/quarantine sheet participates in relocate + sort.
     try {
@@ -1218,6 +1223,11 @@ try {
     // Final: sort operational sheets (Submission Date -> Last Status Date -> Last Status) preserving filters.
     const sortRes = __sortOperationalSheetsSub06a_(masterSs, opSheets, sortSpecs);
     try { logLine_('SUB_SORT', 'Sorted operational sheets', JSON.stringify(sortRes || {}), '', 'INFO'); } catch (e9) {}
+
+    // Refresh Overview Claim -> Report Base snapshot after SUB updates.
+    try {
+      if (typeof refreshReportBaseFromOperational06_ === 'function') refreshReportBaseFromOperational06_(masterSs, { incremental: true });
+    } catch (eRb) { try { logLine_('SUB_WARN', 'Report Base refresh failed', String(eRb), '', 'WARN'); } catch (eRb2) {} }
 
 
 
@@ -1788,9 +1798,11 @@ function __updateOperationalSheetsFromRaw06a_(ss, sheetNames, rawMap, ctx) {
     const idxStatusType = idxOfAny(['status type']);
     const idxType = isScSheet ? idxOfAny(['type']) : -1;
     const idxSubmissionDate = idxOfAny(['submission date', 'claim_submission_date', 'claim submitted datetime', 'submission_date']);
+    const idxSubmissionMonth = idxOfAny(['submission by month', 'submission_month']);
     const idxStoreName = idxOfAny(['store name', 'outlet_name', 'outlet name', 'store_name']);
     const idxPaName = idxOfAny(['pa name', 'pa_name']);
     const idxSpaName = idxOfAny(['spa name', 'spa_name']);
+    const idxServiceCenterPic = idxOfAny(['service center pic', 'service_center_pic']);
     const idxUpdateStatus = idxOfAny(['update status']);
     const idxTimestamp = idxOfAny(['timestamp']);
     const idxStatus = idxOfAny(['status']);
@@ -1822,17 +1834,20 @@ function __updateOperationalSheetsFromRaw06a_(ss, sheetNames, rawMap, ctx) {
     const outStatusType = idxStatusType >= 0 ? new Array(numDataRows) : null;
     const outType = (idxType >= 0) ? new Array(numDataRows) : null;
     const outSubmissionDate = idxSubmissionDate >= 0 ? new Array(numDataRows) : null;
+    const outSubmissionMonth = idxSubmissionMonth >= 0 ? new Array(numDataRows) : null;
     const outStoreName = idxStoreName >= 0 ? new Array(numDataRows) : null;
     const outPaName = idxPaName >= 0 ? new Array(numDataRows) : null;
     const outSpaName = idxSpaName >= 0 ? new Array(numDataRows) : null;
+    const outServiceCenterPic = idxServiceCenterPic >= 0 ? new Array(numDataRows) : null;
     const outUpdateStatus = idxUpdateStatus >= 0 ? new Array(numDataRows) : null;
     const outTimestamp = idxTimestamp >= 0 ? new Array(numDataRows) : null;
-    const outStatus = idxStatus >= 0 ? new Array(numDataRows) : null;
+    const outStatus = idxStatus >= 0 ? new Array(numDataRows).fill(null) : null;
     const outRemarks = idxRemarks >= 0 ? new Array(numDataRows) : null;
 
     function isNonEmpty(v) {
       return v !== '' && v != null;
     }
+    const statusResetValue = (idxStatus >= 0) ? __getStatusResetValueSub06a_(sh, idxStatus) : 'Pending Admin';
 
     let updatedRows = 0;
 
@@ -1851,12 +1866,14 @@ function __updateOperationalSheetsFromRaw06a_(ss, sheetNames, rawMap, ctx) {
       if (outStatusType) outStatusType[o] = [row[idxStatusType]];
       if (outType) outType[o] = [row[idxType]];
       if (outSubmissionDate) outSubmissionDate[o] = [row[idxSubmissionDate]];
+      if (outSubmissionMonth) outSubmissionMonth[o] = [row[idxSubmissionMonth]];
       if (outStoreName) outStoreName[o] = [row[idxStoreName]];
       if (outPaName) outPaName[o] = [row[idxPaName]];
       if (outSpaName) outSpaName[o] = [row[idxSpaName]];
+      if (outServiceCenterPic) outServiceCenterPic[o] = [row[idxServiceCenterPic]];
       if (outUpdateStatus) outUpdateStatus[o] = [row[idxUpdateStatus]];
       if (outTimestamp) outTimestamp[o] = [row[idxTimestamp]];
-      if (outStatus) outStatus[o] = [row[idxStatus]];
+      if (outStatus) outStatus[o] = null;
       if (outRemarks) outRemarks[o] = [row[idxRemarks]];
 
       if (!cn) continue;
@@ -1877,9 +1894,17 @@ function __updateOperationalSheetsFromRaw06a_(ss, sheetNames, rawMap, ctx) {
         // This preserves valid source formats like "31 Dec 24, 00:00" / "31 Dec 24".
         outSubmissionDate[o] = [rec.claim_submitted_datetime];
       }
+      if (outSubmissionMonth) {
+        const srcSubDate = isNonEmpty(rec.claim_submitted_datetime) ? rec.claim_submitted_datetime : (idxSubmissionDate >= 0 ? row[idxSubmissionDate] : '');
+        outSubmissionMonth[o] = [__formatSubmissionMonthSub06a_(srcSubDate)];
+      }
       if (outStoreName && isNonEmpty(rec.store_name)) outStoreName[o] = [rec.store_name];
       if (outPaName && isNonEmpty(rec.pa_name)) outPaName[o] = [rec.pa_name];
       if (outSpaName && isNonEmpty(rec.spa_name)) outSpaName[o] = [rec.spa_name];
+      if (outServiceCenterPic) {
+        const scRaw = isNonEmpty(rec.sc_name) ? rec.sc_name : (idxSc >= 0 ? row[idxSc] : '');
+        outServiceCenterPic[o] = [__deriveServiceCenterPicSub06a_(scRaw)];
+      }
 
       if (outLastStatusDate && isNonEmpty(rec.claim_last_updated_datetime)) {
         const d = __parseClaimLastUpdatedDatetimeSub06a_(rec.claim_last_updated_datetime);
@@ -1890,7 +1915,7 @@ function __updateOperationalSheetsFromRaw06a_(ss, sheetNames, rawMap, ctx) {
       if (prevLast && nextLast && prevLast !== nextLast) {
         if (outUpdateStatus) outUpdateStatus[o] = [''];
         if (outTimestamp) outTimestamp[o] = [''];
-        if (outStatus) outStatus[o] = [''];
+        if (outStatus) outStatus[o] = [statusResetValue];
         if (outRemarks) outRemarks[o] = [''];
       }
 
@@ -1931,12 +1956,22 @@ function __updateOperationalSheetsFromRaw06a_(ss, sheetNames, rawMap, ctx) {
         try { sh.getRange(2, idxSubmissionDate + 1, numDataRows, 1).clearDataValidations(); } catch (eDvSubPre) {}
       }
       writeCol(idxSubmissionDate, outSubmissionDate);
+      writeCol(idxSubmissionMonth, outSubmissionMonth);
       writeCol(idxStoreName, outStoreName);
       writeCol(idxPaName, outPaName);
       writeCol(idxSpaName, outSpaName);
+      writeCol(idxServiceCenterPic, outServiceCenterPic);
       writeCol(idxUpdateStatus, outUpdateStatus);
       writeCol(idxTimestamp, outTimestamp);
-      writeCol(idxStatus, outStatus);
+      if (idxStatus >= 0 && outStatus) {
+        for (let rr = 0; rr < outStatus.length; rr++) {
+          const cell = outStatus[rr];
+          if (!cell) continue;
+          const rgStatus = sh.getRange(2 + rr, idxStatus + 1, 1, 1);
+          if (typeof safeSetValue_ === 'function') safeSetValue_(rgStatus, cell[0]);
+          else rgStatus.setValue(cell[0]);
+        }
+      }
       writeCol(idxRemarks, outRemarks);
 
       // Defensive: Submission Date must stay date-type, not checkbox.
@@ -1961,6 +1996,60 @@ function __updateOperationalSheetsFromRaw06a_(ss, sheetNames, rawMap, ctx) {
 }
 
 /** SUB helpers: safe parsing & status type resolution */
+function __deriveServiceCenterPicSub06a_(serviceCenterName) {
+  const sc = String(serviceCenterName == null ? '' : serviceCenterName).toLowerCase();
+  if (!sc) return '';
+  const policy = (typeof OPS_ROUTING_POLICY !== 'undefined' && OPS_ROUTING_POLICY) ? OPS_ROUTING_POLICY : null;
+  const kw = (policy && policy.SC_NAME_KEYWORDS) ? policy.SC_NAME_KEYWORDS : null;
+  if (!kw) return '';
+
+  const sheets = ['SC - Farhan', 'SC - Meilani', 'SC - Meindar'];
+  for (let i = 0; i < sheets.length; i++) {
+    const sheet = sheets[i];
+    const list = Array.isArray(kw[sheet]) ? kw[sheet] : [];
+    for (let j = 0; j < list.length; j++) {
+      const key = String(list[j] == null ? '' : list[j]).toLowerCase().trim();
+      if (key && sc.indexOf(key) > -1) return sheet.replace(/^SC\s*-\s*/i, '').trim();
+    }
+  }
+  return '';
+}
+
+function __formatSubmissionMonthSub06a_(v) {
+  if (v == null || v === '') return '';
+  let d = null;
+  if (Object.prototype.toString.call(v) === '[object Date]') d = isNaN(v.getTime()) ? null : v;
+  if (!d && typeof normalizeDate_ === 'function') {
+    try { d = normalizeDate_(v); } catch (e0) {}
+  }
+  if (!d && typeof tryNativeParseUnambiguousDate_ === 'function') {
+    try { d = tryNativeParseUnambiguousDate_(String(v)); } catch (e1) {}
+  }
+  if (!d || isNaN(d.getTime())) return '';
+  const tz = (Session && Session.getScriptTimeZone) ? (Session.getScriptTimeZone() || 'Asia/Jakarta') : 'Asia/Jakarta';
+  try { return Utilities.formatDate(d, tz, 'MMMM yyyy'); } catch (e2) {}
+  return '';
+}
+
+function __getStatusResetValueSub06a_(sh, idxStatus) {
+  const fallback = 'Pending Admin';
+  try {
+    if (!sh || idxStatus == null || idxStatus < 0) return fallback;
+    const rowProbe = Math.min(Math.max(sh.getLastRow(), 2), 10);
+    for (let r = 2; r <= rowProbe; r++) {
+      const dv = sh.getRange(r, idxStatus + 1, 1, 1).getDataValidation();
+      if (!dv) continue;
+      const t = dv.getCriteriaType();
+      const vals = dv.getCriteriaValues() || [];
+      if (t === SpreadsheetApp.DataValidationCriteria.VALUE_IN_LIST && vals.length && vals[0].length) {
+        const first = String(vals[0][0] || '').trim();
+        if (first) return first;
+      }
+    }
+  } catch (e) {}
+  return fallback;
+}
+
 function __parseClaimLastUpdatedDatetimeSub06a_(v) {
   if (v == null || v === '') return null;
   if (v instanceof Date) return (isNaN(v.getTime()) ? null : v);
@@ -2593,7 +2682,7 @@ function runManual(picOrFileIdsCsv, fileIdsCsvMaybe) {
     try { ssTiming = __logOverviewStart06_(key, startedAt); } catch (e) {}
 
     setProgress_(0, 'Starting (manual)...');
-    logLine_('BOOT', 'Manual run started', 'version=' + APP_VERSION, 'profile=' + key, 'INFO');
+    logLine_('BOOT', 'Manual run started', 'version=' + ((App && App.APP_VERSION) ? App.APP_VERSION : ''), 'profile=' + key, 'INFO');
 
     const ids = String(fileIdsCsv || '')
       .split(/[\s,;]+/)
