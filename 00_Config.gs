@@ -330,7 +330,6 @@ const SUB_FLOW_SPEC = Object.freeze({
   RAW_NEW_SHEET_NAME: getPropString_('SUB_RAW_NEW_SHEET_NAME', 'Raw NEW'),
 
   // Target operational sheets for lightweight updates (allow-list).
-  // NOTE: EV-Bike and Exclusion are intentionally excluded from this allow-list.
   OPERATIONAL_SHEETS: Object.freeze([
     'Submission',
     'Ask Detail',
@@ -341,7 +340,9 @@ const SUB_FLOW_SPEC = Object.freeze({
     'Start',
     'Finish',
     'PO',
+    'Exclusion',
     'B2B',
+    'EV-Bike',
     'Special Case'
   ]),
 

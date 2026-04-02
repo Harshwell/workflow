@@ -554,6 +554,25 @@ function normalizeSubmissionMonthName06b_(v) {
   return map[key] || raw;
 }
 
+function deriveServiceCenterPic06b_(serviceCenterName) {
+  const sc = String(serviceCenterName == null ? '' : serviceCenterName).toLowerCase();
+  if (!sc) return '';
+  const policy = (typeof OPS_ROUTING_POLICY !== 'undefined' && OPS_ROUTING_POLICY) ? OPS_ROUTING_POLICY : null;
+  const kw = (policy && policy.SC_NAME_KEYWORDS) ? policy.SC_NAME_KEYWORDS : null;
+  if (!kw) return '';
+
+  const sheets = ['SC - Farhan', 'SC - Meilani', 'SC - Meindar'];
+  for (let i = 0; i < sheets.length; i++) {
+    const sheet = sheets[i];
+    const list = Array.isArray(kw[sheet]) ? kw[sheet] : [];
+    for (let j = 0; j < list.length; j++) {
+      const key = String(list[j] == null ? '' : list[j]).toLowerCase().trim();
+      if (key && sc.indexOf(key) > -1) return sheet.replace(/^SC\s*-\s*/i, '').trim();
+    }
+  }
+  return '';
+}
+
 function buildRawClaimMap06_(rawValues, idxClaimRaw) {
   const map = Object.create(null);
   if (!rawValues || !rawValues.length || idxClaimRaw == null) return map;
@@ -797,6 +816,7 @@ function enrichOperationalSheetsFromRaw06_(ss, rawValues, headerIndexRaw, pic, o
     const idxLastStatusOps = resolveOpsColIdx06_(hidx, ['Last Status', (CONFIG && CONFIG.headers && CONFIG.headers.lastStatus) ? CONFIG.headers.lastStatus : null, 'last_status']);
     const idxStatusTypeOps = resolveOpsColIdx06_(hidx, ['Status Type']);
     const idxSubmissionMonthOps = resolveOpsColIdx06_(hidx, ['Submission by Month']);
+    const idxServiceCenterPicOps = resolveOpsColIdx06_(hidx, ['Service Center PIC']);
     const idxActivityLogOps = resolveOpsColIdx06_(hidx, ['Activity Log']);
     const idxLastStatusDateOps = resolveOpsColIdx06_(hidx, ['Last Status Date']);
 
@@ -826,6 +846,7 @@ function enrichOperationalSheetsFromRaw06_(ss, rawValues, headerIndexRaw, pic, o
     const outApproval = colOut(idxApprovalOps);
     const outStatusType = colOut(idxStatusTypeOps);
     const outSubmissionMonth = colOut(idxSubmissionMonthOps);
+    const outServiceCenterPic = colOut(idxServiceCenterPicOps);
     const outActivityLog = colOut(idxActivityLogOps);
     const outLastStatusDate = colOut(idxLastStatusDateOps);
 
@@ -840,7 +861,8 @@ function enrichOperationalSheetsFromRaw06_(ss, rawValues, headerIndexRaw, pic, o
       if (outPartner) outPartner[r] = [ idxPartnerRaw != null ? rawGet(idxPartnerRaw) : '' ];
       if (outInsurance) outInsurance[r] = [ idxInsuranceRaw != null ? normalizeInsuranceShort06_(rawGet(idxInsuranceRaw)) : '' ];
       if (outDeviceType) outDeviceType[r] = [ idxDeviceTypeRaw != null ? rawGet(idxDeviceTypeRaw) : '' ];
-      if (outServiceCenter) outServiceCenter[r] = [ idxServiceCenterRaw != null ? rawGet(idxServiceCenterRaw) : '' ];
+      const scNameVal = idxServiceCenterRaw != null ? rawGet(idxServiceCenterRaw) : '';
+      if (outServiceCenter) outServiceCenter[r] = [ scNameVal ];
       if (outLsa) outLsa[r] = [ idxLsaRaw != null ? rawGet(idxLsaRaw) : '' ];
       if (outAla) outAla[r] = [ idxAlaRaw != null ? rawGet(idxAlaRaw) : '' ];
       if (outTat) outTat[r] = [ idxTatRaw != null ? rawGet(idxTatRaw) : '' ];
@@ -902,6 +924,7 @@ function enrichOperationalSheetsFromRaw06_(ss, rawValues, headerIndexRaw, pic, o
         outStatusType[r] = [ getStatusTypeFromLastStatus06b_(ls) ];
       }
       if (outSubmissionMonth) outSubmissionMonth[r] = [ normalizeSubmissionMonthName06b_(idxSubmissionMonthRaw != null ? rawGet(idxSubmissionMonthRaw) : '') ];
+      if (outServiceCenterPic) outServiceCenterPic[r] = [ deriveServiceCenterPic06b_(scNameVal) ];
 
       if (outApproval) {
         const ratio = (sumN && claimN != null) ? (claimN / sumN) : null;
@@ -944,6 +967,7 @@ function enrichOperationalSheetsFromRaw06_(ss, rawValues, headerIndexRaw, pic, o
 
     setCol(idxStatusTypeOps, outStatusType, null);
     setCol(idxSubmissionMonthOps, outSubmissionMonth, null);
+    setCol(idxServiceCenterPicOps, outServiceCenterPic, null);
   });
 }
 

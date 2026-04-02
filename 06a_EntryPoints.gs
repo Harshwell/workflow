@@ -1121,7 +1121,7 @@ function runSubEmailIngest(maxThreads) {
     __ensureSheetByNameSub06a_(masterSs, rawOldName);
     __ensureSheetByNameSub06a_(masterSs, rawNewName);
 
-    // Operational sheets to update (explicit allow-list; excludes EV-Bike & Exclusion by design).
+    // Operational sheets to update (explicit allow-list).
     const defaultOpSheets = [
       'Submission',
       'Ask Detail',
@@ -1132,7 +1132,9 @@ function runSubEmailIngest(maxThreads) {
       'Start',
       'Finish',
       'PO',
+      'Exclusion',
       'B2B',
+      'EV-Bike',
       'Special Case'
     ];
     const opSheets = (Array.isArray(subFlow.OPERATIONAL_SHEETS) && subFlow.OPERATIONAL_SHEETS.length)
@@ -1791,6 +1793,7 @@ function __updateOperationalSheetsFromRaw06a_(ss, sheetNames, rawMap, ctx) {
     const idxStoreName = idxOfAny(['store name', 'outlet_name', 'outlet name', 'store_name']);
     const idxPaName = idxOfAny(['pa name', 'pa_name']);
     const idxSpaName = idxOfAny(['spa name', 'spa_name']);
+    const idxServiceCenterPic = idxOfAny(['service center pic', 'service_center_pic']);
     const idxUpdateStatus = idxOfAny(['update status']);
     const idxTimestamp = idxOfAny(['timestamp']);
     const idxStatus = idxOfAny(['status']);
@@ -1825,6 +1828,7 @@ function __updateOperationalSheetsFromRaw06a_(ss, sheetNames, rawMap, ctx) {
     const outStoreName = idxStoreName >= 0 ? new Array(numDataRows) : null;
     const outPaName = idxPaName >= 0 ? new Array(numDataRows) : null;
     const outSpaName = idxSpaName >= 0 ? new Array(numDataRows) : null;
+    const outServiceCenterPic = idxServiceCenterPic >= 0 ? new Array(numDataRows) : null;
     const outUpdateStatus = idxUpdateStatus >= 0 ? new Array(numDataRows) : null;
     const outTimestamp = idxTimestamp >= 0 ? new Array(numDataRows) : null;
     const outStatus = idxStatus >= 0 ? new Array(numDataRows) : null;
@@ -1854,6 +1858,7 @@ function __updateOperationalSheetsFromRaw06a_(ss, sheetNames, rawMap, ctx) {
       if (outStoreName) outStoreName[o] = [row[idxStoreName]];
       if (outPaName) outPaName[o] = [row[idxPaName]];
       if (outSpaName) outSpaName[o] = [row[idxSpaName]];
+      if (outServiceCenterPic) outServiceCenterPic[o] = [row[idxServiceCenterPic]];
       if (outUpdateStatus) outUpdateStatus[o] = [row[idxUpdateStatus]];
       if (outTimestamp) outTimestamp[o] = [row[idxTimestamp]];
       if (outStatus) outStatus[o] = [row[idxStatus]];
@@ -1880,6 +1885,10 @@ function __updateOperationalSheetsFromRaw06a_(ss, sheetNames, rawMap, ctx) {
       if (outStoreName && isNonEmpty(rec.store_name)) outStoreName[o] = [rec.store_name];
       if (outPaName && isNonEmpty(rec.pa_name)) outPaName[o] = [rec.pa_name];
       if (outSpaName && isNonEmpty(rec.spa_name)) outSpaName[o] = [rec.spa_name];
+      if (outServiceCenterPic) {
+        const scRaw = isNonEmpty(rec.sc_name) ? rec.sc_name : (idxSc >= 0 ? row[idxSc] : '');
+        outServiceCenterPic[o] = [__deriveServiceCenterPicSub06a_(scRaw)];
+      }
 
       if (outLastStatusDate && isNonEmpty(rec.claim_last_updated_datetime)) {
         const d = __parseClaimLastUpdatedDatetimeSub06a_(rec.claim_last_updated_datetime);
@@ -1934,6 +1943,7 @@ function __updateOperationalSheetsFromRaw06a_(ss, sheetNames, rawMap, ctx) {
       writeCol(idxStoreName, outStoreName);
       writeCol(idxPaName, outPaName);
       writeCol(idxSpaName, outSpaName);
+      writeCol(idxServiceCenterPic, outServiceCenterPic);
       writeCol(idxUpdateStatus, outUpdateStatus);
       writeCol(idxTimestamp, outTimestamp);
       writeCol(idxStatus, outStatus);
@@ -1961,6 +1971,25 @@ function __updateOperationalSheetsFromRaw06a_(ss, sheetNames, rawMap, ctx) {
 }
 
 /** SUB helpers: safe parsing & status type resolution */
+function __deriveServiceCenterPicSub06a_(serviceCenterName) {
+  const sc = String(serviceCenterName == null ? '' : serviceCenterName).toLowerCase();
+  if (!sc) return '';
+  const policy = (typeof OPS_ROUTING_POLICY !== 'undefined' && OPS_ROUTING_POLICY) ? OPS_ROUTING_POLICY : null;
+  const kw = (policy && policy.SC_NAME_KEYWORDS) ? policy.SC_NAME_KEYWORDS : null;
+  if (!kw) return '';
+
+  const sheets = ['SC - Farhan', 'SC - Meilani', 'SC - Meindar'];
+  for (let i = 0; i < sheets.length; i++) {
+    const sheet = sheets[i];
+    const list = Array.isArray(kw[sheet]) ? kw[sheet] : [];
+    for (let j = 0; j < list.length; j++) {
+      const key = String(list[j] == null ? '' : list[j]).toLowerCase().trim();
+      if (key && sc.indexOf(key) > -1) return sheet.replace(/^SC\s*-\s*/i, '').trim();
+    }
+  }
+  return '';
+}
+
 function __parseClaimLastUpdatedDatetimeSub06a_(v) {
   if (v == null || v === '') return null;
   if (v instanceof Date) return (isNaN(v.getTime()) ? null : v);
