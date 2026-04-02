@@ -1143,6 +1143,9 @@ function runSubEmailIngest(maxThreads) {
         ? pMerged.OPERATIONAL_SHEETS.map(s => String(s || '').trim()).filter(Boolean)
         : defaultOpSheets);
 
+    // Align required operational column layout for SUB updates too.
+    try { if (typeof enforceOperationalLayout06_ === 'function') enforceOperationalLayout06_(masterSs); } catch (eLay) {}
+
     // Ensure SC fallback/quarantine sheet participates in relocate + sort.
     try {
       const fb = __getScFallbackSheet06a_();
@@ -1795,6 +1798,7 @@ function __updateOperationalSheetsFromRaw06a_(ss, sheetNames, rawMap, ctx) {
     const idxStatusType = idxOfAny(['status type']);
     const idxType = isScSheet ? idxOfAny(['type']) : -1;
     const idxSubmissionDate = idxOfAny(['submission date', 'claim_submission_date', 'claim submitted datetime', 'submission_date']);
+    const idxSubmissionMonth = idxOfAny(['submission by month', 'submission_month']);
     const idxStoreName = idxOfAny(['store name', 'outlet_name', 'outlet name', 'store_name']);
     const idxPaName = idxOfAny(['pa name', 'pa_name']);
     const idxSpaName = idxOfAny(['spa name', 'spa_name']);
@@ -1830,6 +1834,7 @@ function __updateOperationalSheetsFromRaw06a_(ss, sheetNames, rawMap, ctx) {
     const outStatusType = idxStatusType >= 0 ? new Array(numDataRows) : null;
     const outType = (idxType >= 0) ? new Array(numDataRows) : null;
     const outSubmissionDate = idxSubmissionDate >= 0 ? new Array(numDataRows) : null;
+    const outSubmissionMonth = idxSubmissionMonth >= 0 ? new Array(numDataRows) : null;
     const outStoreName = idxStoreName >= 0 ? new Array(numDataRows) : null;
     const outPaName = idxPaName >= 0 ? new Array(numDataRows) : null;
     const outSpaName = idxSpaName >= 0 ? new Array(numDataRows) : null;
@@ -1860,6 +1865,7 @@ function __updateOperationalSheetsFromRaw06a_(ss, sheetNames, rawMap, ctx) {
       if (outStatusType) outStatusType[o] = [row[idxStatusType]];
       if (outType) outType[o] = [row[idxType]];
       if (outSubmissionDate) outSubmissionDate[o] = [row[idxSubmissionDate]];
+      if (outSubmissionMonth) outSubmissionMonth[o] = [row[idxSubmissionMonth]];
       if (outStoreName) outStoreName[o] = [row[idxStoreName]];
       if (outPaName) outPaName[o] = [row[idxPaName]];
       if (outSpaName) outSpaName[o] = [row[idxSpaName]];
@@ -1886,6 +1892,10 @@ function __updateOperationalSheetsFromRaw06a_(ss, sheetNames, rawMap, ctx) {
         // Align with sampling flow: write source value directly from claim_submitted_datetime.
         // This preserves valid source formats like "31 Dec 24, 00:00" / "31 Dec 24".
         outSubmissionDate[o] = [rec.claim_submitted_datetime];
+      }
+      if (outSubmissionMonth) {
+        const srcSubDate = isNonEmpty(rec.claim_submitted_datetime) ? rec.claim_submitted_datetime : (idxSubmissionDate >= 0 ? row[idxSubmissionDate] : '');
+        outSubmissionMonth[o] = [__formatSubmissionMonthSub06a_(srcSubDate)];
       }
       if (outStoreName && isNonEmpty(rec.store_name)) outStoreName[o] = [rec.store_name];
       if (outPaName && isNonEmpty(rec.pa_name)) outPaName[o] = [rec.pa_name];
@@ -1945,6 +1955,7 @@ function __updateOperationalSheetsFromRaw06a_(ss, sheetNames, rawMap, ctx) {
         try { sh.getRange(2, idxSubmissionDate + 1, numDataRows, 1).clearDataValidations(); } catch (eDvSubPre) {}
       }
       writeCol(idxSubmissionDate, outSubmissionDate);
+      writeCol(idxSubmissionMonth, outSubmissionMonth);
       writeCol(idxStoreName, outStoreName);
       writeCol(idxPaName, outPaName);
       writeCol(idxSpaName, outSpaName);
@@ -1992,6 +2003,22 @@ function __deriveServiceCenterPicSub06a_(serviceCenterName) {
       if (key && sc.indexOf(key) > -1) return sheet.replace(/^SC\s*-\s*/i, '').trim();
     }
   }
+  return '';
+}
+
+function __formatSubmissionMonthSub06a_(v) {
+  if (v == null || v === '') return '';
+  let d = null;
+  if (Object.prototype.toString.call(v) === '[object Date]') d = isNaN(v.getTime()) ? null : v;
+  if (!d && typeof normalizeDate_ === 'function') {
+    try { d = normalizeDate_(v); } catch (e0) {}
+  }
+  if (!d && typeof tryNativeParseUnambiguousDate_ === 'function') {
+    try { d = tryNativeParseUnambiguousDate_(String(v)); } catch (e1) {}
+  }
+  if (!d || isNaN(d.getTime())) return '';
+  const tz = (Session && Session.getScriptTimeZone) ? (Session.getScriptTimeZone() || 'Asia/Jakarta') : 'Asia/Jakarta';
+  try { return Utilities.formatDate(d, tz, 'MMMM yyyy'); } catch (e2) {}
   return '';
 }
 

@@ -1094,6 +1094,44 @@ function __formatSubmissionMonthReportBase06_(submissionDateVal) {
   return '';
 }
 
+function __ensureHeaderAtColumn06_(sh, headerName, targetCol) {
+  if (!sh || !headerName || !targetCol || targetCol < 1) return false;
+  if (DRY_RUN) return false;
+  let lastCol = Math.max(sh.getLastColumn() || 0, 1);
+  while (lastCol < targetCol - 1) {
+    sh.insertColumnAfter(lastCol);
+    lastCol = sh.getLastColumn();
+  }
+  const hdr = sh.getRange(1, 1, 1, Math.max(sh.getLastColumn(), targetCol)).getValues()[0].map(v => String(v || '').trim());
+  const curIdx = hdr.indexOf(String(headerName).trim()) + 1;
+  if (curIdx === targetCol) return false;
+
+  if (curIdx > 0) {
+    sh.moveColumns(sh.getRange(1, curIdx, sh.getMaxRows(), 1), targetCol);
+  } else {
+    sh.insertColumnBefore(targetCol);
+    sh.getRange(1, targetCol).setValue(headerName);
+  }
+  return true;
+}
+
+function enforceOperationalLayout06_(ss) {
+  if (!ss || DRY_RUN) return { touched: 0 };
+  const monthSheets = ['Submission', 'Ask Detail', 'Start', 'SC - Farhan', 'SC - Meilani', 'SC - Meindar', 'Finish', 'PO', 'Exclusion'];
+  let touched = 0;
+  for (let i = 0; i < monthSheets.length; i++) {
+    const sh = ss.getSheetByName(monthSheets[i]);
+    if (!sh) continue;
+    if (__ensureHeaderAtColumn06_(sh, 'Submission by Month', 2)) touched++;
+  }
+  ['Start', 'Finish'].forEach(name => {
+    const sh = ss.getSheetByName(name);
+    if (!sh) return;
+    if (__ensureHeaderAtColumn06_(sh, 'Service Center PIC', 14)) touched++;
+  });
+  return { touched: touched };
+}
+
 function refreshReportBaseFromOperational06_(ss, opts) {
   if (!ss) return { written: 0, skipped: 'missing spreadsheet' };
   const sh = ss.getSheetByName('Report Base');

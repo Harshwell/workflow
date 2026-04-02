@@ -312,6 +312,9 @@ function runPipeline_(pic, fileIds, opts) {
     }
   } catch (eSnap) {}
 
+  // Ensure required operational column layout (Submission by Month @ B, Service Center PIC @ N on Start/Finish).
+  try { if (typeof enforceOperationalLayout06_ === 'function') enforceOperationalLayout06_(ss); } catch (eLay) {}
+
 // Clear operational sheets and route
   setProgress_(0.60, 'Clearing operational sheets…');
   const segClr = startSegment_('CLR', 'Clear operational sheets');
@@ -540,6 +543,32 @@ function toNumber06_(v) {
 function normalizeSubmissionMonthName06b_(v) {
   const raw = String(v == null ? '' : v).trim();
   if (!raw) return '';
+  const tz = (Session && Session.getScriptTimeZone) ? (Session.getScriptTimeZone() || 'Asia/Jakarta') : 'Asia/Jakarta';
+
+  const parse = (x) => {
+    if (x == null || x === '') return null;
+    if (Object.prototype.toString.call(x) === '[object Date]') return isNaN(x.getTime()) ? null : x;
+    const s = String(x).trim();
+    if (!s) return null;
+    if (typeof normalizeDate_ === 'function') {
+      try {
+        const d0 = normalizeDate_(s);
+        if (d0 && !isNaN(d0.getTime())) return d0;
+      } catch (e0) {}
+    }
+    if (typeof tryNativeParseUnambiguousDate_ === 'function') {
+      try {
+        const d1 = tryNativeParseUnambiguousDate_(s);
+        if (d1 && !isNaN(d1.getTime())) return d1;
+      } catch (e1) {}
+    }
+    return null;
+  };
+
+  const d = parse(v);
+  if (d) {
+    try { return Utilities.formatDate(d, tz, 'MMMM yyyy'); } catch (e) {}
+  }
 
   const key = raw.toLowerCase().replace(/\./g, '');
   const map = {
@@ -556,7 +585,9 @@ function normalizeSubmissionMonthName06b_(v) {
     nov: 'November', november: 'November',
     dec: 'December', december: 'December'
   };
-  return map[key] || raw;
+  const month = map[key] || raw;
+  // Fallback for month text without year.
+  return /\b\d{4}\b/.test(raw) ? (month + ' ' + raw.match(/\b\d{4}\b/)[0]) : month;
 }
 
 function deriveServiceCenterPic06b_(serviceCenterName) {
@@ -754,6 +785,7 @@ function enrichOperationalSheetsFromRaw06_(ss, rawValues, headerIndexRaw, pic, o
   const idxOwnRiskRaw = rawIdx.idxOwnRiskRaw;
   const idxNettRaw = rawIdx.idxNettRaw;
   const idxSubmissionMonthRaw = rawIdx.idxSubmissionMonthRaw;
+  const idxSubmissionDateRaw = rawIdx.idxSubmissionDateRaw;
   const idxActivityLogRaw = rawIdx.idxActivityLogRaw;
   const idxClaimLastUpdatedRaw = rawIdx.idxClaimLastUpdatedRaw;
   const idxLastUpdateRaw = rawIdx.idxLastUpdateRaw;
@@ -928,7 +960,10 @@ function enrichOperationalSheetsFromRaw06_(ss, rawValues, headerIndexRaw, pic, o
         const ls = lastStatuses ? String((lastStatuses[r] && lastStatuses[r][0]) || '').trim() : '';
         outStatusType[r] = [ getStatusTypeFromLastStatus06b_(ls) ];
       }
-      if (outSubmissionMonth) outSubmissionMonth[r] = [ normalizeSubmissionMonthName06b_(idxSubmissionMonthRaw != null ? rawGet(idxSubmissionMonthRaw) : '') ];
+      if (outSubmissionMonth) {
+        const monthSource = (idxSubmissionDateRaw != null ? rawGet(idxSubmissionDateRaw) : '') || (idxSubmissionMonthRaw != null ? rawGet(idxSubmissionMonthRaw) : '');
+        outSubmissionMonth[r] = [ normalizeSubmissionMonthName06b_(monthSource) ];
+      }
       if (outServiceCenterPic) outServiceCenterPic[r] = [ deriveServiceCenterPic06b_(scNameVal) ];
 
       if (outApproval) {
@@ -1121,6 +1156,12 @@ function __resolveEnrichRawIndexes06b_(headerIndexRaw) {
       (CONFIG && CONFIG.headers && (CONFIG.headers.claimSubmissionMonths || CONFIG.headers.claim_submission_months)) ? (CONFIG.headers.claimSubmissionMonths || CONFIG.headers.claim_submission_months) : null,
       'claim_submission_months',
       'Submission by Month'
+    ]),
+    idxSubmissionDateRaw: resolveRawIdx06_(headerIndexRaw, [
+      (CONFIG && CONFIG.headers && (CONFIG.headers.claimSubmissionDate || CONFIG.headers.claim_submission_date)) ? (CONFIG.headers.claimSubmissionDate || CONFIG.headers.claim_submission_date) : null,
+      'claim_submission_date',
+      'claim_submitted_datetime',
+      'Submission Date'
     ]),
     idxActivityLogRaw: resolveRawIdx06_(headerIndexRaw, [
       (CONFIG && CONFIG.headers && (CONFIG.headers.lastActivityLog || CONFIG.headers.last_activity_log)) ? (CONFIG.headers.lastActivityLog || CONFIG.headers.last_activity_log) : null,
