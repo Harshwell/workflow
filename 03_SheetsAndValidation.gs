@@ -1490,7 +1490,7 @@ function sv03_ensureSystemSheet_(ss) {
   const tz = (function(){ try { return Session.getScriptTimeZone(); } catch (e){ return ''; } })();
   const pairs = [
     ['schema_version', (typeof SCHEMA_VERSION !== 'undefined') ? String(SCHEMA_VERSION) : '' ],
-    ['app_version', (typeof APP_VERSION !== 'undefined') ? String(APP_VERSION) : '' ],
+    ['app_version', (App && App.APP_VERSION) ? String(App.APP_VERSION) : '' ],
     ['timezone', tz ]
   ];
   const now = new Date();

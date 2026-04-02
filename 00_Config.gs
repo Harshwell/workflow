@@ -40,7 +40,7 @@ App.Registry = App.Registry || (function () {
 })();
 
 /** VERSION */
-const APP_VERSION = '2026.03.26-enterprise-refactor-r3-hardening';
+App.APP_VERSION = App.APP_VERSION || '2026.03.26-enterprise-refactor-r3-hardening';
 
 /** Schema version for managed sheets */
 const SCHEMA_VERSION = 5;
@@ -330,7 +330,6 @@ const SUB_FLOW_SPEC = Object.freeze({
   RAW_NEW_SHEET_NAME: getPropString_('SUB_RAW_NEW_SHEET_NAME', 'Raw NEW'),
 
   // Target operational sheets for lightweight updates (allow-list).
-  // NOTE: EV-Bike and Exclusion are intentionally excluded from this allow-list.
   OPERATIONAL_SHEETS: Object.freeze([
     'Submission',
     'Ask Detail',
@@ -341,7 +340,9 @@ const SUB_FLOW_SPEC = Object.freeze({
     'Start',
     'Finish',
     'PO',
+    'Exclusion',
     'B2B',
+    'EV-Bike',
     'Special Case'
   ]),
 
@@ -1550,11 +1551,13 @@ const OPS_ROUTING_POLICY = Object.freeze({
       'EzCare',
       'Ez Care',
       'B-Store',
-      'Multikom'
+      'Multikom',
+      'GH Store'
     ]),
     'SC - Meilani': Object.freeze([
       'Andalas',
       'Unicom',
+      'Authorized Service Centre by Unicom',
       'Xiaomi Authorized',
       'Samsung Exclusive',
       'Carlcare'
@@ -2255,7 +2258,7 @@ function describeSystem_() {
 
   const summary = {
     generatedAt: new Date().toISOString(),
-    appVersion: (typeof APP_VERSION !== 'undefined') ? APP_VERSION : '',
+    appVersion: (App && App.APP_VERSION) ? App.APP_VERSION : '',
     schemaVersion: (typeof SCHEMA_VERSION !== 'undefined') ? SCHEMA_VERSION : null,
     timezone: (function () { try { return Session.getScriptTimeZone(); } catch (e) { return ''; } })(),
     config: {
