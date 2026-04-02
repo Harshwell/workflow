@@ -1041,6 +1041,191 @@ function autofillBranchInScSheets06_(ss) {
   return filled;
 }
 
+function __getReportBaseSourceSheets06_(ss) {
+  const out = [];
+  const seen = Object.create(null);
+  const base = (CONFIG && CONFIG.sheetsByPic && Array.isArray(CONFIG.sheetsByPic.adminOperational))
+    ? CONFIG.sheetsByPic.adminOperational.slice()
+    : ['Submission','Ask Detail','OR - OLD','Start','Finish','SC - Farhan','SC - Meilani','SC - Meindar','PO','Exclusion'];
+  const extras = ['SC - Unmapped', 'B2B', 'EV-Bike', 'Special Case'];
+  const all = base.concat(extras);
+  for (let i = 0; i < all.length; i++) {
+    const name = String(all[i] || '').trim();
+    if (!name || seen[name]) continue;
+    if (name === 'Raw Data') continue;
+    if (ss && !ss.getSheetByName(name)) continue;
+    seen[name] = true;
+    out.push(name);
+  }
+  return out;
+}
+
+function __parseAnyDateReportBase06_(v) {
+  if (v == null || v === '') return null;
+  if (Object.prototype.toString.call(v) === '[object Date]') return isNaN(v.getTime()) ? null : v;
+  const s = String(v || '').trim();
+  if (!s) return null;
+  if (typeof normalizeDate_ === 'function') {
+    try {
+      const d0 = normalizeDate_(s);
+      if (d0 && !isNaN(d0.getTime())) return d0;
+    } catch (e0) {}
+  }
+  if (typeof parseClaimLastUpdatedDatetime06c_ === 'function') {
+    try {
+      const d1 = parseClaimLastUpdatedDatetime06c_(s);
+      if (d1 && !isNaN(d1.getTime())) return d1;
+    } catch (e1) {}
+  }
+  if (typeof tryNativeParseUnambiguousDate_ === 'function') {
+    try {
+      const d2 = tryNativeParseUnambiguousDate_(s);
+      if (d2 && !isNaN(d2.getTime())) return d2;
+    } catch (e2) {}
+  }
+  return null;
+}
+
+function __formatSubmissionMonthReportBase06_(submissionDateVal) {
+  const d = __parseAnyDateReportBase06_(submissionDateVal);
+  if (!d) return '';
+  const tz = (Session && Session.getScriptTimeZone) ? (Session.getScriptTimeZone() || 'Asia/Jakarta') : 'Asia/Jakarta';
+  try { return Utilities.formatDate(d, tz, 'MMMM yyyy'); } catch (e) {}
+  return '';
+}
+
+function refreshReportBaseFromOperational06_(ss, opts) {
+  if (!ss) return { written: 0, skipped: 'missing spreadsheet' };
+  const sh = ss.getSheetByName('Report Base');
+  if (!sh) return { written: 0, skipped: 'Report Base not found' };
+  if (DRY_RUN) return { written: 0, skipped: 'DRY_RUN' };
+  const incremental = !!(opts && opts.incremental);
+
+  const headers = [
+    'Submission Date',
+    'Submission by Month',
+    'Claim Number',
+    'Last Status',
+    'Last Status Date',
+    'Branch',
+    'Position'
+  ];
+
+  const srcSheets = __getReportBaseSourceSheets06_(ss);
+  const byClaim = Object.create(null);
+
+  for (let si = 0; si < srcSheets.length; si++) {
+    const name = srcSheets[si];
+    const src = ss.getSheetByName(name);
+    if (!src) continue;
+    const lr = src.getLastRow();
+    const lc = src.getLastColumn();
+    if (lr < 2 || lc < 1) continue;
+
+    const hdr = src.getRange(1, 1, 1, lc).getValues()[0].map(__normalizeHeaderText06_);
+    const idxClaim = __findHeaderIndexFlexible06_(hdr, 'Claim Number');
+    if (idxClaim === -1) continue;
+
+    const idxSubDate = __findHeaderIndexFlexible06_(hdr, 'Submission Date');
+    const idxLast = __findHeaderIndexFlexible06_(hdr, 'Last Status');
+    const idxLastDate = __findHeaderIndexFlexible06_(hdr, 'Last Status Date');
+    const idxSc = __findHeaderIndexFlexible06_(hdr, 'Service Center');
+    const vals = src.getRange(2, 1, lr - 1, lc).getValues();
+
+    for (let r = 0; r < vals.length; r++) {
+      const row = vals[r];
+      const claim = String(row[idxClaim] || '').trim();
+      if (!claim) continue;
+
+      const lastStatus = (idxLast !== -1) ? String(row[idxLast] || '').trim() : '';
+      const subDateVal = (idxSubDate !== -1) ? row[idxSubDate] : '';
+      const lastDateVal = (idxLastDate !== -1) ? row[idxLastDate] : '';
+      const scVal = (idxSc !== -1) ? row[idxSc] : '';
+
+      const lastDateObj = __parseAnyDateReportBase06_(lastDateVal);
+      const lastDateTs = lastDateObj ? lastDateObj.getTime() : -1;
+      const key = claim.toUpperCase();
+      const prev = byClaim[key];
+      if (prev && prev.lastDateTs > lastDateTs) continue;
+
+      let position = '';
+      if (name === 'Exclusion') position = 'Exclusion';
+      else if (typeof getPositionFromLastStatus_ === 'function') {
+        try { position = getPositionFromLastStatus_(lastStatus); } catch (eP) { position = ''; }
+      }
+
+      byClaim[key] = {
+        subDate: __parseAnyDateReportBase06_(subDateVal) || subDateVal || '',
+        subMonth: __formatSubmissionMonthReportBase06_(subDateVal),
+        claim: claim,
+        lastStatus: lastStatus,
+        lastDate: lastDateObj || lastDateVal || '',
+        branch: __getBranchFromServiceCenter06_(scVal || ''),
+        position: position || '',
+        lastDateTs: lastDateTs
+      };
+    }
+  }
+
+  const rows = Object.keys(byClaim).map(k => byClaim[k]).map(x => [
+    x.subDate,
+    x.subMonth,
+    x.claim,
+    x.lastStatus,
+    x.lastDate,
+    x.branch,
+    x.position
+  ]);
+
+  sh.getRange(1, 1, 1, headers.length).setValues([headers]);
+  try { sh.getRange(1, 1, 1, headers.length).setHorizontalAlignment('center').setVerticalAlignment('middle'); } catch (e0) {}
+
+  if (!incremental) {
+    sh.clearContents();
+    sh.getRange(1, 1, 1, headers.length).setValues([headers]);
+    if (rows.length) {
+      sh.getRange(2, 1, rows.length, headers.length).setValues(rows);
+      try { sh.getRange(2, 1, rows.length, 1).setNumberFormat('dd MMM yy'); } catch (e1) {}
+      try { sh.getRange(2, 5, rows.length, 1).setNumberFormat('dd MMM yy, HH:mm'); } catch (e2) {}
+    }
+    return { written: rows.length, sheets: srcSheets.length, mode: 'full-rewrite' };
+  }
+
+  // Incremental mode: upsert by Claim Number and keep untouched historical rows.
+  const lc = Math.max(sh.getLastColumn(), headers.length);
+  const lr = sh.getLastRow();
+  let existing = [];
+  if (lr >= 2 && lc >= headers.length) {
+    existing = sh.getRange(2, 1, lr - 1, headers.length).getValues();
+  }
+  const idxByClaim = Object.create(null);
+  for (let i = 0; i < existing.length; i++) {
+    const cn = String(existing[i][2] || '').trim(); // Claim Number column
+    if (cn && idxByClaim[cn.toUpperCase()] == null) idxByClaim[cn.toUpperCase()] = i;
+  }
+
+  let upserted = 0;
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i];
+    const cn = String(row[2] || '').trim();
+    if (!cn) continue;
+    const k = cn.toUpperCase();
+    if (idxByClaim[k] != null) existing[idxByClaim[k]] = row;
+    else {
+      idxByClaim[k] = existing.length;
+      existing.push(row);
+    }
+    upserted++;
+  }
+
+  if (existing.length) {
+    sh.getRange(2, 1, existing.length, headers.length).setValues(existing);
+    try { sh.getRange(2, 1, existing.length, 1).setNumberFormat('dd MMM yy'); } catch (e3) {}
+    try { sh.getRange(2, 5, existing.length, 1).setNumberFormat('dd MMM yy, HH:mm'); } catch (e4) {}
+  }
+  return { written: upserted, totalRows: existing.length, sheets: srcSheets.length, mode: 'incremental-upsert' };
+}
+
 function __isFinishStatus06_(status) {
   const s = String(status || '').trim(); // may contain trailing spaces
   if (!s) return false;
