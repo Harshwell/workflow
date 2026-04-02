@@ -2627,7 +2627,7 @@ function runManual(picOrFileIdsCsv, fileIdsCsvMaybe) {
     try { ssTiming = __logOverviewStart06_(key, startedAt); } catch (e) {}
 
     setProgress_(0, 'Starting (manual)...');
-    logLine_('BOOT', 'Manual run started', 'version=' + APP_VERSION, 'profile=' + key, 'INFO');
+    logLine_('BOOT', 'Manual run started', 'version=' + ((App && App.APP_VERSION) ? App.APP_VERSION : ''), 'profile=' + key, 'INFO');
 
     const ids = String(fileIdsCsv || '')
       .split(/[\s,;]+/)

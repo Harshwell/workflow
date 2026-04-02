@@ -40,7 +40,7 @@ App.Registry = App.Registry || (function () {
 })();
 
 /** VERSION */
-const APP_VERSION = '2026.03.26-enterprise-refactor-r3-hardening';
+App.APP_VERSION = App.APP_VERSION || '2026.03.26-enterprise-refactor-r3-hardening';
 
 /** Schema version for managed sheets */
 const SCHEMA_VERSION = 5;
@@ -2258,7 +2258,7 @@ function describeSystem_() {
 
   const summary = {
     generatedAt: new Date().toISOString(),
-    appVersion: (typeof APP_VERSION !== 'undefined') ? APP_VERSION : '',
+    appVersion: (App && App.APP_VERSION) ? App.APP_VERSION : '',
     schemaVersion: (typeof SCHEMA_VERSION !== 'undefined') ? SCHEMA_VERSION : null,
     timezone: (function () { try { return Session.getScriptTimeZone(); } catch (e) { return ''; } })(),
     config: {
