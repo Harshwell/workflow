@@ -643,7 +643,8 @@ function __runSubCore06a_(masterSs, oldBlob, newBlob, opt) {
   try { setProgressForFlow_('SUB', 0.78, 'Relocate + sort...', { prefixFlowInStep: true }); } catch (e5) {}
   try { setProgressForFlow_('SUB', 0.78, 'Relocate + sort…', { prefixFlowInStep: true }); } catch (e5) {}
 
-  const relocateRes = __relocateOperationalRowsByLastStatusSub06a_(masterSs, opSheets);
+  const relocateSheets = __getSubRelocationSheetNames06a_(opSheets);
+  const relocateRes = __relocateOperationalRowsByLastStatusSub06a_(masterSs, relocateSheets);
   const sortRes = __sortOperationalSheetsSub06a_(masterSs, opSheets, sortSpecs);
 
   // WebApp movement tracking (best effort)
@@ -676,6 +677,16 @@ function __runSubCore06a_(masterSs, oldBlob, newBlob, opt) {
     relocated: relocateRes,
     sorted: sortRes
   };
+}
+
+function __getSubRelocationSheetNames06a_(sheetNames) {
+  const names = Array.isArray(sheetNames) ? sheetNames : [];
+  // EV-Bike and Exclusion are user-managed optional buckets; SUB relocation must not move/delete their rows.
+  const blocked = new Set(['ev-bike', 'exclusion']);
+  return names.filter(function (name) {
+    const key = String(name || '').trim().toLowerCase();
+    return key && !blocked.has(key);
+  });
 }
 
 
@@ -1211,7 +1222,8 @@ try {
     }
     // Relocate rows by Last Status mapping (move FULL row, dedupe by Claim Number).
     try { setProgressForFlow_('SUB', 0.80, 'Relocate + sort...', { prefixFlowInStep: true }); } catch (eP9) {}
-    const relocateRes = __relocateOperationalRowsByLastStatusSub06a_(masterSs, opSheets);
+    const relocateSheets = __getSubRelocationSheetNames06a_(opSheets);
+    const relocateRes = __relocateOperationalRowsByLastStatusSub06a_(masterSs, relocateSheets);
     try {
       if (typeof setLogEventContext_ === 'function') {
         const moved = (relocateRes && relocateRes.moved != null) ? relocateRes.moved : '';
@@ -2031,21 +2043,36 @@ function __formatSubmissionMonthSub06a_(v) {
   return '';
 }
 
+function __inferStatusResetPreferredBySheetSub06a_(sheetName) {
+  const nm = String(sheetName || '').trim().toLowerCase();
+  if (!nm) return 'Pending Admin';
+  if (nm.indexOf('sc') > -1 || nm.indexOf('service center') > -1) return 'Pending SC';
+  return 'Pending Admin';
+}
+
 function __getStatusResetValueSub06a_(sh, idxStatus) {
-  const fallback = 'Pending Admin';
+  const fallback = __inferStatusResetPreferredBySheetSub06a_(sh && sh.getName ? sh.getName() : '');
+  const preferred = String(fallback || '').trim().toLowerCase();
   try {
     if (!sh || idxStatus == null || idxStatus < 0) return fallback;
     const rowProbe = Math.min(Math.max(sh.getLastRow(), 2), 10);
+    let firstAllowed = '';
     for (let r = 2; r <= rowProbe; r++) {
       const dv = sh.getRange(r, idxStatus + 1, 1, 1).getDataValidation();
       if (!dv) continue;
       const t = dv.getCriteriaType();
       const vals = dv.getCriteriaValues() || [];
       if (t === SpreadsheetApp.DataValidationCriteria.VALUE_IN_LIST && vals.length && vals[0].length) {
-        const first = String(vals[0][0] || '').trim();
-        if (first) return first;
+        const options = vals[0] || [];
+        for (let i = 0; i < options.length; i++) {
+          const opt = String(options[i] || '').trim();
+          if (!opt) continue;
+          if (!firstAllowed) firstAllowed = opt;
+          if (String(opt).toLowerCase() === preferred) return opt;
+        }
       }
     }
+    if (firstAllowed) return firstAllowed;
   } catch (e) {}
   return fallback;
 }
