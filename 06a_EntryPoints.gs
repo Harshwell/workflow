@@ -1859,8 +1859,6 @@ function __updateOperationalSheetsFromRaw06a_(ss, sheetNames, rawMap, ctx) {
     function isNonEmpty(v) {
       return v !== '' && v != null;
     }
-    const statusResetValue = (idxStatus >= 0) ? __getStatusResetValueSub06a_(sh, idxStatus) : 'Pending Admin';
-
     let updatedRows = 0;
 
     for (let r = 1; r < all.length; r++) {
@@ -1924,12 +1922,10 @@ function __updateOperationalSheetsFromRaw06a_(ss, sheetNames, rawMap, ctx) {
       }
       const prevLast = String(idxLast >= 0 ? (row[idxLast] || '') : '').trim();
       const nextLast = String(isNonEmpty(rec.last_status) ? rec.last_status : prevLast).trim();
-      if (prevLast && nextLast && prevLast !== nextLast) {
-        if (outUpdateStatus) outUpdateStatus[o] = [''];
-        if (outTimestamp) outTimestamp[o] = [''];
-        if (outStatus) outStatus[o] = [statusResetValue];
-        if (outRemarks) outRemarks[o] = [''];
-      }
+      // IMPORTANT:
+      // Do NOT reset Update Status/Timestamp/Status/Remarks on Last Status change in-place.
+      // Reset now only happens when a claim row is relocated across operational sheets.
+      void prevLast; void nextLast;
 
       if (outStatusType) {
         const st = String(isNonEmpty(rec.last_status) ? rec.last_status : row[idxLast] || '').trim();
@@ -2378,6 +2374,34 @@ function __relocateOperationalRowsByLastStatusSub06a_(ss, sheetNames) {
     return out;
   }
 
+  function getResetColumnIndexesByHeader(tgtHdr) {
+    const norm = (tgtHdr || []).map(h => String(h || '').trim().toLowerCase());
+    function idxOfAnyLocal(cands) {
+      for (let i = 0; i < cands.length; i++) {
+        const j = norm.indexOf(String(cands[i] || '').toLowerCase());
+        if (j >= 0) return j;
+      }
+      return -1;
+    }
+    return {
+      updateStatus: idxOfAnyLocal(['update status']),
+      timestamp: idxOfAnyLocal(['timestamp']),
+      status: idxOfAnyLocal(['status']),
+      remarks: idxOfAnyLocal(['remarks', 'remark'])
+    };
+  }
+
+  function resetMovedRowFieldsByHeader(rowVals, resetIdx) {
+    const out = Array.isArray(rowVals) ? rowVals.slice() : [];
+    if (!resetIdx) return out;
+    const keys = ['updateStatus', 'timestamp', 'status', 'remarks'];
+    for (let i = 0; i < keys.length; i++) {
+      const ix = resetIdx[keys[i]];
+      if (ix != null && ix >= 0 && ix < out.length) out[ix] = '';
+    }
+    return out;
+  }
+
 
   function deleteRowsGrouped(sh, rows1Based) {
     const rows = (rows1Based || []).slice().filter(n => Number(n) >= 2);
@@ -2470,6 +2494,8 @@ function __relocateOperationalRowsByLastStatusSub06a_(ss, sheetNames) {
       }
 
       const aligned = alignRowToTarget(mv.srcHdr, mv.rowVals, tgt.hdr, tgt.lc);
+      const resetIdx = getResetColumnIndexesByHeader(tgt.hdr);
+      const alignedAfterReset = resetMovedRowFieldsByHeader(aligned, resetIdx);
 
       // If claim already exists in target, MERGE non-empty cells to avoid data loss and avoid duplicates.
       const existing = tgt.map.get(mv.claim) || [];
@@ -2480,9 +2506,11 @@ function __relocateOperationalRowsByLastStatusSub06a_(ss, sheetNames) {
           const existingRowVals = tgt.sh.getRange(keepRow, 1, 1, tgt.lc).getValues()[0];
           const merged = existingRowVals.slice();
           for (let c = 0; c < tgt.lc; c++) {
-            if (aligned[c] !== '' && aligned[c] != null) merged[c] = aligned[c];
+            if (alignedAfterReset[c] !== '' && alignedAfterReset[c] != null) merged[c] = alignedAfterReset[c];
           }
-          tgt.sh.getRange(keepRow, 1, 1, tgt.lc).setValues([merged]);
+          // Always reset the 4 manual columns after cross-sheet movement.
+          const mergedAfterReset = resetMovedRowFieldsByHeader(merged, resetIdx);
+          tgt.sh.getRange(keepRow, 1, 1, tgt.lc).setValues([mergedAfterReset]);
           applyRichTextLinksToTarget(srcName, mv.row1Based, mv.srcHdr, tgt.sh, tgt.hdr, keepRow, tgt.lc);
         }
 
@@ -2507,8 +2535,10 @@ function __relocateOperationalRowsByLastStatusSub06a_(ss, sheetNames) {
           if (srcSh && sameSchema) {
             srcSh.getRange(mv.row1Based, 1, 1, tgt.lc)
               .copyTo(tgt.sh.getRange(appendRow, 1, 1, tgt.lc), SpreadsheetApp.CopyPasteType.PASTE_NORMAL, false);
+            const resetRow = resetMovedRowFieldsByHeader(tgt.sh.getRange(appendRow, 1, 1, tgt.lc).getValues()[0], resetIdx);
+            tgt.sh.getRange(appendRow, 1, 1, tgt.lc).setValues([resetRow]);
           } else {
-            tgt.sh.getRange(appendRow, 1, 1, tgt.lc).setValues([aligned]);
+            tgt.sh.getRange(appendRow, 1, 1, tgt.lc).setValues([alignedAfterReset]);
             applyRichTextLinksToTarget(srcName, mv.row1Based, mv.srcHdr, tgt.sh, tgt.hdr, appendRow, tgt.lc);
           }
         }
