@@ -553,6 +553,7 @@ function runSubFromFormDrive06a_(req, runId) {
   try {
     const fb = __getScFallbackSheet06a_();
     if (fb && opSheets.indexOf(fb) < 0) opSheets.push(fb);
+    __ensureSubScFallbackSheetExists06a_(masterSs, fb);
   } catch (eFb) {}
 
   const sortSpecs = (Array.isArray(subFlow.SORT_SPECS) && subFlow.SORT_SPECS.length) ? subFlow.SORT_SPECS : null;
@@ -687,6 +688,56 @@ function __getSubRelocationSheetNames06a_(sheetNames) {
     const key = String(name || '').trim().toLowerCase();
     return key && !blocked.has(key);
   });
+}
+
+function __ensureSubScFallbackSheetExists06a_(ss, fallbackSheetName) {
+  const fb = String(fallbackSheetName || '').trim();
+  if (!ss || !fb) return;
+
+  function ensureClaimNumberHeader_(sh) {
+    if (!sh) return;
+    const lc = Math.max(sh.getLastColumn() || 1, 1);
+    const hdr = sh.getRange(1, 1, 1, lc).getValues()[0].map(function (v) { return String(v || '').trim().toLowerCase(); });
+    if (hdr.indexOf('claim number') >= 0 || hdr.indexOf('claim_number') >= 0 || hdr.indexOf('claim no') >= 0 || hdr.indexOf('claim_no') >= 0) return;
+    const tmpl = ss.getSheetByName('SC - Farhan');
+    if (tmpl) {
+      const tlc = Math.max(tmpl.getLastColumn() || 1, 1);
+      tmpl.getRange(1, 1, 1, tlc).copyTo(sh.getRange(1, 1, 1, tlc), { contentsOnly: false });
+      try { sh.setFrozenRows(Math.max(tmpl.getFrozenRows() || 0, 1)); } catch (eT) { try { sh.setFrozenRows(1); } catch (eT2) {} }
+      return;
+    }
+    sh.getRange(1, 1).setValue('Claim Number');
+    try { sh.setFrozenRows(1); } catch (e3) {}
+  }
+
+  try {
+    const exists = ss.getSheetByName(fb);
+    if (exists) {
+      ensureClaimNumberHeader_(exists);
+      return;
+    }
+    if (typeof ensureScFallbackSheet05b_ === 'function') {
+      ensureScFallbackSheet05b_(ss, fb, 'SC - Farhan');
+      try { ensureClaimNumberHeader_(ss.getSheetByName(fb)); } catch (eH0) {}
+      return;
+    }
+  } catch (e0) {}
+
+  // Local fallback: create minimal sheet to avoid move-skip when SC keyword does not match.
+  if (isDryRun_()) return;
+  try {
+    const sh = ss.insertSheet(fb);
+    const tmpl = ss.getSheetByName('SC - Farhan');
+    if (tmpl) {
+      const lc = Math.max(tmpl.getLastColumn() || 1, 1);
+      tmpl.getRange(1, 1, 1, lc).copyTo(sh.getRange(1, 1, 1, lc), { contentsOnly: false });
+      try { sh.setFrozenRows(Math.max(tmpl.getFrozenRows() || 0, 1)); } catch (e1) { try { sh.setFrozenRows(1); } catch (e2) {} }
+    } else {
+      sh.getRange(1, 1).setValue('Claim Number');
+      try { sh.setFrozenRows(1); } catch (e3) {}
+    }
+    ensureClaimNumberHeader_(sh);
+  } catch (e4) {}
 }
 
 
@@ -1161,6 +1212,7 @@ function runSubEmailIngest(maxThreads) {
     try {
       const fb = __getScFallbackSheet06a_();
       if (fb && opSheets.indexOf(fb) < 0) opSheets.push(fb);
+      __ensureSubScFallbackSheetExists06a_(masterSs, fb);
     } catch (eFb) {}
 
 
@@ -2167,7 +2219,8 @@ function __relocateOperationalRowsByLastStatusSub06a_(ss, sheetNames) {
   const res = { moved: 0, dedupDeleted: 0, sheets: {} };
 
   const routingMap = __getSubRoutingMap06a_();
-  const routingIdx = (typeof buildRoutingIndex06_ === 'function') ? buildRoutingIndex06_(routingMap) : __buildRoutingIndexLocalSub06a_(routingMap);
+  const routingIdxRaw = (typeof buildRoutingIndex06_ === 'function') ? buildRoutingIndex06_(routingMap) : __buildRoutingIndexLocalSub06a_(routingMap);
+  const routingIdx = __normalizeRoutingIndexSub06a_(routingIdxRaw);
   const scAllow = __getScSheetAllowlistsSub06a_();
 
   // Preload sheet data
@@ -2293,7 +2346,7 @@ function __relocateOperationalRowsByLastStatusSub06a_(ss, sheetNames) {
       // Skip rows that will be deleted as duplicates
       if (toDelete.has(r + 1)) continue;
 
-      const status = String(row[idxStatus] || '').trim();
+      const status = __normalizeRoutingStatusKeySub06a_(row[idxStatus]);
       if (!status) continue;
 
       const candidates = routingIdx[status] || null;
@@ -2307,7 +2360,8 @@ function __relocateOperationalRowsByLastStatusSub06a_(ss, sheetNames) {
       if (!dest && sheetName === 'SC - Farhan') {
         const scKey = normKey(scName);
         const allowF = scAllow['SC - Farhan'];
-        if (allowF && scKey && !allowF.has(scKey) && ss.getSheetByName('SC - Meilani')) {
+        const inFarhanAllow = Array.isArray(allowF) ? (allowF.indexOf(scKey) > -1) : false;
+        if (allowF && scKey && !inFarhanAllow && ss.getSheetByName('SC - Meilani')) {
           dest = 'SC - Meilani';
         }
       }
@@ -2592,13 +2646,38 @@ function __buildRoutingIndexLocalSub06a_(routingMap) {
     const sheetKey = String(sheetName || '').trim();
     if (!sheetKey || /^__/.test(sheetKey)) return;
     (map[sheetName] || []).forEach(status => {
-      const key = String(status || '').trim();
+      const key = __normalizeRoutingStatusKeySub06a_(status);
       if (!key) return;
       if (!idx[key]) idx[key] = [];
       idx[key].push(sheetKey);
     });
   });
   return idx;
+}
+
+function __normalizeRoutingStatusKeySub06a_(status) {
+  return String(status == null ? '' : status)
+    .replace(/\u00a0/g, ' ')
+    .trim()
+    .replace(/\s+/g, ' ')
+    .toUpperCase();
+}
+
+function __normalizeRoutingIndexSub06a_(routingIdx) {
+  const src = routingIdx || {};
+  const out = {};
+  Object.keys(src).forEach(function (k) {
+    const nk = __normalizeRoutingStatusKeySub06a_(k);
+    if (!nk) return;
+    const arr = Array.isArray(src[k]) ? src[k] : [];
+    if (!out[nk]) out[nk] = [];
+    arr.forEach(function (name) {
+      const sn = String(name || '').trim();
+      if (!sn) return;
+      if (out[nk].indexOf(sn) === -1) out[nk].push(sn);
+    });
+  });
+  return out;
 }
 
 function __getScSheetAllowlistsSub06a_() {

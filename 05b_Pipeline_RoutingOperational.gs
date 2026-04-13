@@ -191,26 +191,35 @@ function compileRoutingIndex_(routingMap) {
  * ========================= */
 
 function containsAnyKeyword05b_(text, keywords) {
-  const s = String(text || '').toLowerCase();
+  const s = normalizeScKeywordText05b_(text);
   if (!s) return false;
   const list = keywords || [];
   for (let i = 0; i < list.length; i++) {
-    const k = String(list[i] || '').toLowerCase().trim();
+    const k = normalizeScKeywordText05b_(list[i]);
     if (k && s.indexOf(k) > -1) return true;
   }
   return false;
 }
 
 function scoreKeywords05b_(text, keywords) {
-  const s = String(text || '').toLowerCase();
+  const s = normalizeScKeywordText05b_(text);
   if (!s) return 0;
   const list = keywords || [];
   let score = 0;
   for (let i = 0; i < list.length; i++) {
-    const k = String(list[i] || '').toLowerCase().trim();
-    if (k && s.indexOf(k) > -1) score++;
+    const k = normalizeScKeywordText05b_(list[i]);
+    if (k && s.indexOf(k) > -1) score = Math.max(score, k.length);
   }
   return score;
+}
+
+function normalizeScKeywordText05b_(v) {
+  return String(v == null ? '' : v)
+    .toLowerCase()
+    .replace(/\u00a0/g, ' ')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 

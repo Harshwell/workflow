@@ -571,9 +571,28 @@ function parseXlsx_(blob, name) {
 
     // Convert XLSX -> Google Sheets
     const resource = { title: 'TMP_' + name, mimeType: MimeType.GOOGLE_SHEETS };
-    tempFile = Drive.Files.insert(resource, blob, { convert: true });
+    const runWithRetry = (typeof withRetry_ === 'function') ? withRetry_ : function (fn) { return fn(); };
+    const shouldRetry = function (err) {
+      if (typeof isTransientError_ === 'function') return isTransientError_(err);
+      const msg = String((err && err.message) ? err.message : err || '').toLowerCase();
+      return (
+        msg.indexOf('response code: 500') >= 0 ||
+        msg.indexOf('response code: 502') >= 0 ||
+        msg.indexOf('response code: 503') >= 0 ||
+        msg.indexOf('response code: 504') >= 0 ||
+        msg.indexOf('server error') >= 0 ||
+        msg.indexOf('bad gateway') >= 0 ||
+        msg.indexOf('temporarily unavailable') >= 0
+      );
+    };
 
-    const tempSs = SpreadsheetApp.openById(tempFile.id);
+    tempFile = runWithRetry(function () {
+      return Drive.Files.insert(resource, blob, { convert: true });
+    }, { maxRetries: 4, baseDelayMs: 500, maxDelayMs: 6000, shouldRetry: shouldRetry });
+
+    const tempSs = runWithRetry(function () {
+      return SpreadsheetApp.openById(tempFile.id);
+    }, { maxRetries: 3, baseDelayMs: 400, maxDelayMs: 4000, shouldRetry: shouldRetry });
     const sh = tempSs.getSheets()[0];
 
     const lr = sh.getLastRow(), lc = sh.getLastColumn();
