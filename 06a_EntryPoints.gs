@@ -553,6 +553,7 @@ function runSubFromFormDrive06a_(req, runId) {
   try {
     const fb = __getScFallbackSheet06a_();
     if (fb && opSheets.indexOf(fb) < 0) opSheets.push(fb);
+    __ensureSubScFallbackSheetExists06a_(masterSs, fb);
   } catch (eFb) {}
 
   const sortSpecs = (Array.isArray(subFlow.SORT_SPECS) && subFlow.SORT_SPECS.length) ? subFlow.SORT_SPECS : null;
@@ -687,6 +688,56 @@ function __getSubRelocationSheetNames06a_(sheetNames) {
     const key = String(name || '').trim().toLowerCase();
     return key && !blocked.has(key);
   });
+}
+
+function __ensureSubScFallbackSheetExists06a_(ss, fallbackSheetName) {
+  const fb = String(fallbackSheetName || '').trim();
+  if (!ss || !fb) return;
+
+  function ensureClaimNumberHeader_(sh) {
+    if (!sh) return;
+    const lc = Math.max(sh.getLastColumn() || 1, 1);
+    const hdr = sh.getRange(1, 1, 1, lc).getValues()[0].map(function (v) { return String(v || '').trim().toLowerCase(); });
+    if (hdr.indexOf('claim number') >= 0 || hdr.indexOf('claim_number') >= 0 || hdr.indexOf('claim no') >= 0 || hdr.indexOf('claim_no') >= 0) return;
+    const tmpl = ss.getSheetByName('SC - Farhan');
+    if (tmpl) {
+      const tlc = Math.max(tmpl.getLastColumn() || 1, 1);
+      tmpl.getRange(1, 1, 1, tlc).copyTo(sh.getRange(1, 1, 1, tlc), { contentsOnly: false });
+      try { sh.setFrozenRows(Math.max(tmpl.getFrozenRows() || 0, 1)); } catch (eT) { try { sh.setFrozenRows(1); } catch (eT2) {} }
+      return;
+    }
+    sh.getRange(1, 1).setValue('Claim Number');
+    try { sh.setFrozenRows(1); } catch (e3) {}
+  }
+
+  try {
+    const exists = ss.getSheetByName(fb);
+    if (exists) {
+      ensureClaimNumberHeader_(exists);
+      return;
+    }
+    if (typeof ensureScFallbackSheet05b_ === 'function') {
+      ensureScFallbackSheet05b_(ss, fb, 'SC - Farhan');
+      try { ensureClaimNumberHeader_(ss.getSheetByName(fb)); } catch (eH0) {}
+      return;
+    }
+  } catch (e0) {}
+
+  // Local fallback: create minimal sheet to avoid move-skip when SC keyword does not match.
+  if (isDryRun_()) return;
+  try {
+    const sh = ss.insertSheet(fb);
+    const tmpl = ss.getSheetByName('SC - Farhan');
+    if (tmpl) {
+      const lc = Math.max(tmpl.getLastColumn() || 1, 1);
+      tmpl.getRange(1, 1, 1, lc).copyTo(sh.getRange(1, 1, 1, lc), { contentsOnly: false });
+      try { sh.setFrozenRows(Math.max(tmpl.getFrozenRows() || 0, 1)); } catch (e1) { try { sh.setFrozenRows(1); } catch (e2) {} }
+    } else {
+      sh.getRange(1, 1).setValue('Claim Number');
+      try { sh.setFrozenRows(1); } catch (e3) {}
+    }
+    ensureClaimNumberHeader_(sh);
+  } catch (e4) {}
 }
 
 
@@ -1161,6 +1212,7 @@ function runSubEmailIngest(maxThreads) {
     try {
       const fb = __getScFallbackSheet06a_();
       if (fb && opSheets.indexOf(fb) < 0) opSheets.push(fb);
+      __ensureSubScFallbackSheetExists06a_(masterSs, fb);
     } catch (eFb) {}
 
 
