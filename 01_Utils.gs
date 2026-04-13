@@ -1597,11 +1597,28 @@ function convertXlsxBlobToTempSpreadsheet_(xlsxBlob, titleOptional) {
     mimeType: 'application/vnd.google-apps.spreadsheet'
   };
 
-  const inserted = Drive.Files.insert(resource, xlsxBlob, { convert: true });
+  const inserted = withRetry_(function () {
+    return Drive.Files.insert(resource, xlsxBlob, { convert: true });
+  }, {
+    maxRetries: 4,
+    baseDelayMs: 500,
+    maxDelayMs: 6000,
+    shouldRetry: function (err) { return isTransientError_(err); },
+    onRetry: function (meta) {
+      try {
+        Logger.log('Retry XLSX conversion attempt=' + meta.attemptNo + ' delayMs=' + meta.delayMs + ' err=' + meta.err);
+      } catch (e0) {}
+    }
+  });
   const fileId = inserted && inserted.id;
   if (!fileId) throw new Error('Failed to convert XLSX to Google Sheet');
 
-  const ss = SpreadsheetApp.openById(fileId);
+  const ss = withRetry_(function () { return SpreadsheetApp.openById(fileId); }, {
+    maxRetries: 3,
+    baseDelayMs: 400,
+    maxDelayMs: 4000,
+    shouldRetry: function (err) { return isTransientError_(err); }
+  });
   // Normalize temp spreadsheet settings to reduce timezone/locale drift from XLSX conversion.
   try { ss.setSpreadsheetTimeZone(getTzSafe_()); } catch (eTz) {}
   try { ss.setSpreadsheetLocale('en_US'); } catch (eLoc) {}
@@ -1657,6 +1674,13 @@ function isTransientError_(e) {
     msg.indexOf('timeout') >= 0 ||
     msg.indexOf('internal error') >= 0 ||
     msg.indexOf('backend error') >= 0 ||
+    msg.indexOf('response code: 500') >= 0 ||
+    msg.indexOf('response code: 502') >= 0 ||
+    msg.indexOf('response code: 503') >= 0 ||
+    msg.indexOf('response code: 504') >= 0 ||
+    msg.indexOf('server error') >= 0 ||
+    msg.indexOf('bad gateway') >= 0 ||
+    msg.indexOf('temporarily unavailable') >= 0 ||
     msg.indexOf('please try again') >= 0 ||
     msg.indexOf('failed to fetch') >= 0
   );
