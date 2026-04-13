@@ -2222,6 +2222,7 @@ function __relocateOperationalRowsByLastStatusSub06a_(ss, sheetNames) {
   const routingIdxRaw = (typeof buildRoutingIndex06_ === 'function') ? buildRoutingIndex06_(routingMap) : __buildRoutingIndexLocalSub06a_(routingMap);
   const routingIdx = __normalizeRoutingIndexSub06a_(routingIdxRaw);
   const scAllow = __getScSheetAllowlistsSub06a_();
+  const scPolicy = __getScRoutingPolicySub06a_();
 
   // Preload sheet data
   const data = {};
@@ -2349,7 +2350,11 @@ function __relocateOperationalRowsByLastStatusSub06a_(ss, sheetNames) {
       const status = __normalizeRoutingStatusKeySub06a_(row[idxStatus]);
       if (!status) continue;
 
-      const candidates = routingIdx[status] || null;
+      let candidates = routingIdx[status] || null;
+      // Force SC-universe statuses to be routed by SC keyword split, even if routing map is stale/misaligned.
+      if (scPolicy.sharedStatusSet.has(status)) {
+        candidates = scPolicy.scSheets.filter(function (n) { return !!ss.getSheetByName(n); });
+      }
       if (!candidates || !candidates.length) continue;
 
       const scName = (idxSc >= 0) ? row[idxSc] : '';
@@ -2481,9 +2486,24 @@ function __relocateOperationalRowsByLastStatusSub06a_(ss, sheetNames) {
     groups.push({ start, len });
 
     // Delete bottom-up
+    const failed = [];
     for (let i = groups.length - 1; i >= 0; i--) {
       const g = groups[i];
-      try { sh.deleteRows(g.start, g.len); } catch (eDel) {}
+      try { sh.deleteRows(g.start, g.len); } catch (eDel) { failed.push(g); }
+    }
+
+    // Fallback: if deleteRows fails (e.g., protections/edge-sheet state), clear row content
+    // so claims do not remain duplicated in the wrong sheet.
+    if (failed.length) {
+      const lc = Math.max(sh.getLastColumn() || 1, 1);
+      for (let i = 0; i < failed.length; i++) {
+        const g = failed[i];
+        try {
+          sh.getRange(g.start, 1, g.len, lc).clearContent();
+        } catch (eClr) {
+          try { logLine_('SUB_WARN', 'Delete/clear failed in relocation source', sh.getName() + ' row=' + g.start + ' len=' + g.len, String(eClr), 'WARN'); } catch (eLog) {}
+        }
+      }
     }
   }
 
@@ -2653,6 +2673,39 @@ function __buildRoutingIndexLocalSub06a_(routingMap) {
     });
   });
   return idx;
+}
+
+function __getScRoutingPolicySub06a_() {
+  const out = {
+    scSheets: ['SC - Farhan', 'SC - Meilani', 'SC - Meindar'],
+    sharedStatusSet: new Set()
+  };
+
+  try {
+    if (typeof OPS_ROUTING_POLICY !== 'undefined' && OPS_ROUTING_POLICY) {
+      const s = OPS_ROUTING_POLICY.SHEETS || {};
+      out.scSheets = [
+        String(s.SC_FARHAN || 'SC - Farhan').trim(),
+        String(s.SC_MEILANI || 'SC - Meilani').trim(),
+        String((s.SC_IVAN || s.SC_IVAN_NAME || 'SC - Meindar')).trim()
+      ].filter(Boolean);
+
+      const shared = (OPS_ROUTING_POLICY.LAST_STATUS_BY_SHEET && OPS_ROUTING_POLICY.LAST_STATUS_BY_SHEET['__SC_SHARED__'])
+        ? OPS_ROUTING_POLICY.LAST_STATUS_BY_SHEET['__SC_SHARED__']
+        : [];
+      (shared || []).forEach(function (st) {
+        const k = __normalizeRoutingStatusKeySub06a_(st);
+        if (k) out.sharedStatusSet.add(k);
+      });
+    }
+  } catch (e0) {}
+
+  if (!out.sharedStatusSet.size) {
+    // Minimal fallback for critical SC statuses observed in SUB updates.
+    ['SERVICE_CENTER_CLAIM_RECEIVE', 'SERVICE_CENTER_CLAIM_ESTIMATE', 'SERVICE_CENTER_CLAIM_RESUBMIT_ESTIMATE', 'QOALA_CLAIM_RESUBMIT_ESTIMATE']
+      .forEach(function (st) { out.sharedStatusSet.add(st); });
+  }
+  return out;
 }
 
 function __normalizeRoutingStatusKeySub06a_(status) {
