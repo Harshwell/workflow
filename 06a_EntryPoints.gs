@@ -2167,7 +2167,8 @@ function __relocateOperationalRowsByLastStatusSub06a_(ss, sheetNames) {
   const res = { moved: 0, dedupDeleted: 0, sheets: {} };
 
   const routingMap = __getSubRoutingMap06a_();
-  const routingIdx = (typeof buildRoutingIndex06_ === 'function') ? buildRoutingIndex06_(routingMap) : __buildRoutingIndexLocalSub06a_(routingMap);
+  const routingIdxRaw = (typeof buildRoutingIndex06_ === 'function') ? buildRoutingIndex06_(routingMap) : __buildRoutingIndexLocalSub06a_(routingMap);
+  const routingIdx = __normalizeRoutingIndexSub06a_(routingIdxRaw);
   const scAllow = __getScSheetAllowlistsSub06a_();
 
   // Preload sheet data
@@ -2293,7 +2294,7 @@ function __relocateOperationalRowsByLastStatusSub06a_(ss, sheetNames) {
       // Skip rows that will be deleted as duplicates
       if (toDelete.has(r + 1)) continue;
 
-      const status = String(row[idxStatus] || '').trim();
+      const status = __normalizeRoutingStatusKeySub06a_(row[idxStatus]);
       if (!status) continue;
 
       const candidates = routingIdx[status] || null;
@@ -2307,7 +2308,8 @@ function __relocateOperationalRowsByLastStatusSub06a_(ss, sheetNames) {
       if (!dest && sheetName === 'SC - Farhan') {
         const scKey = normKey(scName);
         const allowF = scAllow['SC - Farhan'];
-        if (allowF && scKey && !allowF.has(scKey) && ss.getSheetByName('SC - Meilani')) {
+        const inFarhanAllow = Array.isArray(allowF) ? (allowF.indexOf(scKey) > -1) : false;
+        if (allowF && scKey && !inFarhanAllow && ss.getSheetByName('SC - Meilani')) {
           dest = 'SC - Meilani';
         }
       }
@@ -2592,13 +2594,38 @@ function __buildRoutingIndexLocalSub06a_(routingMap) {
     const sheetKey = String(sheetName || '').trim();
     if (!sheetKey || /^__/.test(sheetKey)) return;
     (map[sheetName] || []).forEach(status => {
-      const key = String(status || '').trim();
+      const key = __normalizeRoutingStatusKeySub06a_(status);
       if (!key) return;
       if (!idx[key]) idx[key] = [];
       idx[key].push(sheetKey);
     });
   });
   return idx;
+}
+
+function __normalizeRoutingStatusKeySub06a_(status) {
+  return String(status == null ? '' : status)
+    .replace(/\u00a0/g, ' ')
+    .trim()
+    .replace(/\s+/g, ' ')
+    .toUpperCase();
+}
+
+function __normalizeRoutingIndexSub06a_(routingIdx) {
+  const src = routingIdx || {};
+  const out = {};
+  Object.keys(src).forEach(function (k) {
+    const nk = __normalizeRoutingStatusKeySub06a_(k);
+    if (!nk) return;
+    const arr = Array.isArray(src[k]) ? src[k] : [];
+    if (!out[nk]) out[nk] = [];
+    arr.forEach(function (name) {
+      const sn = String(name || '').trim();
+      if (!sn) return;
+      if (out[nk].indexOf(sn) === -1) out[nk].push(sn);
+    });
+  });
+  return out;
 }
 
 function __getScSheetAllowlistsSub06a_() {
