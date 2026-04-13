@@ -889,11 +889,20 @@ function preflightFilterScTargets06_(targets, scNameVal, scFarhanName, scMeilani
   const t = (targets || []).slice();
   if (!t.length) return t;
 
-  const s = String(scNameVal || '').toLowerCase();
+  const s = __normalizeScKeywordText06c_(scNameVal);
 
-  const hasFarhan = (kwFarhan || []).some(k => k && s.indexOf(String(k).toLowerCase()) > -1);
-  const hasMeilani = (kwMeilani || []).some(k => k && s.indexOf(String(k).toLowerCase()) > -1);
-  const hasIvan = (kwIvan || []).some(k => k && s.indexOf(String(k).toLowerCase()) > -1);
+  const hasFarhan = (kwFarhan || []).some(k => {
+    const nk = __normalizeScKeywordText06c_(k);
+    return nk && s.indexOf(nk) > -1;
+  });
+  const hasMeilani = (kwMeilani || []).some(k => {
+    const nk = __normalizeScKeywordText06c_(k);
+    return nk && s.indexOf(nk) > -1;
+  });
+  const hasIvan = (kwIvan || []).some(k => {
+    const nk = __normalizeScKeywordText06c_(k);
+    return nk && s.indexOf(nk) > -1;
+  });
 
   return t.filter(x => {
     if (x === scFarhanName) return hasFarhan;
@@ -901,6 +910,15 @@ function preflightFilterScTargets06_(targets, scNameVal, scFarhanName, scMeilani
     if (scIvanName && x === scIvanName) return hasIvan;
     return true;
   });
+}
+
+function __normalizeScKeywordText06c_(v) {
+  return String(v == null ? '' : v)
+    .toLowerCase()
+    .replace(/\u00a0/g, ' ')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 
