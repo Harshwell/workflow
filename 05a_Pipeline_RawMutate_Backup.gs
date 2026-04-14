@@ -840,7 +840,7 @@ function backupOpsToRawFull_(ss, rawSheet, rawValues, headerIndexRaw, pic) {
     }
 
     // Read the smallest contiguous block that covers all needed columns
-    const needed = [idxClaimOps, idxOR, idxUpdate, idxTs, idxStatus, idxUpdateAsso, idxTsAsso, idxUpdateAdmin, idxTsAdmin].filter(x => x !== -1);
+    const needed = [idxClaimOps, idxOR, idxUpdate, idxTs, idxStatus, idxUpdateAsso, idxTsAsso, idxUpdateAdmin, idxTsAdmin, idxRemarks].filter(x => x !== -1);
     const minC = Math.min.apply(null, needed);
     const maxC = Math.max.apply(null, needed);
     const width = maxC - minC + 1;
@@ -935,18 +935,18 @@ function backupOpsToRawFull_(ss, rawSheet, rawValues, headerIndexRaw, pic) {
   let rawUpdateAssoRTs = null;
   let rawUpdateAdminRTs = null;
   if (idxRawUpdate != null) {
-    rawUpdateRTs = rawSheet.getRange(2, idxRawUpdate + 1, rawValues.length, 1).getRichTextValues();
+    rawUpdateRTs = rawSheet.getRange(2, idxRawUpdate + 1, workingRawValues.length, 1).getRichTextValues();
   }
   if (idxRawUpdateAsso != null) {
-    rawUpdateAssoRTs = rawSheet.getRange(2, idxRawUpdateAsso + 1, rawValues.length, 1).getRichTextValues();
+    rawUpdateAssoRTs = rawSheet.getRange(2, idxRawUpdateAsso + 1, workingRawValues.length, 1).getRichTextValues();
   }
   if (idxRawUpdateAdmin != null) {
-    rawUpdateAdminRTs = rawSheet.getRange(2, idxRawUpdateAdmin + 1, rawValues.length, 1).getRichTextValues();
+    rawUpdateAdminRTs = rawSheet.getRange(2, idxRawUpdateAdmin + 1, workingRawValues.length, 1).getRichTextValues();
   }
 
   let rawRemarksRTs = null;
   if (idxRawRemarks != null) {
-    try { rawRemarksRTs = rawSheet.getRange(2, idxRawRemarks + 1, rawValues.length, 1).getRichTextValues(); } catch (e) { rawRemarksRTs = null; }
+    try { rawRemarksRTs = rawSheet.getRange(2, idxRawRemarks + 1, workingRawValues.length, 1).getRichTextValues(); } catch (e) { rawRemarksRTs = null; }
   }
 
   let updated = 0;
@@ -955,7 +955,7 @@ function backupOpsToRawFull_(ss, rawSheet, rawValues, headerIndexRaw, pic) {
     if (i == null) return;
 
     const obj = fieldSet[claim];
-    const row = rawValues[i];
+    const row = workingRawValues[i];
     let touched = false;
 
     if (idxRawOR != null && obj.or != null) { row[idxRawOR] = obj.or; touched = true; }
@@ -998,7 +998,7 @@ function backupOpsToRawFull_(ss, rawSheet, rawValues, headerIndexRaw, pic) {
 
   // Apply column-level types/format/validation (cheap, once)
   if (idxRawOR != null) {
-    try { rawSheet.getRange(2, idxRawOR + 1, rawValues.length, 1).insertCheckboxes(); } catch (e) {}
+    try { rawSheet.getRange(2, idxRawOR + 1, workingRawValues.length, 1).insertCheckboxes(); } catch (e) {}
   }
   if (formatSource) {
     try {
@@ -1006,7 +1006,7 @@ function backupOpsToRawFull_(ss, rawSheet, rawValues, headerIndexRaw, pic) {
       // Rationale: setDataValidation(dv) can drop "chip" display + option colors; copyTo(PASTE_DATA_VALIDATION) preserves it.
       if (idxRawStatus != null && formatSource.idxStatus !== -1) {
         const srcCell = formatSource.sh.getRange(2, formatSource.idxStatus + 1, 1, 1);
-        const dstCol  = rawSheet.getRange(2, idxRawStatus + 1, rawValues.length, 1);
+        const dstCol  = rawSheet.getRange(2, idxRawStatus + 1, workingRawValues.length, 1);
 
         try { srcCell.copyTo(dstCol, SpreadsheetApp.CopyPasteType.PASTE_DATA_VALIDATION, false); } catch (e) {
           // Fallback (may lose chip styling, but keeps dropdown rule at least)
@@ -1026,14 +1026,14 @@ function backupOpsToRawFull_(ss, rawSheet, rawValues, headerIndexRaw, pic) {
       // Update Status: column format (rich text is written below)
       if (idxRawUpdate != null && formatSource.idxUpdate !== -1) {
         const src2 = formatSource.sh.getRange(2, formatSource.idxUpdate + 1, 1, 1);
-        const dst2 = rawSheet.getRange(2, idxRawUpdate + 1, rawValues.length, 1);
+        const dst2 = rawSheet.getRange(2, idxRawUpdate + 1, workingRawValues.length, 1);
         src2.copyTo(dst2, SpreadsheetApp.CopyPasteType.PASTE_FORMAT, false);
       }
 
       // Remarks: preserve column format + (if any) data validation.
       if (idxRawRemarks != null && formatSource.idxRemarks !== -1) {
         const srcR = formatSource.sh.getRange(2, formatSource.idxRemarks + 1, 1, 1);
-        const dstR = rawSheet.getRange(2, idxRawRemarks + 1, rawValues.length, 1);
+        const dstR = rawSheet.getRange(2, idxRawRemarks + 1, workingRawValues.length, 1);
         try { srcR.copyTo(dstR, SpreadsheetApp.CopyPasteType.PASTE_FORMAT, false); } catch (e) {}
         try { srcR.copyTo(dstR, SpreadsheetApp.CopyPasteType.PASTE_DATA_VALIDATION, false); } catch (e2) {}
       }
@@ -1041,19 +1041,19 @@ function backupOpsToRawFull_(ss, rawSheet, rawValues, headerIndexRaw, pic) {
       // Update Status Asso/Admin: column format (rich text is written below)
       if (idxRawUpdateAsso != null && formatSource.idxUpdateAsso !== -1) {
         const srcA = formatSource.sh.getRange(2, formatSource.idxUpdateAsso + 1, 1, 1);
-        const dstA = rawSheet.getRange(2, idxRawUpdateAsso + 1, rawValues.length, 1);
+        const dstA = rawSheet.getRange(2, idxRawUpdateAsso + 1, workingRawValues.length, 1);
         try { srcA.copyTo(dstA, SpreadsheetApp.CopyPasteType.PASTE_FORMAT, false); } catch (e) {}
       }
       if (idxRawUpdateAdmin != null && formatSource.idxUpdateAdmin !== -1) {
         const srcB = formatSource.sh.getRange(2, formatSource.idxUpdateAdmin + 1, 1, 1);
-        const dstB = rawSheet.getRange(2, idxRawUpdateAdmin + 1, rawValues.length, 1);
+        const dstB = rawSheet.getRange(2, idxRawUpdateAdmin + 1, workingRawValues.length, 1);
         try { srcB.copyTo(dstB, SpreadsheetApp.CopyPasteType.PASTE_FORMAT, false); } catch (e) {}
       }
 
       // Timestamp: number format (optional)
       if (idxRawTs != null && formatSource.idxTs !== -1) {
         const fmt = formatSource.sh.getRange(2, formatSource.idxTs + 1, 1, 1).getNumberFormat();
-        if (fmt) rawSheet.getRange(2, idxRawTs + 1, rawValues.length, 1).setNumberFormat(fmt);
+        if (fmt) rawSheet.getRange(2, idxRawTs + 1, workingRawValues.length, 1).setNumberFormat(fmt);
       }
     } catch (e) {}
   }
@@ -1070,7 +1070,7 @@ function backupOpsToRawFull_(ss, rawSheet, rawValues, headerIndexRaw, pic) {
   if (idxRawTsAdmin != null) colsToWrite.push(idxRawTsAdmin);
   if (idxRawRemarks != null) colsToWrite.push(idxRawRemarks);
 
-  writeRawColumns_(rawSheet, rawValues, colsToWrite);
+  writeRawColumns_(rawSheet, workingRawValues, colsToWrite);
 
   // Rich text write (Update Status + Asso/Admin variants)
   if (idxRawUpdate != null && rawUpdateRTs) {
