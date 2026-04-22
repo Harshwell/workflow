@@ -113,6 +113,7 @@ var SALVAGE_TARGET_TO_SOURCE_ALIASES = typeof SALVAGE_TARGET_TO_SOURCE_ALIASES !
     'mart_gadget__fact_claim_tracker - claim_number → ins_approve_datetime',
   ],
   'Service Center': ['sc_name'],
+  'Sum Insured': ['sum_insured_amount'],
   'Month - Week': ['Month - Week'],
   'Insurance': ['insurance_partner_code'],
   'Device Brand': ['device_brand'],
@@ -131,6 +132,7 @@ var SALVAGE_TARGET_HEADER_ALIASES = typeof SALVAGE_TARGET_HEADER_ALIASES !== 'un
   'Approval Date': ['approval date'],
   'Month - Week': ['month - week'],
   'Service Center': ['service center'],
+  'Sum Insured': ['sum insured'],
   'Insurance': ['insurance'],
   'Device Brand': ['device brand'],
   'Device Type': ['device type'],
@@ -1136,15 +1138,16 @@ function readSourceSnapshot_(tempSpreadsheetId) {
     };
   }
 
-  const values = bestCandidate.sheet
-    .getRange(bestCandidate.headerRow + 1, 1, lastRow - bestCandidate.headerRow, lastCol)
-    .getValues();
+  const dataRange = bestCandidate.sheet
+    .getRange(bestCandidate.headerRow + 1, 1, lastRow - bestCandidate.headerRow, lastCol);
+  const values = dataRange.getValues();
+  const displayValues = dataRange.getDisplayValues();
 
   const sourceByClaim = {};
   const duplicates = [];
   let rawRows = 0;
 
-  values.forEach(function(row) {
+  values.forEach(function(row, rowIndex) {
     const claimNumber = normalizeKey_(row[sourceColumnMap['Claim Number'] - 1]);
     if (!claimNumber) return;
 
@@ -1157,8 +1160,12 @@ function readSourceSnapshot_(tempSpreadsheetId) {
     const record = {};
     Object.keys(SALVAGE_TARGET_TO_SOURCE_ALIASES).forEach(function(targetHeader) {
       const colIndex = sourceColumnMap[targetHeader];
-      record[targetHeader] = colIndex ? row[colIndex - 1] : '';
+      const rawValue = colIndex ? row[colIndex - 1] : '';
+      const displayValue = colIndex ? displayValues[rowIndex][colIndex - 1] : '';
+      record[targetHeader] = sanitizeSourceValueForTarget_(targetHeader, rawValue, displayValue);
     });
+
+    record['Month - Week'] = deriveMonthWeekFromApproval_(record['Approval Date'], record['Month - Week']);
     sourceByClaim[claimNumber] = record;
   });
 
@@ -1175,6 +1182,41 @@ function readSourceSnapshot_(tempSpreadsheetId) {
   };
 }
 
+
+
+function sanitizeSourceValueForTarget_(targetHeader, rawValue, displayValue) {
+  if (targetHeader === 'Approval Date' || targetHeader === 'Last Status Update') {
+    const textValue = String(displayValue || '').trim();
+    return textValue || rawValue;
+  }
+  return rawValue;
+}
+
+function deriveMonthWeekFromApproval_(approvalValue, fallbackValue) {
+  const fallbackText = String(fallbackValue || '').trim();
+
+  if (approvalValue instanceof Date && !Number.isNaN(approvalValue.getTime())) {
+    const monthName = Utilities.formatDate(approvalValue, SALVAGE_CONFIG.scriptTimeZone, 'MMMM');
+    const day = Number(Utilities.formatDate(approvalValue, SALVAGE_CONFIG.scriptTimeZone, 'd'));
+    const weekInMonth = Math.ceil(day / 7);
+    return monthName + ' - Week ' + weekInMonth;
+  }
+
+  const approvalText = String(approvalValue || '').trim();
+  const parsed = approvalText.match(/(?:[A-Za-z]{3},\s*)?(\d{1,2})\s+([A-Za-z]{3,9})\s+(\d{2,4})/);
+  if (!parsed) {
+    return fallbackText;
+  }
+
+  const day = Number(parsed[1]);
+  const monthName = parsed[2];
+  if (!(day > 0)) {
+    return fallbackText;
+  }
+
+  const weekInMonth = Math.ceil(day / 7);
+  return monthName + ' - Week ' + weekInMonth;
+}
 
 function buildSyncDiffPreview_(sourceSnapshot, precheckedTargetSnapshot) {
   const ss = SpreadsheetApp.openById(SALVAGE_CONFIG.target.spreadsheetId);
