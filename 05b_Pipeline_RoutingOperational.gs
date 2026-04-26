@@ -177,9 +177,16 @@ function uniq05a_(arr) {
 function compileRoutingIndex_(routingMap) {
   const idx = {};
   Object.keys(routingMap).forEach(sheetName => {
+    const targetSheet = String(sheetName || '').trim();
+    // Internal buckets (e.g. "__SC_SHARED__") are not real destination sheets.
+    if (!targetSheet || targetSheet.indexOf('__') === 0) return;
+
     (routingMap[sheetName] || []).forEach(status => {
-      if (!idx[status]) idx[status] = [];
-      idx[status].push(sheetName);
+      const statusKey = String(status || '').trim();
+      if (!statusKey) return;
+      if (!idx[statusKey]) idx[statusKey] = [];
+      idx[statusKey].push(targetSheet);
+      idx[statusKey] = uniq05a_(idx[statusKey]);
     });
   });
   return idx;
