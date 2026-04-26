@@ -17,18 +17,28 @@ const CONFIG = {
   FLOW_NAME: "SC_TRANSFER",
   DEST_SPREADSHEET_ID: "10TpYJ3lvMt8yq7RoKXuqVkdXITJE-ywz5MEPZXkuGx8",
 
-  SOURCE_SHEETS: ["SC - Farhan", "SC - Ivan", "SC - Meilani", "Start"],
+  SOURCE_SHEETS: ["SC - Farhan", "SC - Meindar", "SC - Meilani", "Start", "Finish"],
 
   START_SHEET_NAME: "Start",
+  FINISH_SHEET_NAME: "Finish",
   START_ALLOWED_LAST_STATUS: new Set([
     "WAITING_WALKIN_START",
     "WAITING_COURIER_START",
+    "QOALA_CLAIM_APPROVE_WALKIN",
+    "CLAIM_EXPIRE_WALKIN",
+    "QOALA_CLAIM_REOPEN_WALKIN",
+    "QOALA_CLAIM_APPROVE_PICKUP",
+    "WAITING_PICKUP_START",
+    "COURIER_PICKUP_START",
     "COURIER_PICKUP_START_DONE",
   ]),
 
   OVERVIEW_SHEET: "Overview",
   PROGRESS_CELL_A1: "F3",
   DURATION_CELL_A1: "F4",
+  CONTROL_RANGE_PIC: "G2:G4",
+  CONTROL_RANGE_PHASE_CHECKBOX: "H2:H4",
+  CONTROL_RANGE_PHASE_LABEL: "I2:I4",
 
   RUN_GUARD: {
     LOCK_WAIT_MS: 30000,
@@ -48,6 +58,38 @@ const CONFIG = {
     "Unicom", "Sitcomtara", "Mitracare", "EzCare", "iBox", "GSI", "Andalas", "Klikcare", "J-Bros",
     "MEA", "MMB", "MDP", "Deltasindo", "Carlcare", "B-Store", "Multikom", "Unmapped"
   ],
+  VALID_PICS: new Set(["FARHAN", "MEILANI", "MEINDAR"]),
+  PHASES: Object.freeze({
+    START: "START",
+    MIDDLE: "MIDDLE",
+    FINISH: "FINISH",
+  }),
+  FINISH_ALLOWED_LAST_STATUS: new Set([
+    "SERVICE_CENTER_CLAIM_DONE_REPAIR_WALKIN",
+    "SERVICE_CENTER_CLAIM_WAITING_WALKIN_FINISH",
+    "SERVICE_CENTER_CLAIM_DONE",
+    "SERVICE_CENTER_CLAIM_DONE_REPAIR_PICKUP",
+    "SERVICE_CENTER_CLAIM_WAITING_PICKUP_FINISH",
+    "COURIER_CLAIM_PICKUP_FINISH",
+    "COURIER_CLAIM_PICKUP_FINISH_DONE",
+    "DONE_REPAIR",
+    "WAITING_WALKIN_FINISH",
+    "COURIER_PICKED_UP",
+    "WAITING_COURIER_FINISH",
+  ]),
+  MIDDLE_ALLOWED_LAST_STATUS: new Set([
+    "CLAIM_ADDED_SC",
+    "RECEIVED_SC",
+    "ESTIMATE_COST",
+    "ON_PROGRESS",
+    "SERVICE_CENTER_CLAIM_RECEIVE",
+    "SERVICE_CENTER_CLAIM_ESTIMATE",
+    "QOALA_CLAIM_RESUBMIT_ESTIMATE",
+    "SERVICE_CENTER_CLAIM_RESUBMIT_ESTIMATE",
+    "SERVICE_CENTER_CLAIM_WAITING_REPAIR",
+    "SERVICE_CENTER_CLAIM_ON_PROGRESS",
+    "SERVICE_CENTER_CLAIM_CHANGE_IMEI",
+  ]),
 
   ALLOWED_STATUSES: new Set([
     "Pending SC (TA)",
@@ -158,6 +200,12 @@ const LAST_STATUS_LABELS = {
   SERVICE_CENTER_CLAIM_CHANGE_IMEI: "IMEI Changed",
   INSURANCE_APPROVED: "Claim Approved by Insurance",
   INSURANCE_CLAIM_APPROVE_REPAIR: "Claim Approved by Insurance",
+  SERVICE_CENTER_CLAIM_DONE_REPAIR_WALKIN: "Repair Completed",
+  SERVICE_CENTER_CLAIM_DONE: "Claim Done",
+  SERVICE_CENTER_CLAIM_DONE_REPAIR_PICKUP: "Repair Completed",
+  SERVICE_CENTER_CLAIM_WAITING_PICKUP_FINISH: "Awaiting Courier Pickup",
+  COURIER_CLAIM_PICKUP_FINISH: "Courier Picked Up",
+  COURIER_CLAIM_PICKUP_FINISH_DONE: "Delivered to Customer",
   DONE_REPAIR: "Claim Done And Repaired",
   SERVICE_CENTER_CLAIM_WAITING_WALKIN_FINISH: "Awaiting Customer Pickup",
   WAITING_WALKIN_FINISH: "Customer Picked Up Gadget",
@@ -166,8 +214,14 @@ const LAST_STATUS_LABELS = {
   INSURANCE_APPROVED_REPLACED: "Claim to Replace Approved by Insurance",
   INSURANCE_CLAIM_APPROVE_REPLACE: "Insurance Approved - Switch to Replacement (TLO)",
   SERVICE_CENTER_REPAIR_CANCELLED_FOR_REPLACE: "Repair Cancelled - No Further Action Needed by Service Center",
-  WAITING_WALKIN_START: "Customer on the way",
-  WAITING_COURIER_START: "Customer on the way",
+  QOALA_CLAIM_APPROVE_WALKIN: "Claim received by Qoala",
+  CLAIM_EXPIRE_WALKIN: "Claim Expired",
+  QOALA_CLAIM_REOPEN_WALKIN: "Reopen Claim",
+  QOALA_CLAIM_APPROVE_PICKUP: "Claim received by Qoala",
+  WAITING_PICKUP_START: "Pickup Scheduled",
+  COURIER_PICKUP_START: "Picked Up",
+  WAITING_WALKIN_START: "Customer On The Way",
+  WAITING_COURIER_START: "Courier On The Way",
   COURIER_PICKUP_START_DONE: "Delivered to Service Center",
 };
 
@@ -267,14 +321,33 @@ function runServiceCenterTransfer() {
     });
     _flushLog_(ctx);
 
-    _setProgress_(ctx, "Running: clearing destination sheets...");
-    var clearStep = _timeStage_(function () {
-      return _clearDestinationSheets_(ctx);
+    _setProgress_(ctx, "Running: reading controls + mapping...");
+    var controlStep = _timeStage_(function () {
+      ctx.controls = _readRunControls_(srcSS);
+      ctx.mappingAllRows = _readServiceCenterMapping_(srcSS, "");
+      ctx.mappingRows = _filterMappingByPic_(ctx.mappingAllRows, ctx.controls.selectedPic);
+      return {
+        selectedPic: ctx.controls.selectedPic || "ALL",
+        phases: ctx.controls.phaseOrder.join(","),
+        mappingAllRows: ctx.mappingAllRows.length,
+        mappingRows: ctx.mappingRows.length,
+      };
     });
-    _logInfo_(ctx, "CLR", "CLR - Clear destination sheets", {
-      ms: clearStep.ms,
-      metrics: clearStep.res,
-      notes: clearStep.res.clearedSheetsCount ? "Destination sheets cleared." : "Nothing to clear.",
+    _logInfo_(ctx, "CTRL", "CTRL - Read filters and mapping", {
+      ms: controlStep.ms,
+      metrics: controlStep.res,
+      notes: "Runtime controls resolved from Overview.",
+    });
+    _flushLog_(ctx);
+
+    _setProgress_(ctx, "Running: preparing destination sheets...");
+    var prepStep = _timeStage_(function () {
+      return _prepareDestinationSheets_(ctx);
+    });
+    _logInfo_(ctx, "PREP", "PREP - Reset and duplicate destination sheets", {
+      ms: prepStep.ms,
+      metrics: prepStep.res,
+      notes: "Destination sheet templates prepared from Unmapped.",
     });
     _flushLog_(ctx);
 
@@ -288,6 +361,7 @@ function runServiceCenterTransfer() {
     ctx.metrics.pickedRows = collectStep.res.pickedRows;
     ctx.metrics.dedupedRows = collectStep.res.dedupedRows;
     ctx.metrics.bucketCount = collectStep.res.bucketCount;
+    ctx.metrics.skippedByPic = collectStep.res.skippedByPic;
     ctx.bucket = collectStep.res.bucket;
 
     _logInfo_(ctx, "PICK", "PICK - Aggregate source rows", {
@@ -297,6 +371,7 @@ function runServiceCenterTransfer() {
         skippedSources: ctx.metrics.skippedSources,
         pickedRows: ctx.metrics.pickedRows,
         dedupedRows: ctx.metrics.dedupedRows,
+        skippedByPic: ctx.metrics.skippedByPic || 0,
         bucketCount: ctx.metrics.bucketCount,
       },
       notes: "Eligible rows collected and deduplicated.",
@@ -348,6 +423,17 @@ function runServiceCenterTransfer() {
       ms: sortStep.ms,
       metrics: sortStep.res,
       notes: sortStep.res.sortedSheets ? "Destination sheets sorted." : "No destination sheets required sorting.",
+    });
+    _flushLog_(ctx);
+
+    _setProgress_(ctx, "Running: adjusting column layout...");
+    var layoutStep = _timeStage_(function () {
+      return _finalizeDestinationLayout_(ctx);
+    });
+    _logInfo_(ctx, "LAYOUT", "LAYOUT - Autofit and wrap destination columns", {
+      ms: layoutStep.ms,
+      metrics: layoutStep.res,
+      notes: "Column widths adjusted and long content wrapped.",
     });
     _flushLog_(ctx);
 
@@ -412,6 +498,7 @@ function _newRunContext_(srcSS, tz, runId) {
       skippedSources: 0,
       pickedRows: 0,
       dedupedRows: 0,
+      skippedByPic: 0,
       bucketCount: 0,
       writtenRows: 0,
       failedWrites: 0,
@@ -422,6 +509,9 @@ function _newRunContext_(srcSS, tz, runId) {
       normalizedHeaders: {},
     },
     destRegistry: null,
+    controls: null,
+    mappingRows: [],
+    mappingAllRows: [],
     bucket: new Map(),
   };
 }
@@ -453,6 +543,108 @@ function _guardAgainstRapidRerun_(props, ctx) {
   props.setProperty(CONFIG.RUN_GUARD.PROP_LAST_RUN_MS, String(nowMs));
   props.setProperty(CONFIG.RUN_GUARD.PROP_LAST_RUN_ID, ctx.runId);
   return true;
+}
+
+function _readRunControls_(srcSS) {
+  var overview = srcSS.getSheetByName(CONFIG.OVERVIEW_SHEET);
+  if (!overview) throw new Error("Overview sheet not found: " + CONFIG.OVERVIEW_SHEET);
+
+  var picValues = overview.getRange(CONFIG.CONTROL_RANGE_PIC).getValues();
+  var selectedPic = "";
+  for (var i = 0; i < picValues.length; i++) {
+    var candidate = String(picValues[i][0] || "").trim().toUpperCase();
+    if (!candidate) continue;
+    if (!CONFIG.VALID_PICS.has(candidate)) continue;
+    selectedPic = candidate;
+    break;
+  }
+
+  var checks = overview.getRange(CONFIG.CONTROL_RANGE_PHASE_CHECKBOX).getValues();
+  var labels = overview.getRange(CONFIG.CONTROL_RANGE_PHASE_LABEL).getValues();
+  var selected = {};
+  selected[CONFIG.PHASES.START] = false;
+  selected[CONFIG.PHASES.MIDDLE] = false;
+  selected[CONFIG.PHASES.FINISH] = false;
+
+  for (var r = 0; r < checks.length; r++) {
+    var checked = checks[r][0] === true;
+    if (!checked) continue;
+    var label = String((labels[r] && labels[r][0]) || "").trim().toUpperCase();
+    if (!label) continue;
+    if (selected.hasOwnProperty(label)) selected[label] = true;
+  }
+
+  // Safe default: if no checkbox selected, run all phases.
+  var anySelected = selected[CONFIG.PHASES.START] || selected[CONFIG.PHASES.MIDDLE] || selected[CONFIG.PHASES.FINISH];
+  if (!anySelected) {
+    selected[CONFIG.PHASES.START] = true;
+    selected[CONFIG.PHASES.MIDDLE] = true;
+    selected[CONFIG.PHASES.FINISH] = true;
+  }
+
+  return {
+    selectedPic: selectedPic,
+    phaseFlags: selected,
+    phaseOrder: [CONFIG.PHASES.START, CONFIG.PHASES.MIDDLE, CONFIG.PHASES.FINISH].filter(function (p) { return selected[p]; }),
+  };
+}
+
+function _readServiceCenterMapping_(srcSS, selectedPic) {
+  var overview = srcSS.getSheetByName(CONFIG.OVERVIEW_SHEET);
+  if (!overview) throw new Error("Overview sheet not found: " + CONFIG.OVERVIEW_SHEET);
+
+  var values = overview.getDataRange().getValues();
+  if (!values || !values.length) throw new Error("Overview is empty; mapping table not found.");
+
+  var headerRow = -1;
+  var idxName = -1;
+  var idxPic = -1;
+
+  for (var r = 0; r < values.length; r++) {
+    var row = values[r] || [];
+    for (var c = 0; c < row.length; c++) {
+      var v = _norm_(row[c]);
+      if (v !== "name of service center") continue;
+      headerRow = r;
+      idxName = c;
+      break;
+    }
+    if (headerRow < 0) continue;
+    // find PIC on same row
+    var hRow = values[headerRow] || [];
+    for (var c2 = 0; c2 < hRow.length; c2++) {
+      if (_norm_(hRow[c2]) === "pic") { idxPic = c2; break; }
+    }
+    break;
+  }
+
+  if (headerRow < 0 || idxName < 0 || idxPic < 0) {
+    throw new Error("Service Center mapping header not found (expected: Name of Service Center + PIC).");
+  }
+
+  var out = [];
+  for (var rr = headerRow + 1; rr < values.length; rr++) {
+    var rawName = String((values[rr] && values[rr][idxName]) || "").trim();
+    var rawPic = String((values[rr] && values[rr][idxPic]) || "").trim().toUpperCase();
+    if (!rawName && !rawPic) continue;
+    if (!rawName || !rawPic) continue;
+    if (!CONFIG.VALID_PICS.has(rawPic)) continue;
+    if (selectedPic && rawPic !== selectedPic) continue;
+    out.push({ name: rawName, pic: rawPic });
+  }
+
+  if (!out.length) {
+    throw new Error("No mapping rows found for selected PIC filter: " + (selectedPic || "ALL"));
+  }
+
+  return out;
+}
+
+function _filterMappingByPic_(rows, selectedPic) {
+  if (!selectedPic) return (rows || []).slice();
+  return (rows || []).filter(function (r) {
+    return String((r && r.pic) || "").trim().toUpperCase() === selectedPic;
+  });
 }
 
 /* =========================
@@ -600,9 +792,10 @@ function _collectAndGroupRows_(ctx, srcSS) {
   var allPicked = [];
   var scannedSources = 0;
   var skippedSources = 0;
+  var sourceSheets = _getSourceSheetsByControls_(ctx.controls);
 
-  for (var i = 0; i < CONFIG.SOURCE_SHEETS.length; i++) {
-    var sheetName = CONFIG.SOURCE_SHEETS[i];
+  for (var i = 0; i < sourceSheets.length; i++) {
+    var sheetName = sourceSheets[i];
     var sheet = srcSS.getSheetByName(sheetName);
 
     if (!sheet) {
@@ -615,7 +808,7 @@ function _collectAndGroupRows_(ctx, srcSS) {
 
     scannedSources += 1;
     var scanStage = _timeStage_(function (targetSheet) {
-      return _collectEligibleRowsFromSource_(targetSheet);
+      return _collectEligibleRowsFromSource_(targetSheet, ctx.controls);
     }.bind(null, sheet));
 
     if (scanStage.res.errors.length) {
@@ -662,12 +855,35 @@ function _collectAndGroupRows_(ctx, srcSS) {
     skippedSources: skippedSources,
     pickedRows: allPicked.length,
     dedupedRows: dedupeStage.res.dedupedRows,
+    skippedByPic: dedupeStage.res.skippedByPic || 0,
     bucketCount: dedupeStage.res.bucketCount,
     bucket: dedupeStage.res.bucket,
   };
 }
 
-function _collectEligibleRowsFromSource_(sheet) {
+function _getSourceSheetsByControls_(controls) {
+  var flags = (controls && controls.phaseFlags) || {};
+  var includeStart = !!flags[CONFIG.PHASES.START];
+  var includeMiddle = !!flags[CONFIG.PHASES.MIDDLE];
+  var includeFinish = !!flags[CONFIG.PHASES.FINISH];
+
+  var out = [];
+  for (var i = 0; i < CONFIG.SOURCE_SHEETS.length; i++) {
+    var name = CONFIG.SOURCE_SHEETS[i];
+    var isStart = name === CONFIG.START_SHEET_NAME;
+    var isFinish = name === CONFIG.FINISH_SHEET_NAME;
+    var isScUniverse = !isStart && !isFinish;
+
+    if (isStart && !includeStart) continue;
+    if (isFinish && !includeFinish) continue;
+    if (isScUniverse && !(includeMiddle || includeFinish)) continue;
+
+    out.push(name);
+  }
+  return out;
+}
+
+function _collectEligibleRowsFromSource_(sheet, controls) {
   var errors = [];
   var values = sheet.getDataRange().getValues();
   if (!values || values.length < 2) {
@@ -677,6 +893,8 @@ function _collectEligibleRowsFromSource_(sheet) {
   var headers = values[0].map(function (h) { return String(h || "").trim(); });
   var idx = _buildHeaderIndexMap_(headers, CONFIG.SOURCE_HEADER_CANDIDATES);
   var isStartSheet = sheet.getName() === CONFIG.START_SHEET_NAME;
+  var isFinishSheet = sheet.getName() === CONFIG.FINISH_SHEET_NAME;
+  var isScUniverseSheet = !isStartSheet && !isFinishSheet;
 
   for (var r = 0; r < CONFIG.REQUIRED_SOURCE_KEYS.length; r++) {
     var key = CONFIG.REQUIRED_SOURCE_KEYS[r];
@@ -686,35 +904,44 @@ function _collectEligibleRowsFromSource_(sheet) {
     }
   }
 
-  if (!isStartSheet && idx.status == null) {
-    errors.push({ sheet: sheet.getName(), missingHeaderKey: "status", headers: headers });
+  if ((isStartSheet || isFinishSheet) && idx.lastStatus == null) {
+    errors.push({ sheet: sheet.getName(), missingHeaderKey: "lastStatus", headers: headers });
     return { picked: [], errors: errors, totalRows: values.length - 1 };
   }
 
-  if (isStartSheet && idx.status == null && idx.lastStatus == null) {
+  if (isScUniverseSheet && idx.lastStatus == null) {
     errors.push({ sheet: sheet.getName(), missingHeaderKey: "lastStatus", headers: headers });
     return { picked: [], errors: errors, totalRows: values.length - 1 };
   }
 
   var picked = [];
+  var phaseFlags = (controls && controls.phaseFlags) || {};
+  var allowStart = !!phaseFlags[CONFIG.PHASES.START];
+  var allowMiddle = !!phaseFlags[CONFIG.PHASES.MIDDLE];
+  var allowFinish = !!phaseFlags[CONFIG.PHASES.FINISH];
+
   for (var rowIndex = 1; rowIndex < values.length; rowIndex++) {
     var row = values[rowIndex];
 
-    var status = idx.status == null ? "" : String(row[idx.status] || "").trim();
     var lastStatus = idx.lastStatus == null ? "" : String(row[idx.lastStatus] || "").trim();
 
-    var eligibleByStatus = _isAllowedStatus_(status);
-    var eligibleByStartStatus = isStartSheet && _isStartAllowedLastStatus_(lastStatus);
+    var eligibleByStartStatus = isStartSheet && allowStart && _isStartAllowedLastStatus_(lastStatus);
+    var eligibleByMiddle = isScUniverseSheet && allowMiddle && _isMiddleAllowedLastStatus_(lastStatus);
+    var eligibleByFinish = (isScUniverseSheet || isFinishSheet) && allowFinish && _isFinishAllowedLastStatus_(lastStatus);
 
-    if (!eligibleByStatus && !eligibleByStartStatus) continue;
+    if (!eligibleByStartStatus && !eligibleByMiddle && !eligibleByFinish) continue;
 
     var claimNumber = String(row[idx.claimNumber] || "").trim();
     var serviceCenterName = String(row[idx.scName] || "").trim();
     if (!claimNumber || !serviceCenterName) continue;
 
+    var rawRemarks = idx.remarks == null ? "" : String(row[idx.remarks] || "").trim();
+    var phaseRank = _resolvePhaseRank_(eligibleByStartStatus, eligibleByMiddle, eligibleByFinish);
+
     picked.push({
       sourceSheet: sheet.getName(),
       sourceRowNumber: rowIndex + 1,
+      phaseRank: phaseRank,
       claimNumber: claimNumber,
       deviceBrand: idx.deviceBrand == null ? "" : row[idx.deviceBrand],
       deviceType: idx.deviceType == null ? "" : row[idx.deviceType],
@@ -723,7 +950,7 @@ function _collectEligibleRowsFromSource_(sheet) {
       lastStatus: idx.lastStatus == null ? "" : row[idx.lastStatus],
       lastStatusDate: idx.lastStatusDate == null ? "" : row[idx.lastStatusDate],
       lastStatusAging: idx.lastStatusAging == null ? "" : row[idx.lastStatusAging],
-      remarks: idx.remarks == null ? "" : row[idx.remarks],
+      remarks: rawRemarks,
       dashboardUrl: _buildDashboardUrl_(claimNumber),
     });
   }
@@ -731,12 +958,25 @@ function _collectEligibleRowsFromSource_(sheet) {
   return { picked: picked, errors: errors, totalRows: values.length - 1 };
 }
 
+function _resolvePhaseRank_(isStart, isMiddle, isFinish) {
+  if (isStart) return 1;   // START
+  if (isMiddle) return 2;  // MIDDLE
+  if (isFinish) return 3;  // FINISH
+  return 9;
+}
+
 function _dedupeAndBucketRows_(ctx, rows) {
   var deduped = new Map();
+  var skippedByPic = 0;
 
   for (var i = 0; i < rows.length; i++) {
     var row = rows[i];
-    var requestedDestName = _resolveDestSheetName_(row.serviceCenterName);
+    var resolved = _resolveDestByMapping_(ctx, row.serviceCenterName);
+    if (resolved.isMapped && ctx.controls && ctx.controls.selectedPic && resolved.pic !== ctx.controls.selectedPic) {
+      skippedByPic += 1;
+      continue;
+    }
+    var requestedDestName = resolved.sheetName;
     var destSheet = _ensureDestSheet_(ctx, requestedDestName);
     var destName = destSheet.getName();
     var key = destName + "__" + String(row.claimNumber).trim().toUpperCase();
@@ -763,18 +1003,39 @@ function _dedupeAndBucketRows_(ctx, rows) {
 
   bucket.forEach(function (list) {
     list.sort(function (a, b) {
+      var pa = Number(a.phaseRank || 9);
+      var pb = Number(b.phaseRank || 9);
+      if (pa !== pb) return pa - pb;
+
+      var scCmp = String(a.serviceCenterName || "").localeCompare(String(b.serviceCenterName || ""));
+      if (scCmp !== 0) return scCmp;
+
+      var stCmp = String(a.lastStatus || "").localeCompare(String(b.lastStatus || ""));
+      if (stCmp !== 0) return stCmp;
+
+      var da = _coerceToDate_(a.lastStatusDate);
+      var db = _coerceToDate_(b.lastStatusDate);
+      var ta = da ? da.getTime() : Number.MAX_SAFE_INTEGER;
+      var tb = db ? db.getTime() : Number.MAX_SAFE_INTEGER;
+      if (ta !== tb) return ta - tb; // oldest first
+
       return _compareClaimNumbers_(a.claimNumber, b.claimNumber);
     });
   });
 
   return {
     dedupedRows: deduped.size,
+    skippedByPic: skippedByPic,
     bucketCount: bucket.size,
     bucket: bucket,
   };
 }
 
 function _shouldReplaceDedupedRow_(currentRow, nextRow) {
+  var currentSourcePriority = _sourcePriorityForDedupe_(currentRow);
+  var nextSourcePriority = _sourcePriorityForDedupe_(nextRow);
+  if (nextSourcePriority !== currentSourcePriority) return nextSourcePriority > currentSourcePriority;
+
   var currentDate = _coerceToDate_(currentRow.lastStatusDate);
   var nextDate = _coerceToDate_(nextRow.lastStatusDate);
 
@@ -788,6 +1049,12 @@ function _shouldReplaceDedupedRow_(currentRow, nextRow) {
   if (currentStatus !== nextStatus) return nextStatus > currentStatus;
 
   return Number(nextRow.sourceRowNumber || 0) > Number(currentRow.sourceRowNumber || 0);
+}
+
+function _sourcePriorityForDedupe_(row) {
+  var src = String((row && row.sourceSheet) || "").trim();
+  if (src === CONFIG.FINISH_SHEET_NAME) return 2; // highest priority
+  return 1;
 }
 
 /* =========================
@@ -895,6 +1162,60 @@ function _appendToDestination_(ctx, destSheet, rows) {
   return out.length;
 }
 
+function _prepareDestinationSheets_(ctx) {
+  var baseName = CONFIG.UNMAPPED_SHEET_NAME;
+  var base = ctx.destRegistry.byName[baseName];
+  if (!base) {
+    base = ctx.destSS.insertSheet(baseName);
+    _initializeFallbackSheet_(base);
+  }
+
+  // Remove all duplicated sheets, keep Unmapped only.
+  var deletedSheets = 0;
+  var sheets = ctx.destSS.getSheets();
+  for (var i = sheets.length - 1; i >= 0; i--) {
+    var sh = sheets[i];
+    if (sh.getName() === baseName) continue;
+    ctx.destSS.deleteSheet(sh);
+    deletedSheets += 1;
+  }
+
+  // Clear Unmapped body rows, keep header.
+  var baseLastRow = base.getLastRow();
+  var baseLastCol = Math.max(base.getLastColumn(), 1);
+  var clearedRows = 0;
+  if (baseLastRow > 1) {
+    clearedRows = baseLastRow - 1;
+    base.getRange(2, 1, clearedRows, baseLastCol).clearContent();
+  }
+
+  // Duplicate Unmapped based on mapping list.
+  var mapping = ctx.mappingRows || [];
+  var createdSheets = 0;
+  var usedNames = {};
+  usedNames[baseName] = true;
+
+  for (var m = 0; m < mapping.length; m++) {
+    var rawName = String(mapping[m].name || "").trim();
+    if (!rawName) continue;
+    if (usedNames[rawName]) continue;
+    var dup = base.copyTo(ctx.destSS);
+    dup.setName(rawName);
+    usedNames[rawName] = true;
+    createdSheets += 1;
+  }
+
+  // Refresh registry after structural changes.
+  ctx.destRegistry = _buildSheetRegistry_(ctx.destSS);
+
+  return {
+    deletedSheets: deletedSheets,
+    clearedRowsOnUnmapped: clearedRows,
+    createdSheets: createdSheets,
+    totalDestinationSheets: ctx.destRegistry.sheetNames.length,
+  };
+}
+
 function _clearDestinationSheets_(ctx) {
   var clearedRowsBySheet = {};
   var emptySheets = [];
@@ -972,6 +1293,18 @@ function _initializeFallbackSheet_(sheet) {
 
 function _sortDestinationSheets_(ctx) {
   var sheetNames = _getSortableDestinationSheetNames_(ctx);
+  var phaseCount = (ctx && ctx.controls && Array.isArray(ctx.controls.phaseOrder)) ? ctx.controls.phaseOrder.length : 0;
+  if (phaseCount > 1) {
+    return {
+      requestedSheets: sheetNames.length,
+      sortedSheets: 0,
+      skippedEmpty: 0,
+      skippedMissingSheet: 0,
+      skippedMissingColumns: 0,
+      skippedByPhaseOrderMode: sheetNames.length,
+    };
+  }
+
   var sortedSheets = 0;
   var skippedEmpty = 0;
   var skippedMissingSheet = 0;
@@ -995,11 +1328,11 @@ function _sortDestinationSheets_(ctx) {
     var headerRow = _getSheetHeaderRow_(sheet);
     var colMap = _getDestColumnMapCached_(ctx, sheet, headerRow);
 
-    if (colMap.lastStatusAging == null || colMap.lastStatus == null || colMap.scName == null) {
+    if (colMap.lastStatusDate == null || colMap.lastStatus == null || colMap.scName == null) {
       skippedMissingColumns += 1;
       _logWarn_(ctx, "SORT", "WARN - SORT_COLUMNS_MISSING (" + sheetName + ")", {
         metrics: {
-          lastStatusAging: colMap.lastStatusAging != null,
+          lastStatusDate: colMap.lastStatusDate != null,
           lastStatus: colMap.lastStatus != null,
           scName: colMap.scName != null,
         },
@@ -1012,7 +1345,7 @@ function _sortDestinationSheets_(ctx) {
     sheet.getRange(2, 1, lastRow - 1, lastCol).sort([
       { column: colMap.scName + 1, ascending: true },
       { column: colMap.lastStatus + 1, ascending: true },
-      { column: colMap.lastStatusAging + 1, ascending: false },
+      { column: colMap.lastStatusDate + 1, ascending: true },
     ]);
     sortedSheets += 1;
   }
@@ -1026,10 +1359,53 @@ function _sortDestinationSheets_(ctx) {
   };
 }
 
+function _finalizeDestinationLayout_(ctx) {
+  var sheetNames = _getSortableDestinationSheetNames_(ctx);
+  var touchedSheets = 0;
+  var wrappedCols = 0;
+  var maxWidth = 420;
+
+  for (var i = 0; i < sheetNames.length; i++) {
+    var name = sheetNames[i];
+    var sh = ctx.destRegistry.byName[name];
+    if (!sh) continue;
+
+    var lastCol = Math.max(sh.getLastColumn(), 1);
+    var lastRow = sh.getLastRow();
+
+    try { sh.autoResizeColumns(1, lastCol); } catch (e) {}
+    touchedSheets += 1;
+
+    for (var c = 1; c <= lastCol; c++) {
+      var width = 0;
+      try { width = sh.getColumnWidth(c); } catch (e2) {}
+      if (width > maxWidth) {
+        try { sh.setColumnWidth(c, maxWidth); } catch (e3) {}
+        try {
+          sh.getRange(1, c, Math.max(lastRow, 1), 1).setWrap(true);
+          wrappedCols += 1;
+        } catch (e4) {}
+      }
+    }
+  }
+
+  return {
+    touchedSheets: touchedSheets,
+    wrappedCols: wrappedCols,
+    maxWidth: maxWidth,
+  };
+}
+
 function _getSortableDestinationSheetNames_(ctx) {
   var seen = {};
   var out = [];
-  var ordered = CONFIG.DEST_SHEETS_TO_CLEAR.slice();
+  var ordered = [];
+
+  if (ctx && Array.isArray(ctx.mappingRows)) {
+    for (var i = 0; i < ctx.mappingRows.length; i++) {
+      ordered.push(String((ctx.mappingRows[i] && ctx.mappingRows[i].name) || "").trim());
+    }
+  }
 
   if (ctx && ctx.bucket) {
     ctx.bucket.forEach(function (_rows, sheetName) {
@@ -1153,6 +1529,65 @@ function _resolveDestSheetName_(serviceCenterName) {
   return CONFIG.UNMAPPED_SHEET_NAME;
 }
 
+function _resolveDestByMapping_(ctx, serviceCenterName) {
+  var mappingRows = (ctx && ctx.mappingAllRows) ? ctx.mappingAllRows : [];
+  var normalizedSc = _norm_(serviceCenterName);
+  var compactSc = _compactNorm_(serviceCenterName);
+  if (!mappingRows.length || !normalizedSc) {
+    return { sheetName: CONFIG.UNMAPPED_SHEET_NAME, pic: "", isMapped: false };
+  }
+
+  var aliasTarget = _resolveAliasMappingTarget_(normalizedSc, compactSc);
+  if (aliasTarget) {
+    for (var a = 0; a < mappingRows.length; a++) {
+      var aliasName = String(mappingRows[a].name || "").trim();
+      if (!aliasName) continue;
+      var aliasNorm = _norm_(aliasName);
+      var aliasCompact = _compactNorm_(aliasName);
+      if (aliasNorm === aliasTarget || aliasCompact === aliasTarget) {
+        return {
+          sheetName: aliasName,
+          pic: String(mappingRows[a].pic || "").trim().toUpperCase(),
+          isMapped: true,
+        };
+      }
+    }
+  }
+
+  var best = null;
+  var bestLen = -1;
+  var bestPic = "";
+  for (var i = 0; i < mappingRows.length; i++) {
+    var mappingName = String(mappingRows[i].name || "").trim();
+    if (!mappingName) continue;
+    var nMap = _norm_(mappingName);
+    var cMap = _compactNorm_(mappingName);
+    if (!nMap) continue;
+    var hit = normalizedSc.indexOf(nMap) >= 0 || nMap.indexOf(normalizedSc) >= 0 ||
+      compactSc.indexOf(cMap) >= 0 || cMap.indexOf(compactSc) >= 0;
+    if (!hit) continue;
+    if (nMap.length > bestLen) {
+      best = mappingName;
+      bestPic = String(mappingRows[i].pic || "").trim().toUpperCase();
+      bestLen = nMap.length;
+    }
+  }
+
+  return {
+    sheetName: best || CONFIG.UNMAPPED_SHEET_NAME,
+    pic: bestPic,
+    isMapped: !!best,
+  };
+}
+
+function _resolveAliasMappingTarget_(normalizedSc, compactSc) {
+  var s = String(normalizedSc || "");
+  var c = String(compactSc || "");
+  if (s.indexOf("ez care") >= 0 || c.indexOf("ezcare") >= 0) return "ezcare";
+  if (s.indexOf("deltasindo") >= 0 || c.indexOf("deltasindo") >= 0) return "deltafone";
+  return "";
+}
+
 function _resolveBranchForSheet_(serviceCenterName, destSheetName) {
   var resolver = CONFIG.BRANCH_BY_DEST[String(destSheetName || "").trim()];
   if (!resolver) return "";
@@ -1214,6 +1649,24 @@ function _isStartAllowedLastStatus_(status) {
     .replace(/[^A-Z0-9]+/g, "_")
     .replace(/^_+|_+$/g, "");
   return CONFIG.START_ALLOWED_LAST_STATUS.has(key);
+}
+
+function _isMiddleAllowedLastStatus_(status) {
+  var key = String(status || "")
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+  return CONFIG.MIDDLE_ALLOWED_LAST_STATUS.has(key);
+}
+
+function _isFinishAllowedLastStatus_(status) {
+  var key = String(status || "")
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+  return CONFIG.FINISH_ALLOWED_LAST_STATUS.has(key);
 }
 
 function _translateLastStatus_(status) {
@@ -1302,6 +1755,10 @@ function _norm_(value) {
   RUNTIME_CACHE.normByValue[raw] = normalized;
   RUNTIME_CACHE.normSize += 1;
   return normalized;
+}
+
+function _compactNorm_(value) {
+  return _norm_(value).replace(/\s+/g, "");
 }
 
 /* =========================
