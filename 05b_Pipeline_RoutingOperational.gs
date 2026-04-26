@@ -1411,6 +1411,7 @@ function routeRawToOperationalSheetsInMemory_(ss, rawValues, headerIndexRaw, pic
       continue;
     }
 
+    let writtenCount = 0;
     for (let t = 0; t < targets.length; t++) {
       const sheetName = targets[t];
       const w = writers[sheetName];
@@ -1418,6 +1419,19 @@ function routeRawToOperationalSheetsInMemory_(ss, rawValues, headerIndexRaw, pic
       w.rows.push(w.build(rawRow));
       routeCount[sheetName] = (routeCount[sheetName] || 0) + 1;
       total++;
+      writtenCount++;
+    }
+
+    if (writtenCount === 0) {
+      unknownStatuses.push({
+        rowNumber,
+        claim: claimVal,
+        partner: partnerVal,
+        status: statusVal,
+        sc: scNameVal,
+        daysAging,
+        reason: 'resolved targets not found in workbook',
+      });
     }
   }
 
@@ -1475,7 +1489,8 @@ function routeRawToOperationalSheetsInMemory_(ss, rawValues, headerIndexRaw, pic
     for (let i = 0; i < unknownStatuses.length && i < maxN; i++) {
       const x = unknownStatuses[i] || {};
       const dateStr = formatLogDate05b_(x.submissionDateVal);
-      const notes = `Last Status: ${x.status || ''} | Claim Number: ${x.claim || ''} | SC: ${x.sc || ''} | Date: ${dateStr || ''}`;
+      const reason = x.reason ? ` | Reason: ${x.reason}` : '';
+      const notes = `Last Status: ${x.status || ''} | Claim Number: ${x.claim || ''} | SC: ${x.sc || ''} | Date: ${dateStr || ''}${reason}`;
       logLine_('MAP', 'Last status not routed', '', notes, 'WARN');
     }
   }
