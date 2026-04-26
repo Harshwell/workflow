@@ -94,7 +94,6 @@ const CONFIG = {
   ALLOWED_STATUSES: new Set([
     "Pending SC (TA)",
     "Pending SC (Repair)",
-    "Pending SC (Estimate)",
     "Pending SC (Estimation)"
   ]),
 
