@@ -17,7 +17,7 @@ const CONFIG = {
   FLOW_NAME: "SC_TRANSFER",
   DEST_SPREADSHEET_ID: "10TpYJ3lvMt8yq7RoKXuqVkdXITJE-ywz5MEPZXkuGx8",
 
-  SOURCE_SHEETS: ["SC - Farhan", "SC - Ivan", "SC - Meilani", "Start"],
+  SOURCE_SHEETS: ["SC - Farhan", "SC - Meindar", "SC - Meilani", "Start"],
 
   START_SHEET_NAME: "Start",
   START_ALLOWED_LAST_STATUS: new Set([
@@ -58,23 +58,33 @@ const CONFIG = {
     FINISH: "FINISH",
   }),
   FINISH_ALLOWED_LAST_STATUS: new Set([
-    "DONE_REPAIR",
-    "WAITING_WALKIN_FINISH",
-    "COURIER_PICKED_UP",
-    "WAITING_COURIER_FINISH",
-    "SERVICE_CENTER_CLAIM_DONE_REPAIR_WALKIN",
-    "SERVICE_CENTER_CLAIM_WAITING_WALKIN_FINISH",
-    "SERVICE_CENTER_CLAIM_DONE",
-    "SERVICE_CENTER_CLAIM_DONE_REPAIR_PICKUP",
-    "SERVICE_CENTER_CLAIM_WAITING_PICKUP_FINISH",
-    "COURIER_CLAIM_PICKUP_FINISH",
-    "COURIER_CLAIM_PICKUP_FINISH_DONE",
+    "WAITING_WALKIN_START",
+    "WAITING_COURIER_START",
+    "QOALA_CLAIM_APPROVE_WALKIN",
+    "CLAIM_EXPIRE_WALKIN",
+    "QOALA_CLAIM_REOPEN_WALKIN",
+    "QOALA_CLAIM_APPROVE_PICKUP",
+    "WAITING_PICKUP_START",
+    "COURIER_PICKUP_START",
+    "COURIER_PICKUP_START_DONE",
+  ]),
+  MIDDLE_ALLOWED_LAST_STATUS: new Set([
+    "CLAIM_ADDED_SC",
+    "RECEIVED_SC",
+    "ESTIMATE_COST",
+    "ON_PROGRESS",
+    "SERVICE_CENTER_CLAIM_RECEIVE",
+    "SERVICE_CENTER_CLAIM_ESTIMATE",
+    "QOALA_CLAIM_RESUBMIT_ESTIMATE",
+    "SERVICE_CENTER_CLAIM_RESUBMIT_ESTIMATE",
+    "SERVICE_CENTER_CLAIM_WAITING_REPAIR",
+    "SERVICE_CENTER_CLAIM_ON_PROGRESS",
+    "SERVICE_CENTER_CLAIM_CHANGE_IMEI",
   ]),
 
   ALLOWED_STATUSES: new Set([
     "Pending SC (TA)",
     "Pending SC (Repair)",
-    "Pending SC (Estimate)",
     "Pending SC (Estimation)"
   ]),
 
@@ -292,10 +302,12 @@ function runServiceCenterTransfer() {
     _setProgress_(ctx, "Running: reading controls + mapping...");
     var controlStep = _timeStage_(function () {
       ctx.controls = _readRunControls_(srcSS);
-      ctx.mappingRows = _readServiceCenterMapping_(srcSS, ctx.controls.selectedPic);
+      ctx.mappingAllRows = _readServiceCenterMapping_(srcSS, "");
+      ctx.mappingRows = _filterMappingByPic_(ctx.mappingAllRows, ctx.controls.selectedPic);
       return {
         selectedPic: ctx.controls.selectedPic || "ALL",
         phases: ctx.controls.phaseOrder.join(","),
+        mappingAllRows: ctx.mappingAllRows.length,
         mappingRows: ctx.mappingRows.length,
       };
     });
@@ -327,6 +339,7 @@ function runServiceCenterTransfer() {
     ctx.metrics.pickedRows = collectStep.res.pickedRows;
     ctx.metrics.dedupedRows = collectStep.res.dedupedRows;
     ctx.metrics.bucketCount = collectStep.res.bucketCount;
+    ctx.metrics.skippedByPic = collectStep.res.skippedByPic;
     ctx.bucket = collectStep.res.bucket;
 
     _logInfo_(ctx, "PICK", "PICK - Aggregate source rows", {
@@ -336,6 +349,7 @@ function runServiceCenterTransfer() {
         skippedSources: ctx.metrics.skippedSources,
         pickedRows: ctx.metrics.pickedRows,
         dedupedRows: ctx.metrics.dedupedRows,
+        skippedByPic: ctx.metrics.skippedByPic || 0,
         bucketCount: ctx.metrics.bucketCount,
       },
       notes: "Eligible rows collected and deduplicated.",
@@ -387,6 +401,17 @@ function runServiceCenterTransfer() {
       ms: sortStep.ms,
       metrics: sortStep.res,
       notes: sortStep.res.sortedSheets ? "Destination sheets sorted." : "No destination sheets required sorting.",
+    });
+    _flushLog_(ctx);
+
+    _setProgress_(ctx, "Running: adjusting column layout...");
+    var layoutStep = _timeStage_(function () {
+      return _finalizeDestinationLayout_(ctx);
+    });
+    _logInfo_(ctx, "LAYOUT", "LAYOUT - Autofit and wrap destination columns", {
+      ms: layoutStep.ms,
+      metrics: layoutStep.res,
+      notes: "Column widths adjusted and long content wrapped.",
     });
     _flushLog_(ctx);
 
@@ -451,6 +476,7 @@ function _newRunContext_(srcSS, tz, runId) {
       skippedSources: 0,
       pickedRows: 0,
       dedupedRows: 0,
+      skippedByPic: 0,
       bucketCount: 0,
       writtenRows: 0,
       failedWrites: 0,
@@ -463,6 +489,7 @@ function _newRunContext_(srcSS, tz, runId) {
     destRegistry: null,
     controls: null,
     mappingRows: [],
+    mappingAllRows: [],
     bucket: new Map(),
   };
 }
@@ -589,6 +616,13 @@ function _readServiceCenterMapping_(srcSS, selectedPic) {
   }
 
   return out;
+}
+
+function _filterMappingByPic_(rows, selectedPic) {
+  if (!selectedPic) return (rows || []).slice();
+  return (rows || []).filter(function (r) {
+    return String((r && r.pic) || "").trim().toUpperCase() === selectedPic;
+  });
 }
 
 /* =========================
@@ -799,6 +833,7 @@ function _collectAndGroupRows_(ctx, srcSS) {
     skippedSources: skippedSources,
     pickedRows: allPicked.length,
     dedupedRows: dedupeStage.res.dedupedRows,
+    skippedByPic: dedupeStage.res.skippedByPic || 0,
     bucketCount: dedupeStage.res.bucketCount,
     bucket: dedupeStage.res.bucket,
   };
@@ -862,7 +897,7 @@ function _collectEligibleRowsFromSource_(sheet, controls) {
     var lastStatus = idx.lastStatus == null ? "" : String(row[idx.lastStatus] || "").trim();
 
     var eligibleByStartStatus = isStartSheet && allowStart && _isStartAllowedLastStatus_(lastStatus);
-    var eligibleByMiddle = !isStartSheet && allowMiddle && _isAllowedStatus_(status);
+    var eligibleByMiddle = !isStartSheet && allowMiddle && _isMiddleAllowedLastStatus_(lastStatus);
     var eligibleByFinish = !isStartSheet && allowFinish && _isFinishAllowedLastStatus_(lastStatus);
 
     if (!eligibleByStartStatus && !eligibleByMiddle && !eligibleByFinish) continue;
@@ -870,6 +905,8 @@ function _collectEligibleRowsFromSource_(sheet, controls) {
     var claimNumber = String(row[idx.claimNumber] || "").trim();
     var serviceCenterName = String(row[idx.scName] || "").trim();
     if (!claimNumber || !serviceCenterName) continue;
+
+    var rawRemarks = idx.remarks == null ? "" : String(row[idx.remarks] || "").trim();
 
     picked.push({
       sourceSheet: sheet.getName(),
@@ -882,7 +919,7 @@ function _collectEligibleRowsFromSource_(sheet, controls) {
       lastStatus: idx.lastStatus == null ? "" : row[idx.lastStatus],
       lastStatusDate: idx.lastStatusDate == null ? "" : row[idx.lastStatusDate],
       lastStatusAging: idx.lastStatusAging == null ? "" : row[idx.lastStatusAging],
-      remarks: idx.remarks == null ? "" : row[idx.remarks],
+      remarks: rawRemarks,
       dashboardUrl: _buildDashboardUrl_(claimNumber),
     });
   }
@@ -892,10 +929,16 @@ function _collectEligibleRowsFromSource_(sheet, controls) {
 
 function _dedupeAndBucketRows_(ctx, rows) {
   var deduped = new Map();
+  var skippedByPic = 0;
 
   for (var i = 0; i < rows.length; i++) {
     var row = rows[i];
-    var requestedDestName = _resolveDestSheetNameByMapping_(ctx, row.serviceCenterName);
+    var resolved = _resolveDestByMapping_(ctx, row.serviceCenterName);
+    if (resolved.isMapped && ctx.controls && ctx.controls.selectedPic && resolved.pic !== ctx.controls.selectedPic) {
+      skippedByPic += 1;
+      continue;
+    }
+    var requestedDestName = resolved.sheetName;
     var destSheet = _ensureDestSheet_(ctx, requestedDestName);
     var destName = destSheet.getName();
     var key = destName + "__" + String(row.claimNumber).trim().toUpperCase();
@@ -928,6 +971,7 @@ function _dedupeAndBucketRows_(ctx, rows) {
 
   return {
     dedupedRows: deduped.size,
+    skippedByPic: skippedByPic,
     bucketCount: bucket.size,
     bucket: bucket,
   };
@@ -1239,6 +1283,43 @@ function _sortDestinationSheets_(ctx) {
   };
 }
 
+function _finalizeDestinationLayout_(ctx) {
+  var sheetNames = _getSortableDestinationSheetNames_(ctx);
+  var touchedSheets = 0;
+  var wrappedCols = 0;
+  var maxWidth = 420;
+
+  for (var i = 0; i < sheetNames.length; i++) {
+    var name = sheetNames[i];
+    var sh = ctx.destRegistry.byName[name];
+    if (!sh) continue;
+
+    var lastCol = Math.max(sh.getLastColumn(), 1);
+    var lastRow = sh.getLastRow();
+
+    try { sh.autoResizeColumns(1, lastCol); } catch (e) {}
+    touchedSheets += 1;
+
+    for (var c = 1; c <= lastCol; c++) {
+      var width = 0;
+      try { width = sh.getColumnWidth(c); } catch (e2) {}
+      if (width > maxWidth) {
+        try { sh.setColumnWidth(c, maxWidth); } catch (e3) {}
+        try {
+          sh.getRange(1, c, Math.max(lastRow, 1), 1).setWrap(true);
+          wrappedCols += 1;
+        } catch (e4) {}
+      }
+    }
+  }
+
+  return {
+    touchedSheets: touchedSheets,
+    wrappedCols: wrappedCols,
+    maxWidth: maxWidth,
+  };
+}
+
 function _getSortableDestinationSheetNames_(ctx) {
   var seen = {};
   var out = [];
@@ -1372,13 +1453,16 @@ function _resolveDestSheetName_(serviceCenterName) {
   return CONFIG.UNMAPPED_SHEET_NAME;
 }
 
-function _resolveDestSheetNameByMapping_(ctx, serviceCenterName) {
-  var mappingRows = (ctx && ctx.mappingRows) ? ctx.mappingRows : [];
+function _resolveDestByMapping_(ctx, serviceCenterName) {
+  var mappingRows = (ctx && ctx.mappingAllRows) ? ctx.mappingAllRows : [];
   var normalizedSc = _norm_(serviceCenterName);
-  if (!mappingRows.length || !normalizedSc) return CONFIG.UNMAPPED_SHEET_NAME;
+  if (!mappingRows.length || !normalizedSc) {
+    return { sheetName: CONFIG.UNMAPPED_SHEET_NAME, pic: "", isMapped: false };
+  }
 
   var best = null;
   var bestLen = -1;
+  var bestPic = "";
   for (var i = 0; i < mappingRows.length; i++) {
     var mappingName = String(mappingRows[i].name || "").trim();
     if (!mappingName) continue;
@@ -1388,11 +1472,16 @@ function _resolveDestSheetNameByMapping_(ctx, serviceCenterName) {
     if (!hit) continue;
     if (nMap.length > bestLen) {
       best = mappingName;
+      bestPic = String(mappingRows[i].pic || "").trim().toUpperCase();
       bestLen = nMap.length;
     }
   }
 
-  return best || CONFIG.UNMAPPED_SHEET_NAME;
+  return {
+    sheetName: best || CONFIG.UNMAPPED_SHEET_NAME,
+    pic: bestPic,
+    isMapped: !!best,
+  };
 }
 
 function _resolveBranchForSheet_(serviceCenterName, destSheetName) {
@@ -1456,6 +1545,15 @@ function _isStartAllowedLastStatus_(status) {
     .replace(/[^A-Z0-9]+/g, "_")
     .replace(/^_+|_+$/g, "");
   return CONFIG.START_ALLOWED_LAST_STATUS.has(key);
+}
+
+function _isMiddleAllowedLastStatus_(status) {
+  var key = String(status || "")
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+  return CONFIG.MIDDLE_ALLOWED_LAST_STATUS.has(key);
 }
 
 function _isFinishAllowedLastStatus_(status) {
