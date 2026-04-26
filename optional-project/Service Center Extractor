@@ -17,12 +17,19 @@ const CONFIG = {
   FLOW_NAME: "SC_TRANSFER",
   DEST_SPREADSHEET_ID: "10TpYJ3lvMt8yq7RoKXuqVkdXITJE-ywz5MEPZXkuGx8",
 
-  SOURCE_SHEETS: ["SC - Farhan", "SC - Meindar", "SC - Meilani", "Start"],
+  SOURCE_SHEETS: ["SC - Farhan", "SC - Meindar", "SC - Meilani", "Start", "Finish"],
 
   START_SHEET_NAME: "Start",
+  FINISH_SHEET_NAME: "Finish",
   START_ALLOWED_LAST_STATUS: new Set([
     "WAITING_WALKIN_START",
     "WAITING_COURIER_START",
+    "QOALA_CLAIM_APPROVE_WALKIN",
+    "CLAIM_EXPIRE_WALKIN",
+    "QOALA_CLAIM_REOPEN_WALKIN",
+    "QOALA_CLAIM_APPROVE_PICKUP",
+    "WAITING_PICKUP_START",
+    "COURIER_PICKUP_START",
     "COURIER_PICKUP_START_DONE",
   ]),
 
@@ -58,15 +65,17 @@ const CONFIG = {
     FINISH: "FINISH",
   }),
   FINISH_ALLOWED_LAST_STATUS: new Set([
-    "WAITING_WALKIN_START",
-    "WAITING_COURIER_START",
-    "QOALA_CLAIM_APPROVE_WALKIN",
-    "CLAIM_EXPIRE_WALKIN",
-    "QOALA_CLAIM_REOPEN_WALKIN",
-    "QOALA_CLAIM_APPROVE_PICKUP",
-    "WAITING_PICKUP_START",
-    "COURIER_PICKUP_START",
-    "COURIER_PICKUP_START_DONE",
+    "SERVICE_CENTER_CLAIM_DONE_REPAIR_WALKIN",
+    "SERVICE_CENTER_CLAIM_WAITING_WALKIN_FINISH",
+    "SERVICE_CENTER_CLAIM_DONE",
+    "SERVICE_CENTER_CLAIM_DONE_REPAIR_PICKUP",
+    "SERVICE_CENTER_CLAIM_WAITING_PICKUP_FINISH",
+    "COURIER_CLAIM_PICKUP_FINISH",
+    "COURIER_CLAIM_PICKUP_FINISH_DONE",
+    "DONE_REPAIR",
+    "WAITING_WALKIN_FINISH",
+    "COURIER_PICKED_UP",
+    "WAITING_COURIER_FINISH",
   ]),
   MIDDLE_ALLOWED_LAST_STATUS: new Set([
     "CLAIM_ADDED_SC",
@@ -190,6 +199,12 @@ const LAST_STATUS_LABELS = {
   SERVICE_CENTER_CLAIM_CHANGE_IMEI: "IMEI Changed",
   INSURANCE_APPROVED: "Claim Approved by Insurance",
   INSURANCE_CLAIM_APPROVE_REPAIR: "Claim Approved by Insurance",
+  SERVICE_CENTER_CLAIM_DONE_REPAIR_WALKIN: "Repair Completed",
+  SERVICE_CENTER_CLAIM_DONE: "Claim Done",
+  SERVICE_CENTER_CLAIM_DONE_REPAIR_PICKUP: "Repair Completed",
+  SERVICE_CENTER_CLAIM_WAITING_PICKUP_FINISH: "Awaiting Courier Pickup",
+  COURIER_CLAIM_PICKUP_FINISH: "Courier Picked Up",
+  COURIER_CLAIM_PICKUP_FINISH_DONE: "Delivered to Customer",
   DONE_REPAIR: "Claim Done And Repaired",
   SERVICE_CENTER_CLAIM_WAITING_WALKIN_FINISH: "Awaiting Customer Pickup",
   WAITING_WALKIN_FINISH: "Customer Picked Up Gadget",
@@ -198,8 +213,14 @@ const LAST_STATUS_LABELS = {
   INSURANCE_APPROVED_REPLACED: "Claim to Replace Approved by Insurance",
   INSURANCE_CLAIM_APPROVE_REPLACE: "Insurance Approved - Switch to Replacement (TLO)",
   SERVICE_CENTER_REPAIR_CANCELLED_FOR_REPLACE: "Repair Cancelled - No Further Action Needed by Service Center",
-  WAITING_WALKIN_START: "Customer on the way",
-  WAITING_COURIER_START: "Customer on the way",
+  QOALA_CLAIM_APPROVE_WALKIN: "Claim received by Qoala",
+  CLAIM_EXPIRE_WALKIN: "Claim Expired",
+  QOALA_CLAIM_REOPEN_WALKIN: "Reopen Claim",
+  QOALA_CLAIM_APPROVE_PICKUP: "Claim received by Qoala",
+  WAITING_PICKUP_START: "Pickup Scheduled",
+  COURIER_PICKUP_START: "Picked Up",
+  WAITING_WALKIN_START: "Customer On The Way",
+  WAITING_COURIER_START: "Courier On The Way",
   COURIER_PICKUP_START_DONE: "Delivered to Service Center",
 };
 
@@ -842,14 +863,20 @@ function _collectAndGroupRows_(ctx, srcSS) {
 function _getSourceSheetsByControls_(controls) {
   var flags = (controls && controls.phaseFlags) || {};
   var includeStart = !!flags[CONFIG.PHASES.START];
-  var includeSc = !!flags[CONFIG.PHASES.MIDDLE] || !!flags[CONFIG.PHASES.FINISH];
+  var includeMiddle = !!flags[CONFIG.PHASES.MIDDLE];
+  var includeFinish = !!flags[CONFIG.PHASES.FINISH];
 
   var out = [];
   for (var i = 0; i < CONFIG.SOURCE_SHEETS.length; i++) {
     var name = CONFIG.SOURCE_SHEETS[i];
     var isStart = name === CONFIG.START_SHEET_NAME;
+    var isFinish = name === CONFIG.FINISH_SHEET_NAME;
+    var isScUniverse = !isStart && !isFinish;
+
     if (isStart && !includeStart) continue;
-    if (!isStart && !includeSc) continue;
+    if (isFinish && !includeFinish) continue;
+    if (isScUniverse && !(includeMiddle || includeFinish)) continue;
+
     out.push(name);
   }
   return out;
@@ -865,6 +892,8 @@ function _collectEligibleRowsFromSource_(sheet, controls) {
   var headers = values[0].map(function (h) { return String(h || "").trim(); });
   var idx = _buildHeaderIndexMap_(headers, CONFIG.SOURCE_HEADER_CANDIDATES);
   var isStartSheet = sheet.getName() === CONFIG.START_SHEET_NAME;
+  var isFinishSheet = sheet.getName() === CONFIG.FINISH_SHEET_NAME;
+  var isScUniverseSheet = !isStartSheet && !isFinishSheet;
 
   for (var r = 0; r < CONFIG.REQUIRED_SOURCE_KEYS.length; r++) {
     var key = CONFIG.REQUIRED_SOURCE_KEYS[r];
@@ -874,12 +903,12 @@ function _collectEligibleRowsFromSource_(sheet, controls) {
     }
   }
 
-  if (!isStartSheet && idx.status == null) {
-    errors.push({ sheet: sheet.getName(), missingHeaderKey: "status", headers: headers });
+  if ((isStartSheet || isFinishSheet) && idx.lastStatus == null) {
+    errors.push({ sheet: sheet.getName(), missingHeaderKey: "lastStatus", headers: headers });
     return { picked: [], errors: errors, totalRows: values.length - 1 };
   }
 
-  if (isStartSheet && idx.status == null && idx.lastStatus == null) {
+  if (isScUniverseSheet && idx.lastStatus == null) {
     errors.push({ sheet: sheet.getName(), missingHeaderKey: "lastStatus", headers: headers });
     return { picked: [], errors: errors, totalRows: values.length - 1 };
   }
@@ -893,12 +922,11 @@ function _collectEligibleRowsFromSource_(sheet, controls) {
   for (var rowIndex = 1; rowIndex < values.length; rowIndex++) {
     var row = values[rowIndex];
 
-    var status = idx.status == null ? "" : String(row[idx.status] || "").trim();
     var lastStatus = idx.lastStatus == null ? "" : String(row[idx.lastStatus] || "").trim();
 
     var eligibleByStartStatus = isStartSheet && allowStart && _isStartAllowedLastStatus_(lastStatus);
-    var eligibleByMiddle = !isStartSheet && allowMiddle && _isMiddleAllowedLastStatus_(lastStatus);
-    var eligibleByFinish = !isStartSheet && allowFinish && _isFinishAllowedLastStatus_(lastStatus);
+    var eligibleByMiddle = isScUniverseSheet && allowMiddle && _isMiddleAllowedLastStatus_(lastStatus);
+    var eligibleByFinish = (isScUniverseSheet || isFinishSheet) && allowFinish && _isFinishAllowedLastStatus_(lastStatus);
 
     if (!eligibleByStartStatus && !eligibleByMiddle && !eligibleByFinish) continue;
 
@@ -907,10 +935,12 @@ function _collectEligibleRowsFromSource_(sheet, controls) {
     if (!claimNumber || !serviceCenterName) continue;
 
     var rawRemarks = idx.remarks == null ? "" : String(row[idx.remarks] || "").trim();
+    var phaseRank = _resolvePhaseRank_(eligibleByStartStatus, eligibleByMiddle, eligibleByFinish);
 
     picked.push({
       sourceSheet: sheet.getName(),
       sourceRowNumber: rowIndex + 1,
+      phaseRank: phaseRank,
       claimNumber: claimNumber,
       deviceBrand: idx.deviceBrand == null ? "" : row[idx.deviceBrand],
       deviceType: idx.deviceType == null ? "" : row[idx.deviceType],
@@ -925,6 +955,13 @@ function _collectEligibleRowsFromSource_(sheet, controls) {
   }
 
   return { picked: picked, errors: errors, totalRows: values.length - 1 };
+}
+
+function _resolvePhaseRank_(isStart, isMiddle, isFinish) {
+  if (isStart) return 1;   // START
+  if (isMiddle) return 2;  // MIDDLE
+  if (isFinish) return 3;  // FINISH
+  return 9;
 }
 
 function _dedupeAndBucketRows_(ctx, rows) {
@@ -965,6 +1002,9 @@ function _dedupeAndBucketRows_(ctx, rows) {
 
   bucket.forEach(function (list) {
     list.sort(function (a, b) {
+      var pa = Number(a.phaseRank || 9);
+      var pb = Number(b.phaseRank || 9);
+      if (pa !== pb) return pa - pb;
       return _compareClaimNumbers_(a.claimNumber, b.claimNumber);
     });
   });
@@ -978,6 +1018,10 @@ function _dedupeAndBucketRows_(ctx, rows) {
 }
 
 function _shouldReplaceDedupedRow_(currentRow, nextRow) {
+  var currentSourcePriority = _sourcePriorityForDedupe_(currentRow);
+  var nextSourcePriority = _sourcePriorityForDedupe_(nextRow);
+  if (nextSourcePriority !== currentSourcePriority) return nextSourcePriority > currentSourcePriority;
+
   var currentDate = _coerceToDate_(currentRow.lastStatusDate);
   var nextDate = _coerceToDate_(nextRow.lastStatusDate);
 
@@ -991,6 +1035,12 @@ function _shouldReplaceDedupedRow_(currentRow, nextRow) {
   if (currentStatus !== nextStatus) return nextStatus > currentStatus;
 
   return Number(nextRow.sourceRowNumber || 0) > Number(currentRow.sourceRowNumber || 0);
+}
+
+function _sourcePriorityForDedupe_(row) {
+  var src = String((row && row.sourceSheet) || "").trim();
+  if (src === CONFIG.FINISH_SHEET_NAME) return 2; // highest priority
+  return 1;
 }
 
 /* =========================
@@ -1229,6 +1279,18 @@ function _initializeFallbackSheet_(sheet) {
 
 function _sortDestinationSheets_(ctx) {
   var sheetNames = _getSortableDestinationSheetNames_(ctx);
+  var phaseCount = (ctx && ctx.controls && Array.isArray(ctx.controls.phaseOrder)) ? ctx.controls.phaseOrder.length : 0;
+  if (phaseCount > 1) {
+    return {
+      requestedSheets: sheetNames.length,
+      sortedSheets: 0,
+      skippedEmpty: 0,
+      skippedMissingSheet: 0,
+      skippedMissingColumns: 0,
+      skippedByPhaseOrderMode: sheetNames.length,
+    };
+  }
+
   var sortedSheets = 0;
   var skippedEmpty = 0;
   var skippedMissingSheet = 0;
@@ -1456,8 +1518,26 @@ function _resolveDestSheetName_(serviceCenterName) {
 function _resolveDestByMapping_(ctx, serviceCenterName) {
   var mappingRows = (ctx && ctx.mappingAllRows) ? ctx.mappingAllRows : [];
   var normalizedSc = _norm_(serviceCenterName);
+  var compactSc = _compactNorm_(serviceCenterName);
   if (!mappingRows.length || !normalizedSc) {
     return { sheetName: CONFIG.UNMAPPED_SHEET_NAME, pic: "", isMapped: false };
+  }
+
+  var aliasTarget = _resolveAliasMappingTarget_(normalizedSc, compactSc);
+  if (aliasTarget) {
+    for (var a = 0; a < mappingRows.length; a++) {
+      var aliasName = String(mappingRows[a].name || "").trim();
+      if (!aliasName) continue;
+      var aliasNorm = _norm_(aliasName);
+      var aliasCompact = _compactNorm_(aliasName);
+      if (aliasNorm === aliasTarget || aliasCompact === aliasTarget) {
+        return {
+          sheetName: aliasName,
+          pic: String(mappingRows[a].pic || "").trim().toUpperCase(),
+          isMapped: true,
+        };
+      }
+    }
   }
 
   var best = null;
@@ -1467,8 +1547,10 @@ function _resolveDestByMapping_(ctx, serviceCenterName) {
     var mappingName = String(mappingRows[i].name || "").trim();
     if (!mappingName) continue;
     var nMap = _norm_(mappingName);
+    var cMap = _compactNorm_(mappingName);
     if (!nMap) continue;
-    var hit = normalizedSc.indexOf(nMap) >= 0 || nMap.indexOf(normalizedSc) >= 0;
+    var hit = normalizedSc.indexOf(nMap) >= 0 || nMap.indexOf(normalizedSc) >= 0 ||
+      compactSc.indexOf(cMap) >= 0 || cMap.indexOf(compactSc) >= 0;
     if (!hit) continue;
     if (nMap.length > bestLen) {
       best = mappingName;
@@ -1482,6 +1564,14 @@ function _resolveDestByMapping_(ctx, serviceCenterName) {
     pic: bestPic,
     isMapped: !!best,
   };
+}
+
+function _resolveAliasMappingTarget_(normalizedSc, compactSc) {
+  var s = String(normalizedSc || "");
+  var c = String(compactSc || "");
+  if (s.indexOf("ez care") >= 0 || c.indexOf("ezcare") >= 0) return "ezcare";
+  if (s.indexOf("deltasindo") >= 0 || c.indexOf("deltasindo") >= 0) return "deltafone";
+  return "";
 }
 
 function _resolveBranchForSheet_(serviceCenterName, destSheetName) {
@@ -1651,6 +1741,10 @@ function _norm_(value) {
   RUNTIME_CACHE.normByValue[raw] = normalized;
   RUNTIME_CACHE.normSize += 1;
   return normalized;
+}
+
+function _compactNorm_(value) {
+  return _norm_(value).replace(/\s+/g, "");
 }
 
 /* =========================
