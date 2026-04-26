@@ -1005,6 +1005,19 @@ function _dedupeAndBucketRows_(ctx, rows) {
       var pa = Number(a.phaseRank || 9);
       var pb = Number(b.phaseRank || 9);
       if (pa !== pb) return pa - pb;
+
+      var scCmp = String(a.serviceCenterName || "").localeCompare(String(b.serviceCenterName || ""));
+      if (scCmp !== 0) return scCmp;
+
+      var stCmp = String(a.lastStatus || "").localeCompare(String(b.lastStatus || ""));
+      if (stCmp !== 0) return stCmp;
+
+      var da = _coerceToDate_(a.lastStatusDate);
+      var db = _coerceToDate_(b.lastStatusDate);
+      var ta = da ? da.getTime() : Number.MAX_SAFE_INTEGER;
+      var tb = db ? db.getTime() : Number.MAX_SAFE_INTEGER;
+      if (ta !== tb) return ta - tb; // oldest first
+
       return _compareClaimNumbers_(a.claimNumber, b.claimNumber);
     });
   });
@@ -1314,11 +1327,11 @@ function _sortDestinationSheets_(ctx) {
     var headerRow = _getSheetHeaderRow_(sheet);
     var colMap = _getDestColumnMapCached_(ctx, sheet, headerRow);
 
-    if (colMap.lastStatusAging == null || colMap.lastStatus == null || colMap.scName == null) {
+    if (colMap.lastStatusDate == null || colMap.lastStatus == null || colMap.scName == null) {
       skippedMissingColumns += 1;
       _logWarn_(ctx, "SORT", "WARN - SORT_COLUMNS_MISSING (" + sheetName + ")", {
         metrics: {
-          lastStatusAging: colMap.lastStatusAging != null,
+          lastStatusDate: colMap.lastStatusDate != null,
           lastStatus: colMap.lastStatus != null,
           scName: colMap.scName != null,
         },
@@ -1331,7 +1344,7 @@ function _sortDestinationSheets_(ctx) {
     sheet.getRange(2, 1, lastRow - 1, lastCol).sort([
       { column: colMap.scName + 1, ascending: true },
       { column: colMap.lastStatus + 1, ascending: true },
-      { column: colMap.lastStatusAging + 1, ascending: false },
+      { column: colMap.lastStatusDate + 1, ascending: true },
     ]);
     sortedSheets += 1;
   }
