@@ -1010,6 +1010,36 @@ function __getBranchFromServiceCenter06_(serviceCenter) {
   return '';
 }
 
+function __getMiddlePicFromServiceCenter06_(serviceCenter) {
+  const sc = String(serviceCenter || '').toLowerCase();
+  if (!sc) return 'Unknown';
+
+  const map = [
+    ['Farhan', ['mitracare', 'sitcomtara', 'ibox', 'gsi']],
+    ['Meilani', ['unicom', 'xiaomi authorized', 'samsung exclusive', 'carlcare', 'andalas']],
+    ['Meindar', ['klikcare', 'j-bros', 'makmur era abadi', 'manado mitra bersama', 'cv kayu awet sejahtera', 'gh store']],
+  ];
+
+  for (let i = 0; i < map.length; i++) {
+    const pic = map[i][0];
+    const keys = map[i][1];
+    for (let j = 0; j < keys.length; j++) {
+      if (sc.indexOf(keys[j]) > -1) return pic;
+    }
+  }
+
+  return 'Unknown';
+}
+
+function __getReportBasePicFromPosition06_(position, serviceCenter) {
+  const pos = String(position || '').trim();
+  if (pos === 'Front') return 'Adi & Yudha';
+  if (pos === 'Expedition') return 'Adit';
+  if (pos === 'Back') return 'Suci & Detha';
+  if (pos === 'Middle') return __getMiddlePicFromServiceCenter06_(serviceCenter);
+  return 'Unknown';
+}
+
 function autofillBranchInScSheets06_(ss) {
   if (DRY_RUN) return 0;
   if (!ss) return 0;
@@ -1166,12 +1196,16 @@ function refreshReportBaseFromOperational06_(ss, opts) {
     'Claim Number',
     'Last Status',
     'Last Status Date',
+    'Service Center',
     'Branch',
-    'Position'
+    'Position',
+    'PIC'
   ];
 
   const srcSheets = __getReportBaseSourceSheets06_(ss);
   const byClaim = Object.create(null);
+  function hasVal_(v) { return String(v == null ? '' : v).trim() !== ''; }
+  function pickValue_(primary, fallback) { return hasVal_(primary) ? primary : fallback; }
 
   for (let si = 0; si < srcSheets.length; si++) {
     const name = srcSheets[si];
@@ -1185,10 +1219,24 @@ function refreshReportBaseFromOperational06_(ss, opts) {
     const idxClaim = __findHeaderIndexFlexible06_(hdr, 'Claim Number');
     if (idxClaim === -1) continue;
 
-    const idxSubDate = __findHeaderIndexFlexible06_(hdr, 'Submission Date');
+    const idxSubDate = (function() {
+      const cands = ['Submission Date', 'claim_submission_date', 'Claim Submission Date', 'Claim Submitted Datetime'];
+      for (let ci = 0; ci < cands.length; ci++) {
+        const ix = __findHeaderIndexFlexible06_(hdr, cands[ci]);
+        if (ix !== -1) return ix;
+      }
+      return -1;
+    })();
     const idxLast = __findHeaderIndexFlexible06_(hdr, 'Last Status');
     const idxLastDate = __findHeaderIndexFlexible06_(hdr, 'Last Status Date');
-    const idxSc = __findHeaderIndexFlexible06_(hdr, 'Service Center');
+    const idxSc = (function() {
+      const cands = ['Service Center', 'Service Center Name', 'SC Name', 'sc_name'];
+      for (let ci = 0; ci < cands.length; ci++) {
+        const ix = __findHeaderIndexFlexible06_(hdr, cands[ci]);
+        if (ix !== -1) return ix;
+      }
+      return -1;
+    })();
     const vals = src.getRange(2, 1, lr - 1, lc).getValues();
 
     for (let r = 0; r < vals.length; r++) {
@@ -1208,21 +1256,36 @@ function refreshReportBaseFromOperational06_(ss, opts) {
       if (prev && prev.lastDateTs > lastDateTs) continue;
 
       let position = '';
-      if (name === 'Exclusion') position = 'Exclusion';
+      if (name === 'Exclusion') position = 'Closed';
       else if (typeof getPositionFromLastStatus_ === 'function') {
         try { position = getPositionFromLastStatus_(lastStatus); } catch (eP) { position = ''; }
       }
 
-      byClaim[key] = {
+      const candidate = {
         subDate: __parseAnyDateReportBase06_(subDateVal) || subDateVal || '',
         subMonth: __formatSubmissionMonthReportBase06_(subDateVal),
         claim: claim,
         lastStatus: lastStatus,
         lastDate: lastDateObj || lastDateVal || '',
+        serviceCenter: String(scVal || '').trim(),
         branch: __getBranchFromServiceCenter06_(scVal || ''),
         position: position || '',
+        pic: __getReportBasePicFromPosition06_(position || '', scVal || ''),
         lastDateTs: lastDateTs
       };
+
+      if (prev) {
+        candidate.subDate = pickValue_(candidate.subDate, prev.subDate);
+        candidate.subMonth = pickValue_(candidate.subMonth, prev.subMonth);
+        candidate.serviceCenter = pickValue_(candidate.serviceCenter, prev.serviceCenter);
+        candidate.branch = pickValue_(candidate.branch, prev.branch);
+        candidate.position = pickValue_(candidate.position, prev.position);
+        candidate.pic = pickValue_(candidate.pic, prev.pic);
+      }
+
+      candidate.pic = __getReportBasePicFromPosition06_(candidate.position, candidate.serviceCenter);
+
+      byClaim[key] = candidate;
     }
   }
 
@@ -1232,8 +1295,10 @@ function refreshReportBaseFromOperational06_(ss, opts) {
     x.claim,
     x.lastStatus,
     x.lastDate,
+    x.serviceCenter,
     x.branch,
-    x.position
+    x.position,
+    x.pic
   ]);
 
   sh.getRange(1, 1, 1, headers.length).setValues([headers]);
