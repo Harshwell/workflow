@@ -1185,11 +1185,43 @@ function readSourceSnapshot_(tempSpreadsheetId) {
 
 
 function sanitizeSourceValueForTarget_(targetHeader, rawValue, displayValue) {
-  if (targetHeader === 'Approval Date' || targetHeader === 'Last Status Update') {
+  if (targetHeader === 'Approval Date') {
     const textValue = String(displayValue || '').trim();
     return textValue || rawValue;
   }
+
+  if (targetHeader === 'Last Status Update') {
+    return formatDateOnlyForTarget_(rawValue, displayValue);
+  }
   return rawValue;
+}
+
+function formatDateOnlyForTarget_(rawValue, displayValue) {
+  const preferredDate = rawValue instanceof Date && !Number.isNaN(rawValue.getTime())
+    ? rawValue
+    : null;
+
+  if (preferredDate) {
+    return Utilities.formatDate(preferredDate, SALVAGE_CONFIG.scriptTimeZone, 'MMMM d, yyyy');
+  }
+
+  const textValue = String(displayValue || '').trim();
+  if (!textValue) return rawValue;
+
+  const parsedDate = new Date(textValue);
+  if (!Number.isNaN(parsedDate.getTime())) {
+    return Utilities.formatDate(parsedDate, SALVAGE_CONFIG.scriptTimeZone, 'MMMM d, yyyy');
+  }
+
+  const dateOnlyMatch = textValue.match(/^\d{1,2}\/\d{1,2}\/\d{4}/);
+  if (dateOnlyMatch) {
+    const slashParsedDate = new Date(dateOnlyMatch[0]);
+    if (!Number.isNaN(slashParsedDate.getTime())) {
+      return Utilities.formatDate(slashParsedDate, SALVAGE_CONFIG.scriptTimeZone, 'MMMM d, yyyy');
+    }
+  }
+
+  return textValue;
 }
 
 function deriveMonthWeekFromApproval_(approvalValue, fallbackValue) {

@@ -233,6 +233,11 @@ function processB2B_(ss, rawValues, headerIndexRaw, pic) { // `pic` kept for bac
   if (typeof RUNTIME !== 'undefined' && RUNTIME && RUNTIME.enableB2B === false) return 0;
 
   const patterns = (CONFIG.patterns.b2bPartners || []).map(s => String(s || '').toLowerCase());
+  const claimToken = String(
+    (typeof B2B_CLAIM_NUMBER_SUBSTRING !== 'undefined' && B2B_CLAIM_NUMBER_SUBSTRING)
+    || (CONFIG && CONFIG.B2B_CLAIM_NUMBER_SUBSTRING)
+    || 'SMR'
+  ).trim().toUpperCase();
   const h = CONFIG.headers;
   const sh = ss.getSheetByName('B2B');
   if (!sh) return 0;
@@ -340,6 +345,11 @@ function processB2B_(ss, rawValues, headerIndexRaw, pic) { // `pic` kept for bac
   const dbLinkCol0 = idxH['DB Link'];
   const rows = [];
   const dbUrls = [];
+  const seenClaims = new Set();
+  let rawMatchedCount = 0;
+  let submissionFallbackCount = 0;
+  let skippedExcludedRawCount = 0;
+  let skippedExcludedSubmissionCount = 0;
 
   for (let i = 0; i < rawValues.length; i++) {
     const row = rawValues[i];
@@ -348,10 +358,13 @@ function processB2B_(ss, rawValues, headerIndexRaw, pic) { // `pic` kept for bac
     const claimUp = String((idxClaim != null) ? row[idxClaim] : '' || '').toUpperCase();
     const lastStatus = String((idxLastStatus != null) ? row[idxLastStatus] : '' || '').trim();
 
-    if (OPTIONAL_FLAGS.B2B_SKIP_EXCLUDED_LAST_STATUSES && EXCLUDED_LAST_STATUSES.has(lastStatus)) continue;
+    if (OPTIONAL_FLAGS.B2B_SKIP_EXCLUDED_LAST_STATUSES && EXCLUDED_LAST_STATUSES.has(lastStatus)) {
+      skippedExcludedRawCount++;
+      continue;
+    }
 
     const matchPartner = patterns.some(p => p && partnerLower.indexOf(p) > -1);
-    const matchClaim = claimUp.indexOf('SMR') > -1;
+    const matchClaim = claimToken ? (claimUp.indexOf(claimToken) > -1) : false;
     if (!matchPartner && !matchClaim) continue;
 
     const out = new Array(header.length).fill('');
@@ -359,6 +372,7 @@ function processB2B_(ss, rawValues, headerIndexRaw, pic) { // `pic` kept for bac
 
     set('Submission Date', buildSubmissionDateCell_(row, headerIndexRaw));
     set('Claim Number', (idxClaim != null) ? row[idxClaim] : '');
+    if (claimUp) seenClaims.add(claimUp);
 
     const dbUrl = (idxDashboard != null) ? row[idxDashboard] : '';
     set('DB Link', dbUrl ? 'LINK' : '');
@@ -408,7 +422,64 @@ function processB2B_(ss, rawValues, headerIndexRaw, pic) { // `pic` kept for bac
     set('Nett Claim Amount', (nett != null) ? nett : '');
 
     rows.push(out);
+    rawMatchedCount++;
   }
+
+  // Fallback source: Submission sheet (for claims missing in current Raw pull window).
+  try {
+    const subSh = ss.getSheetByName('Submission');
+    if (subSh && subSh.getLastRow() > 1 && subSh.getLastColumn() > 1) {
+      const subHeader = __getHeaderRow05c_(subSh);
+      const subIdx = buildHeaderIndex_(subHeader);
+      const subVals = subSh.getRange(2, 1, subSh.getLastRow() - 1, subHeader.length).getValues();
+      const sClaim = subIdx['Claim Number'];
+      const sPartner = (subIdx['Partner Name'] != null) ? subIdx['Partner Name'] : subIdx['Partner'];
+      const sSubDate = subIdx['Submission Date'];
+      const sDb = subIdx['DB'];
+      const sDbLink = subIdx['DB Link'];
+      const sInsurance = subIdx['Insurance'];
+      const sDevice = subIdx['Device Type'];
+      const sSc = (subIdx['Service Center'] != null) ? subIdx['Service Center'] : subIdx['Service Center Name'];
+      const sLastStatus = subIdx['Last Status'];
+
+      if (sClaim != null) {
+        for (let i = 0; i < subVals.length; i++) {
+          const r = subVals[i] || [];
+          const claim = String(r[sClaim] || '').trim();
+          if (!claim) continue;
+          const claimUp = claim.toUpperCase();
+          if (seenClaims.has(claimUp)) continue;
+          const partner = String((sPartner != null) ? r[sPartner] : '').trim().toLowerCase();
+          const lastStatus = String((sLastStatus != null) ? r[sLastStatus] : '').trim();
+          const matchPartner = patterns.some(p => p && partner.indexOf(p) > -1);
+          const matchClaim = claimToken ? (claimUp.indexOf(claimToken) > -1) : false;
+          if (!matchPartner && !matchClaim) continue;
+          if (OPTIONAL_FLAGS.B2B_SKIP_EXCLUDED_LAST_STATUSES && EXCLUDED_LAST_STATUSES.has(lastStatus)) {
+            skippedExcludedSubmissionCount++;
+            continue;
+          }
+
+          const out = new Array(header.length).fill('');
+          const set = (k, v) => { const j = idxH[k]; if (j != null) out[j] = v; };
+          set('Submission Date', (sSubDate != null) ? r[sSubDate] : '');
+          set('Claim Number', claim);
+          set('DB', (sDb != null) ? r[sDb] : computeDbValueFromClaimNumber05c_(claimUp));
+          set('Partner Name', (sPartner != null) ? r[sPartner] : '');
+          set('Insurance', (sInsurance != null) ? r[sInsurance] : '');
+          set('Device Type', (sDevice != null) ? r[sDevice] : '');
+          set('Service Center', (sSc != null) ? r[sSc] : '');
+          set('Last Status', lastStatus);
+          if (idxH['Status Type'] != null) set('Status Type', __getStatusType05c_(lastStatus));
+          const dbUrl = (sDbLink != null) ? r[sDbLink] : '';
+          set('DB Link', dbUrl ? 'LINK' : '');
+          dbUrls.push(dbUrl);
+          rows.push(out);
+          seenClaims.add(claimUp);
+          submissionFallbackCount++;
+        }
+      }
+    }
+  } catch (eSub) {}
 
   if (!rows.length) return 0;
   safeSetValues_(sh.getRange(2, 1, rows.length, header.length), rows);
@@ -418,6 +489,21 @@ function processB2B_(ss, rawValues, headerIndexRaw, pic) { // `pic` kept for bac
 
   applyOperationalColumnSchema_(sh, header, 2, rows.length, { orIsMoney: false });
   applyDbLinkFormatting_(sh, header, rows.length, 2);
+  try {
+    if (typeof logLine_ === 'function') {
+      logLine_(
+        'INFO',
+        'B2B_METRICS',
+        'rows=' + rows.length
+          + ' raw=' + rawMatchedCount
+          + ' sub_fallback=' + submissionFallbackCount
+          + ' skip_excluded_raw=' + skippedExcludedRawCount
+          + ' skip_excluded_sub=' + skippedExcludedSubmissionCount,
+        '',
+        'INFO'
+      );
+    }
+  } catch (eM) {}
   return rows.length;
 }
 
@@ -541,6 +627,23 @@ function processSpecialCase_(ss, rawValues, headerIndexRaw, pic) { // `pic` kept
 
   let header = __getHeaderRow05c_(sh);
   let idxH = buildHeaderIndex_(header);
+
+  // EV-Bike cleanup: remove deprecated columns if present.
+  try {
+    const dropCols = new Set(['Start Date', 'End Date', 'Details'].map(__normalizeHeaderText05c_));
+    const toDelete = [];
+    for (let i = 0; i < header.length; i++) {
+      const hk = __normalizeHeaderText05c_(header[i]);
+      if (dropCols.has(hk)) toDelete.push(i + 1);
+    }
+    for (let i = toDelete.length - 1; i >= 0; i--) {
+      sh.deleteColumn(toDelete[i]);
+    }
+    if (toDelete.length) {
+      header = __getHeaderRow05c_(sh);
+      idxH = buildHeaderIndex_(header);
+    }
+  } catch (eDrop) {}
 
   // Ensure mandatory Status Type only when this sheet schema includes Last Status.
   if (idxH['Last Status'] != null) {
@@ -1043,27 +1146,39 @@ function processEVBike_(ss, rawValues, headerIndexRaw, pic) { // `pic` kept for 
   let header = __getHeaderRow05c_(sh);
   let idxH = buildHeaderIndex_(header);
 
+  // Remove deprecated EV-Bike columns when still present.
+  try {
+    const dropSet = new Set(['Start Date', 'End Date', 'Details'].map(__normalizeHeaderText05c_));
+    const toDelete = [];
+    for (let i = 0; i < header.length; i++) {
+      if (dropSet.has(__normalizeHeaderText05c_(header[i]))) toDelete.push(i + 1);
+    }
+    for (let i = toDelete.length - 1; i >= 0; i--) {
+      sh.deleteColumn(toDelete[i]);
+    }
+    if (toDelete.length) {
+      header = __getHeaderRow05c_(sh);
+      idxH = buildHeaderIndex_(header);
+    }
+  } catch (eDrop) {}
+
   // Ensure mandatory Status Type only when this sheet schema includes Last Status.
   if (idxH['Last Status'] != null) {
     header = __ensureAppendColumnIfMissing05c_(sh, header, 'Status Type');
     idxH = buildHeaderIndex_(header);
   }
-  // Schema guard + self-heal for required computed columns.
-  try {
-    const need = ['Claim Number','Start Date','End Date','Details'].map(__normalizeHeaderText05c_);
-    const missing = need.filter(n => idxH[n] == null);
-    if (missing.length) {
-      for (let mi = 0; mi < missing.length; mi++) {
-        header = __ensureAppendColumnIfMissing05c_(sh, header, missing[mi]);
-      }
-      idxH = buildHeaderIndex_(header);
-      if (typeof logLine_ === 'function') {
-        logLine_('WARN', 'EVBIKE_SCHEMA_HEAL', 'Auto-added columns: ' + missing.join(', '), '', '');
-      }
-    }
-  } catch (e) {}
+  // Keep schema flexible: do not force legacy EV-Bike columns (Start Date / End Date / Details).
 
   const patterns = (CONFIG.patterns.evBikePartners || []).map(s => String(s || '').toLowerCase());
+  const computeTatFromSubmission_ = (v) => {
+    const d = coerceDate_(v);
+    if (!d) return '';
+    const now = new Date();
+    const start = Date.UTC(d.getFullYear(), d.getMonth(), d.getDate());
+    const end = Date.UTC(now.getFullYear(), now.getMonth(), now.getDate());
+    const diff = Math.floor((end - start) / 86400000);
+    return diff >= 0 ? diff : '';
+  };
   // Additional source: Submission sheet (EV-Bike claims should be included even if not present in Raw Data yet).
   const submissionCandidates = {};
   try {
@@ -1077,10 +1192,11 @@ function processEVBike_(ss, rawValues, headerIndexRaw, pic) { // `pic` kept for 
       const sPartner = (subIdx['Partner Name'] != null) ? subIdx['Partner Name'] : subIdx['Partner'];
       const sPolicy = (subIdx['Policy Number'] != null) ? subIdx['Policy Number'] : subIdx['Policy Num'];
       const sOwner = (subIdx['Owner Name'] != null) ? subIdx['Owner Name'] : subIdx['Customer Name'];
-      const sInsurance = subIdx['Insurance'];
-      const sSum = subIdx['Sum Insured'];
-      const sSubDate = subIdx['Submission Date'];
-      const sDbLink = subIdx['DB Link'];
+	      const sInsurance = subIdx['Insurance'];
+	      const sSum = subIdx['Sum Insured'];
+	      const sSubDate = subIdx['Submission Date'];
+	      const sDbLink = subIdx['DB Link'];
+          const sLastStatus = subIdx['Last Status'];
 
       if (sClaim != null) {
         for (let i = 0; i < subVals.length; i++) {
@@ -1095,15 +1211,16 @@ function processEVBike_(ss, rawValues, headerIndexRaw, pic) { // `pic` kept for 
           if (pol && excludedPolicySet.has(pol)) continue;
 
           const key = c.toUpperCase();
-          submissionCandidates[key] = {
-            submissionDate: (sSubDate != null) ? r[sSubDate] : '',
-            ownerName: (sOwner != null) ? r[sOwner] : '',
-            policyNumber: pol,
-            partnerName: (sPartner != null) ? r[sPartner] : '',
-            insurance: (sInsurance != null) ? r[sInsurance] : '',
-            sumInsured: (sSum != null) ? r[sSum] : '',
-            dbUrl: (sDbLink != null) ? r[sDbLink] : ''
-          };
+	          submissionCandidates[key] = {
+	            submissionDate: (sSubDate != null) ? r[sSubDate] : '',
+	            ownerName: (sOwner != null) ? r[sOwner] : '',
+	            policyNumber: pol,
+	            partnerName: (sPartner != null) ? r[sPartner] : '',
+	            insurance: (sInsurance != null) ? r[sInsurance] : '',
+	            sumInsured: (sSum != null) ? r[sSum] : '',
+	            dbUrl: (sDbLink != null) ? r[sDbLink] : '',
+              lastStatus: (sLastStatus != null) ? r[sLastStatus] : ''
+	          };
         }
       }
     }
@@ -1169,8 +1286,12 @@ function processEVBike_(ss, rawValues, headerIndexRaw, pic) { // `pic` kept for 
     const polNum0 = String((idxPolicyNum != null) ? row[idxPolicyNum] : '').trim();
     if (polNum0 && excludedPolicySet.has(polNum0)) continue;
     set('Policy Number', polNum0);
-    // Sum Insured
-    set('Sum Insured', (idxSumInsured != null) ? row[idxSumInsured] : '');
+	    // Sum Insured
+	    set('Sum Insured', (idxSumInsured != null) ? row[idxSumInsured] : '');
+        if (idxH['TAT'] != null) {
+          const tatRaw = normalizeInt_((headerIndexRaw[h.daysAgingFromSubmission] != null) ? row[headerIndexRaw[h.daysAgingFromSubmission]] : '');
+          set('TAT', (tatRaw != null) ? tatRaw : computeTatFromSubmission_(buildSubmissionDateCell_(row, headerIndexRaw)));
+        }
 
     // Optional columns if present in EV-Bike sheet schema
     set('Last Status', lastStatus);
@@ -1182,7 +1303,7 @@ function processEVBike_(ss, rawValues, headerIndexRaw, pic) { // `pic` kept for 
   try {
     const managed = (typeof EVBIKE_POLICY !== 'undefined' && EVBIKE_POLICY && Array.isArray(EVBIKE_POLICY.MANAGED_HEADERS))
       ? EVBIKE_POLICY.MANAGED_HEADERS
-      : ['Submission Date','Owner Name','Policy Number','Partner Name','Insurance','Sum Insured','DB Link'];
+      : ['Submission Date','Owner Name','Policy Number','Partner Name','Insurance','Sum Insured','DB Link','Last Status','TAT'];
 
     for (const key in submissionCandidates) {
       const info = submissionCandidates[key];
@@ -1213,12 +1334,15 @@ function processEVBike_(ss, rawValues, headerIndexRaw, pic) { // `pic` kept for 
       setH('Claim Number', claim);
 
       // Only overwrite managed columns (Status is intentionally untouched).
-      setH('Submission Date', info.submissionDate || '');
-      setH('Owner Name', info.ownerName || '');
-      setH('Policy Number', info.policyNumber || '');
-      setH('Partner Name', info.partnerName || '');
-      setH('Insurance', info.insurance || '');
-      setH('Sum Insured', info.sumInsured || '');
+	      setH('Submission Date', info.submissionDate || '');
+	      setH('Owner Name', info.ownerName || '');
+	      setH('Policy Number', info.policyNumber || '');
+	      setH('Partner Name', info.partnerName || '');
+	      setH('Insurance', info.insurance || '');
+	      setH('Sum Insured', info.sumInsured || '');
+          setH('Last Status', info.lastStatus || '');
+          if (idxH['Status Type'] != null) setH('Status Type', __getStatusType05c_(info.lastStatus || ''));
+          if (idxH['TAT'] != null) setH('TAT', computeTatFromSubmission_(info.submissionDate));
 
       // DB Link handling: expect URL; display text stays 'LINK'
       const url = String(info.dbUrl || '').trim();
