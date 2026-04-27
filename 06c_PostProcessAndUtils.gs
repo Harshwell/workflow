@@ -3107,6 +3107,25 @@ function runSelfCheck_() {
     pushWarn('SC keyword overlap check failed: ' + (e2 && e2.message ? e2.message : e2));
   }
 
+
+  try {
+    const part9Checks = {
+      manualSnapshotFlow: hasFn('clearOperationalSheets_'),
+      b2bFallbackFlow: hasFn('processB2B_'),
+      evBikeOverlayFlow: hasFn('processEVBike_'),
+      reportBaseSyncFlow: hasFn('refreshReportBaseFromOperational06_')
+    };
+    const missingPart9 = Object.keys(part9Checks).filter(function (k) { return !part9Checks[k]; });
+    report.summary.part9HardeningReadiness = {
+      checks: part9Checks,
+      missing: missingPart9,
+      ready: missingPart9.length === 0
+    };
+    if (missingPart9.length) pushWarn('Part 9 hardening readiness missing: ' + missingPart9.join(', '));
+  } catch (ePart9) {
+    pushWarn('Part 9 hardening readiness check failed: ' + (ePart9 && ePart9.message ? ePart9.message : ePart9));
+  }
+
   try {
     const tails = (typeof RAW_DATA_CUSTOM_TAIL_HEADERS !== 'undefined' && RAW_DATA_CUSTOM_TAIL_HEADERS) ? RAW_DATA_CUSTOM_TAIL_HEADERS : [];
     const counts = Object.create(null);

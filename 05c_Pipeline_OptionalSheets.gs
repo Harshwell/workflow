@@ -1242,6 +1242,9 @@ function processEVBike_(ss, rawValues, headerIndexRaw, pic) { // `pic` kept for 
   const values = existing.slice();
   const touchedRowNums = [];
   const urlMap = {};
+  let evRawMatchedCount = 0;
+  let evSubmissionOverlayCount = 0;
+  let evSkippedExcludedCount = 0;
 
   const ensureRow = i => (values[i] ? values[i] : (values[i] = new Array(header.length).fill('')));
 
@@ -1261,7 +1264,10 @@ function processEVBike_(ss, rawValues, headerIndexRaw, pic) { // `pic` kept for 
     seenClaims.add(claimUp);
     const lastStatus = String((idxLastStatus != null) ? row[idxLastStatus] : '' || '').trim();
 
-    if (OPTIONAL_FLAGS.EVBIKE_SKIP_EXCLUDED_LAST_STATUSES && EXCLUDED_LAST_STATUSES.has(lastStatus)) continue;
+    if (OPTIONAL_FLAGS.EVBIKE_SKIP_EXCLUDED_LAST_STATUSES && EXCLUDED_LAST_STATUSES.has(lastStatus)) {
+      evSkippedExcludedCount++;
+      continue;
+    }
 
     let pos = existingMap[claimUp];
     if (pos == null) { pos = values.length; existingMap[claimUp] = pos; }
@@ -1296,6 +1302,7 @@ function processEVBike_(ss, rawValues, headerIndexRaw, pic) { // `pic` kept for 
     // Optional columns if present in EV-Bike sheet schema
     set('Last Status', lastStatus);
     if (idxH['Status Type'] != null) set('Status Type', __getStatusType05c_(lastStatus));
+    evRawMatchedCount++;
   }
 
 
@@ -1352,6 +1359,7 @@ function processEVBike_(ss, rawValues, headerIndexRaw, pic) { // `pic` kept for 
         urlMap[rn] = url;
         if (dbLinkCol0 != null) touchedRowNums.push(rn);
       }
+      evSubmissionOverlayCount++;
     }
   } catch (e) {}
 
@@ -1385,5 +1393,19 @@ function processEVBike_(ss, rawValues, headerIndexRaw, pic) { // `pic` kept for 
 
   // Apply RichText hyperlink only for touched rows
   if (dbLinkCol0 != null && touchedRowNums.length) __setDbLinkRichTextSegments_(sh, dbLinkCol0, touchedRowNums, urlMap);
+  try {
+    if (typeof logLine_ === 'function') {
+      logLine_(
+        'INFO',
+        'EVBIKE_METRICS',
+        'rows=' + values.length
+          + ' raw=' + evRawMatchedCount
+          + ' submission_overlay=' + evSubmissionOverlayCount
+          + ' skip_excluded=' + evSkippedExcludedCount,
+        '',
+        'INFO'
+      );
+    }
+  } catch (eM) {}
   return values.length;
 }

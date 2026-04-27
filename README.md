@@ -19,6 +19,8 @@ Perubahan terbaru yang sudah masuk ke script:
 - perbaikan mapping `Submission Date` (MAIN + SUB) agar lebih toleran pada variasi header source
 - SUB reset workflow columns (`Update Status`, `Timestamp`, `Status`, `Remarks`) saat `Last Status` berubah
 - optional sheet schema self-heal untuk `B2B` dan `EV-Bike` pada kolom `Claim Number`, `Start Date`, `End Date`, `Details`
+- tambah final pass hardening check di `runSelfCheck_` untuk area UAT Part 9 (manual reset, B2B fallback, EV-Bike overlay, Report Base sync)
+- tambah UAT checklist MAIN/SUB/FORM Part 9 di `docs/WORKFLOW_MAP.md`
 
 ---
 
