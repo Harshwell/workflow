@@ -1064,6 +1064,15 @@ function processEVBike_(ss, rawValues, headerIndexRaw, pic) { // `pic` kept for 
   } catch (e) {}
 
   const patterns = (CONFIG.patterns.evBikePartners || []).map(s => String(s || '').toLowerCase());
+  const computeTatFromSubmission_ = (v) => {
+    const d = coerceDate_(v);
+    if (!d) return '';
+    const now = new Date();
+    const start = Date.UTC(d.getFullYear(), d.getMonth(), d.getDate());
+    const end = Date.UTC(now.getFullYear(), now.getMonth(), now.getDate());
+    const diff = Math.floor((end - start) / 86400000);
+    return diff >= 0 ? diff : '';
+  };
   // Additional source: Submission sheet (EV-Bike claims should be included even if not present in Raw Data yet).
   const submissionCandidates = {};
   try {
@@ -1077,10 +1086,11 @@ function processEVBike_(ss, rawValues, headerIndexRaw, pic) { // `pic` kept for 
       const sPartner = (subIdx['Partner Name'] != null) ? subIdx['Partner Name'] : subIdx['Partner'];
       const sPolicy = (subIdx['Policy Number'] != null) ? subIdx['Policy Number'] : subIdx['Policy Num'];
       const sOwner = (subIdx['Owner Name'] != null) ? subIdx['Owner Name'] : subIdx['Customer Name'];
-      const sInsurance = subIdx['Insurance'];
-      const sSum = subIdx['Sum Insured'];
-      const sSubDate = subIdx['Submission Date'];
-      const sDbLink = subIdx['DB Link'];
+	      const sInsurance = subIdx['Insurance'];
+	      const sSum = subIdx['Sum Insured'];
+	      const sSubDate = subIdx['Submission Date'];
+	      const sDbLink = subIdx['DB Link'];
+          const sLastStatus = subIdx['Last Status'];
 
       if (sClaim != null) {
         for (let i = 0; i < subVals.length; i++) {
@@ -1095,15 +1105,16 @@ function processEVBike_(ss, rawValues, headerIndexRaw, pic) { // `pic` kept for 
           if (pol && excludedPolicySet.has(pol)) continue;
 
           const key = c.toUpperCase();
-          submissionCandidates[key] = {
-            submissionDate: (sSubDate != null) ? r[sSubDate] : '',
-            ownerName: (sOwner != null) ? r[sOwner] : '',
-            policyNumber: pol,
-            partnerName: (sPartner != null) ? r[sPartner] : '',
-            insurance: (sInsurance != null) ? r[sInsurance] : '',
-            sumInsured: (sSum != null) ? r[sSum] : '',
-            dbUrl: (sDbLink != null) ? r[sDbLink] : ''
-          };
+	          submissionCandidates[key] = {
+	            submissionDate: (sSubDate != null) ? r[sSubDate] : '',
+	            ownerName: (sOwner != null) ? r[sOwner] : '',
+	            policyNumber: pol,
+	            partnerName: (sPartner != null) ? r[sPartner] : '',
+	            insurance: (sInsurance != null) ? r[sInsurance] : '',
+	            sumInsured: (sSum != null) ? r[sSum] : '',
+	            dbUrl: (sDbLink != null) ? r[sDbLink] : '',
+              lastStatus: (sLastStatus != null) ? r[sLastStatus] : ''
+	          };
         }
       }
     }
@@ -1169,8 +1180,12 @@ function processEVBike_(ss, rawValues, headerIndexRaw, pic) { // `pic` kept for 
     const polNum0 = String((idxPolicyNum != null) ? row[idxPolicyNum] : '').trim();
     if (polNum0 && excludedPolicySet.has(polNum0)) continue;
     set('Policy Number', polNum0);
-    // Sum Insured
-    set('Sum Insured', (idxSumInsured != null) ? row[idxSumInsured] : '');
+	    // Sum Insured
+	    set('Sum Insured', (idxSumInsured != null) ? row[idxSumInsured] : '');
+        if (idxH['TAT'] != null) {
+          const tatRaw = normalizeInt_((headerIndexRaw[h.daysAgingFromSubmission] != null) ? row[headerIndexRaw[h.daysAgingFromSubmission]] : '');
+          set('TAT', (tatRaw != null) ? tatRaw : computeTatFromSubmission_(buildSubmissionDateCell_(row, headerIndexRaw)));
+        }
 
     // Optional columns if present in EV-Bike sheet schema
     set('Last Status', lastStatus);
@@ -1182,7 +1197,7 @@ function processEVBike_(ss, rawValues, headerIndexRaw, pic) { // `pic` kept for 
   try {
     const managed = (typeof EVBIKE_POLICY !== 'undefined' && EVBIKE_POLICY && Array.isArray(EVBIKE_POLICY.MANAGED_HEADERS))
       ? EVBIKE_POLICY.MANAGED_HEADERS
-      : ['Submission Date','Owner Name','Policy Number','Partner Name','Insurance','Sum Insured','DB Link'];
+      : ['Submission Date','Owner Name','Policy Number','Partner Name','Insurance','Sum Insured','DB Link','Last Status','TAT'];
 
     for (const key in submissionCandidates) {
       const info = submissionCandidates[key];
@@ -1213,12 +1228,15 @@ function processEVBike_(ss, rawValues, headerIndexRaw, pic) { // `pic` kept for 
       setH('Claim Number', claim);
 
       // Only overwrite managed columns (Status is intentionally untouched).
-      setH('Submission Date', info.submissionDate || '');
-      setH('Owner Name', info.ownerName || '');
-      setH('Policy Number', info.policyNumber || '');
-      setH('Partner Name', info.partnerName || '');
-      setH('Insurance', info.insurance || '');
-      setH('Sum Insured', info.sumInsured || '');
+	      setH('Submission Date', info.submissionDate || '');
+	      setH('Owner Name', info.ownerName || '');
+	      setH('Policy Number', info.policyNumber || '');
+	      setH('Partner Name', info.partnerName || '');
+	      setH('Insurance', info.insurance || '');
+	      setH('Sum Insured', info.sumInsured || '');
+          setH('Last Status', info.lastStatus || '');
+          if (idxH['Status Type'] != null) setH('Status Type', __getStatusType05c_(info.lastStatus || ''));
+          if (idxH['TAT'] != null) setH('TAT', computeTatFromSubmission_(info.submissionDate));
 
       // DB Link handling: expect URL; display text stays 'LINK'
       const url = String(info.dbUrl || '').trim();
