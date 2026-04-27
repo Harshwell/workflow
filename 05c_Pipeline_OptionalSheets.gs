@@ -233,7 +233,11 @@ function processB2B_(ss, rawValues, headerIndexRaw, pic) { // `pic` kept for bac
   if (typeof RUNTIME !== 'undefined' && RUNTIME && RUNTIME.enableB2B === false) return 0;
 
   const patterns = (CONFIG.patterns.b2bPartners || []).map(s => String(s || '').toLowerCase());
-  const claimToken = String((CONFIG && CONFIG.B2B_CLAIM_NUMBER_SUBSTRING) || 'SMR').trim().toUpperCase();
+  const claimToken = String(
+    (typeof B2B_CLAIM_NUMBER_SUBSTRING !== 'undefined' && B2B_CLAIM_NUMBER_SUBSTRING)
+    || (CONFIG && CONFIG.B2B_CLAIM_NUMBER_SUBSTRING)
+    || 'SMR'
+  ).trim().toUpperCase();
   const h = CONFIG.headers;
   const sh = ss.getSheetByName('B2B');
   if (!sh) return 0;
