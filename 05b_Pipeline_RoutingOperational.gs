@@ -408,6 +408,8 @@ function buildOperationalClaimHighlightSetsFromRaw_(rawValues, headerIndexRaw) {
   const secondYear = new Set();
   const firstMonthPolicy = new Set();
   const remaining1Month = new Set();
+  const secondYearDetail = new Map();
+  const firstMonthPolicyDetail = new Map();
 
   if (ixClaim == null) return { expired, flex, b2b, duplicate, secondYear, firstMonthPolicy, remaining1Month };
 
@@ -489,6 +491,12 @@ function buildOperationalClaimHighlightSetsFromRaw_(rawValues, headerIndexRaw) {
   const toDateOnly_ = (v) => {
     return (typeof coerceDateOnly_ === 'function') ? coerceDateOnly_(v) : (v instanceof Date ? v : null);
   };
+  const formatShortDate_ = (v) => {
+    const d = toDateOnly_(v);
+    if (!d) return '';
+    try { return Utilities.formatDate(d, Session.getScriptTimeZone(), 'dd MMM yy'); } catch (e) {}
+    return '';
+  };
 
   const diffDaysLocal_ = (d1, d2) => {
     const a = toDateOnly_(d1);
@@ -529,14 +537,33 @@ function buildOperationalClaimHighlightSetsFromRaw_(rawValues, headerIndexRaw) {
     // 1) Second-Year (Market Value) STRICT: month_policy_aging > 12 (Raw Data)
     if (ixMonthPolicyAging != null) {
       const m = parseOptionalIntStrict_(r[ixMonthPolicyAging]);
-      if (m != null && m > 12) secondYear.add(claimKey);
+      if (m != null && m > 12) {
+        secondYear.add(claimKey);
+        secondYearDetail.set(claimKey, [
+          'Second-Year (Market Value)',
+          '',
+          'Submission Date: ' + (formatShortDate_((ixSub != null) ? r[ixSub] : '') || '-'),
+          'Start Date Policy : ' + (formatShortDate_((ixPolicyStart != null) ? r[ixPolicyStart] : '') || '-'),
+          'End Date Policy : ' + (formatShortDate_((ixPolicyEnd != null) ? r[ixPolicyEnd] : '') || '-'),
+          'Month Policy Aging : ' + m + ' months'
+        ].join('\n'));
+      }
     }
     // 2) First-Month Policy if (claim_submission_date - policy_start_date) < 30 days
     if (ixSub != null && ixPolicyStart != null) {
       const dSub = toDateOnly_(r[ixSub]);
       const dStart = toDateOnly_(r[ixPolicyStart]);
       const diff = (typeof diffDays_ === 'function') ? diffDays_(dStart, dSub) : diffDaysLocal_(dStart, dSub);
-      if (diff != null && diff >= 0 && diff < 30) firstMonthPolicy.add(claimKey);
+      if (diff != null && diff >= 0 && diff < 30) {
+        firstMonthPolicy.add(claimKey);
+        firstMonthPolicyDetail.set(claimKey, [
+          'First-Month Policy',
+          '',
+          'Submission Date: ' + (formatShortDate_(dSub) || '-'),
+          'Start Date Policy : ' + (formatShortDate_(dStart) || '-'),
+          'Policy Age : ' + diff + ' days'
+        ].join('\n'));
+      }
     }
 
     // 3) Policy Remaining <= 1 Month if (policy_end_date - claim_submission_date) < 30 days
@@ -622,7 +649,10 @@ function buildOperationalClaimHighlightSetsFromRaw_(rawValues, headerIndexRaw) {
     }
   }
 
-  return { expired, flex, b2b, duplicate, secondYear, firstMonthPolicy, remaining1Month };
+  return {
+    expired, flex, b2b, duplicate, secondYear, firstMonthPolicy, remaining1Month,
+    secondYearDetail, firstMonthPolicyDetail
+  };
 }
 
 
@@ -841,8 +871,8 @@ function applyOperationalClaimHighlightsByRaw_(ss, rawValues, headerIndexRaw, pi
     if (n.indexOf(dupPrefix) === 0) return 'duplicate';
     if (n === expiredNote) return 'expired';
     if (n === b2bNote) return 'b2b';
-    if (n === secondYearNote) return 'secondYear';
-    if (n === firstMonthPolicyNote) return 'firstMonthPolicy';
+    if (n === secondYearNote || n.indexOf(secondYearNote + '\n') === 0) return 'secondYear';
+    if (n === firstMonthPolicyNote || n.indexOf(firstMonthPolicyNote + '\n') === 0) return 'firstMonthPolicy';
     if (n === remaining1MonthNote) return 'remaining1Month';
     if (flexNoteAlt.has(n)) return 'flex';
     return null;
@@ -924,8 +954,8 @@ const __setNotes05b__ = (range, matrix, sheetName) => {
         else if (sets.expired.has(claimKey)) desiredNote = expiredNote;
         else if (sets.flex.has(claimKey)) desiredNote = flexNote;
         else if (sets.b2b.has(claimKey)) desiredNote = b2bNote;
-        else if (sets.secondYear && sets.secondYear.has(claimKey)) desiredNote = secondYearNote;
-        else if (sets.firstMonthPolicy && sets.firstMonthPolicy.has(claimKey)) desiredNote = firstMonthPolicyNote;
+        else if (sets.secondYear && sets.secondYear.has(claimKey)) desiredNote = (sets.secondYearDetail && sets.secondYearDetail.get(claimKey)) || secondYearNote;
+        else if (sets.firstMonthPolicy && sets.firstMonthPolicy.has(claimKey)) desiredNote = (sets.firstMonthPolicyDetail && sets.firstMonthPolicyDetail.get(claimKey)) || firstMonthPolicyNote;
         else if (sets.remaining1Month && sets.remaining1Month.has(claimKey)) desiredNote = remaining1MonthNote;
       }
 
@@ -1281,6 +1311,9 @@ function buildSheetWriters_(ss, routingMap, headerIndexRaw, pic) {
 }
 
 function clearOperationalSheets_(ss, pic) {
+  const __MANUAL_HEADERS = ['Update Status', 'Timestamp', 'Status', 'Remarks'];
+  if (typeof globalThis.__OPS_MANUAL_SNAPSHOT05B === 'undefined') globalThis.__OPS_MANUAL_SNAPSHOT05B = null;
+
   // Single-master default: treat missing pic as Admin semantics.
   const isAdmin = (pic === 'Admin' || pic == null);
   const sheetsBase = isAdmin ? CONFIG.sheetsByPic.adminOperational : CONFIG.sheetsByPic.picOperational;
@@ -1288,6 +1321,35 @@ function clearOperationalSheets_(ss, pic) {
   try {
     if (ss.getSheetByName('SC - Unmapped') && sheets.indexOf('SC - Unmapped') === -1) sheets.push('SC - Unmapped');
   } catch (e) {}
+
+  // Snapshot manual operational columns before clear.
+  const snapshot = Object.create(null);
+  sheets.forEach(name => {
+    const sh = ss.getSheetByName(name);
+    if (!sh) return;
+    const lr = sh.getLastRow();
+    const lc = sh.getLastColumn();
+    if (lr < 2 || lc < 1) return;
+    const header = sh.getRange(1, 1, 1, lc).getValues()[0].map(v => String(v || '').trim());
+    const idx = buildHeaderIndex_(header);
+    const idxClaim = (idx['Claim Number'] != null) ? idx['Claim Number'] : -1;
+    if (idxClaim < 0) return;
+    const rows = sh.getRange(2, 1, lr - 1, lc).getValues();
+    const byClaim = Object.create(null);
+    for (let r = 0; r < rows.length; r++) {
+      const row = rows[r] || [];
+      const claim = String(row[idxClaim] || '').trim().toUpperCase();
+      if (!claim) continue;
+      if (!byClaim[claim]) byClaim[claim] = {};
+      for (let i = 0; i < __MANUAL_HEADERS.length; i++) {
+        const h = __MANUAL_HEADERS[i];
+        const c = idx[h];
+        byClaim[claim][h] = (c != null) ? row[c] : '';
+      }
+    }
+    snapshot[name] = byClaim;
+  });
+  globalThis.__OPS_MANUAL_SNAPSHOT05B = snapshot;
 
   sheets.forEach(name => {
     const sh = ss.getSheetByName(name);
@@ -1407,15 +1469,16 @@ function routeRawToOperationalSheetsInMemory_(ss, rawValues, headerIndexRaw, pic
     // We always route all incoming data in the single master workflow.
 
     if (!targets.length) {
+      targets = [scFallbackName];
       unknownStatuses.push({
-      rowNumber,
-      claim: claimVal,
-      partner: partnerVal,
-      status: statusVal,
-      sc: scNameVal,
+        rowNumber,
+        claim: claimVal,
+        partner: partnerVal,
+        status: statusVal,
+        sc: scNameVal,
         daysAging,
+        reason: 'unmapped_last_status_routed_to_sc_unmapped',
       });
-      continue;
     }
 
     let writtenCount = 0;
@@ -1453,6 +1516,27 @@ function routeRawToOperationalSheetsInMemory_(ss, rawValues, headerIndexRaw, pic
     const startRow = 2;
 
     const idxStatus = header.indexOf('Status');
+    const idxClaim = header.indexOf('Claim Number');
+    const idxUpdate = header.indexOf('Update Status');
+    const idxTs = header.indexOf('Timestamp');
+    const idxRemarks = header.indexOf('Remarks');
+    const snapshot = (typeof globalThis.__OPS_MANUAL_SNAPSHOT05B !== 'undefined' && globalThis.__OPS_MANUAL_SNAPSHOT05B && globalThis.__OPS_MANUAL_SNAPSHOT05B[sheetName])
+      ? globalThis.__OPS_MANUAL_SNAPSHOT05B[sheetName]
+      : null;
+
+    if (snapshot && idxClaim !== -1) {
+      for (let i = 0; i < w.rows.length; i++) {
+        const row = w.rows[i] || [];
+        const claim = String(row[idxClaim] || '').trim().toUpperCase();
+        if (!claim || !snapshot[claim]) continue;
+        const prev = snapshot[claim];
+        if (idxUpdate !== -1 && String(row[idxUpdate] || '').trim() === '' && prev['Update Status'] != null && String(prev['Update Status']).trim() !== '') row[idxUpdate] = prev['Update Status'];
+        if (idxTs !== -1 && String(row[idxTs] || '').trim() === '' && prev['Timestamp'] != null && String(prev['Timestamp']).trim() !== '') row[idxTs] = prev['Timestamp'];
+        if (idxStatus !== -1 && String(row[idxStatus] || '').trim() === '' && prev['Status'] != null && String(prev['Status']).trim() !== '') row[idxStatus] = prev['Status'];
+        if (idxRemarks !== -1 && String(row[idxRemarks] || '').trim() === '' && prev['Remarks'] != null && String(prev['Remarks']).trim() !== '') row[idxRemarks] = prev['Remarks'];
+      }
+    }
+
     if (idxStatus === -1) {
       safeSetValues_(sh.getRange(startRow, 1, n, header.length), w.rows);
     } else {
@@ -1503,6 +1587,7 @@ function routeRawToOperationalSheetsInMemory_(ss, rawValues, headerIndexRaw, pic
   }
 
   // Keep old return shape mostly, but remove EV-Bike artifacts.
+  try { globalThis.__OPS_MANUAL_SNAPSHOT05B = null; } catch (e) {}
   return { total, perSheet: routeCount, unknown: unknownStatuses, missingStatus };
 }
 
