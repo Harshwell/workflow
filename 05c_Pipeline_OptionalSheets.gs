@@ -346,6 +346,10 @@ function processB2B_(ss, rawValues, headerIndexRaw, pic) { // `pic` kept for bac
   const rows = [];
   const dbUrls = [];
   const seenClaims = new Set();
+  let rawMatchedCount = 0;
+  let submissionFallbackCount = 0;
+  let skippedExcludedRawCount = 0;
+  let skippedExcludedSubmissionCount = 0;
 
   for (let i = 0; i < rawValues.length; i++) {
     const row = rawValues[i];
@@ -354,7 +358,10 @@ function processB2B_(ss, rawValues, headerIndexRaw, pic) { // `pic` kept for bac
     const claimUp = String((idxClaim != null) ? row[idxClaim] : '' || '').toUpperCase();
     const lastStatus = String((idxLastStatus != null) ? row[idxLastStatus] : '' || '').trim();
 
-    if (OPTIONAL_FLAGS.B2B_SKIP_EXCLUDED_LAST_STATUSES && EXCLUDED_LAST_STATUSES.has(lastStatus)) continue;
+    if (OPTIONAL_FLAGS.B2B_SKIP_EXCLUDED_LAST_STATUSES && EXCLUDED_LAST_STATUSES.has(lastStatus)) {
+      skippedExcludedRawCount++;
+      continue;
+    }
 
     const matchPartner = patterns.some(p => p && partnerLower.indexOf(p) > -1);
     const matchClaim = claimToken ? (claimUp.indexOf(claimToken) > -1) : false;
@@ -415,6 +422,7 @@ function processB2B_(ss, rawValues, headerIndexRaw, pic) { // `pic` kept for bac
     set('Nett Claim Amount', (nett != null) ? nett : '');
 
     rows.push(out);
+    rawMatchedCount++;
   }
 
   // Fallback source: Submission sheet (for claims missing in current Raw pull window).
@@ -446,7 +454,10 @@ function processB2B_(ss, rawValues, headerIndexRaw, pic) { // `pic` kept for bac
           const matchPartner = patterns.some(p => p && partner.indexOf(p) > -1);
           const matchClaim = claimToken ? (claimUp.indexOf(claimToken) > -1) : false;
           if (!matchPartner && !matchClaim) continue;
-          if (OPTIONAL_FLAGS.B2B_SKIP_EXCLUDED_LAST_STATUSES && EXCLUDED_LAST_STATUSES.has(lastStatus)) continue;
+          if (OPTIONAL_FLAGS.B2B_SKIP_EXCLUDED_LAST_STATUSES && EXCLUDED_LAST_STATUSES.has(lastStatus)) {
+            skippedExcludedSubmissionCount++;
+            continue;
+          }
 
           const out = new Array(header.length).fill('');
           const set = (k, v) => { const j = idxH[k]; if (j != null) out[j] = v; };
@@ -464,6 +475,7 @@ function processB2B_(ss, rawValues, headerIndexRaw, pic) { // `pic` kept for bac
           dbUrls.push(dbUrl);
           rows.push(out);
           seenClaims.add(claimUp);
+          submissionFallbackCount++;
         }
       }
     }
@@ -477,6 +489,21 @@ function processB2B_(ss, rawValues, headerIndexRaw, pic) { // `pic` kept for bac
 
   applyOperationalColumnSchema_(sh, header, 2, rows.length, { orIsMoney: false });
   applyDbLinkFormatting_(sh, header, rows.length, 2);
+  try {
+    if (typeof logLine_ === 'function') {
+      logLine_(
+        'INFO',
+        'B2B_METRICS',
+        'rows=' + rows.length
+          + ' raw=' + rawMatchedCount
+          + ' sub_fallback=' + submissionFallbackCount
+          + ' skip_excluded_raw=' + skippedExcludedRawCount
+          + ' skip_excluded_sub=' + skippedExcludedSubmissionCount,
+        '',
+        'INFO'
+      );
+    }
+  } catch (eM) {}
   return rows.length;
 }
 
