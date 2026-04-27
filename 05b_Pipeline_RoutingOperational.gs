@@ -408,6 +408,8 @@ function buildOperationalClaimHighlightSetsFromRaw_(rawValues, headerIndexRaw) {
   const secondYear = new Set();
   const firstMonthPolicy = new Set();
   const remaining1Month = new Set();
+  const secondYearDetail = new Map();
+  const firstMonthPolicyDetail = new Map();
 
   if (ixClaim == null) return { expired, flex, b2b, duplicate, secondYear, firstMonthPolicy, remaining1Month };
 
@@ -489,6 +491,12 @@ function buildOperationalClaimHighlightSetsFromRaw_(rawValues, headerIndexRaw) {
   const toDateOnly_ = (v) => {
     return (typeof coerceDateOnly_ === 'function') ? coerceDateOnly_(v) : (v instanceof Date ? v : null);
   };
+  const formatShortDate_ = (v) => {
+    const d = toDateOnly_(v);
+    if (!d) return '';
+    try { return Utilities.formatDate(d, Session.getScriptTimeZone(), 'dd MMM yy'); } catch (e) {}
+    return '';
+  };
 
   const diffDaysLocal_ = (d1, d2) => {
     const a = toDateOnly_(d1);
@@ -529,14 +537,33 @@ function buildOperationalClaimHighlightSetsFromRaw_(rawValues, headerIndexRaw) {
     // 1) Second-Year (Market Value) STRICT: month_policy_aging > 12 (Raw Data)
     if (ixMonthPolicyAging != null) {
       const m = parseOptionalIntStrict_(r[ixMonthPolicyAging]);
-      if (m != null && m > 12) secondYear.add(claimKey);
+      if (m != null && m > 12) {
+        secondYear.add(claimKey);
+        secondYearDetail.set(claimKey, [
+          'Second-Year (Market Value)',
+          '',
+          'Submission Date: ' + (formatShortDate_((ixSub != null) ? r[ixSub] : '') || '-'),
+          'Start Date Policy : ' + (formatShortDate_((ixPolicyStart != null) ? r[ixPolicyStart] : '') || '-'),
+          'End Date Policy : ' + (formatShortDate_((ixPolicyEnd != null) ? r[ixPolicyEnd] : '') || '-'),
+          'Month Policy Aging : ' + m + ' months'
+        ].join('\n'));
+      }
     }
     // 2) First-Month Policy if (claim_submission_date - policy_start_date) < 30 days
     if (ixSub != null && ixPolicyStart != null) {
       const dSub = toDateOnly_(r[ixSub]);
       const dStart = toDateOnly_(r[ixPolicyStart]);
       const diff = (typeof diffDays_ === 'function') ? diffDays_(dStart, dSub) : diffDaysLocal_(dStart, dSub);
-      if (diff != null && diff >= 0 && diff < 30) firstMonthPolicy.add(claimKey);
+      if (diff != null && diff >= 0 && diff < 30) {
+        firstMonthPolicy.add(claimKey);
+        firstMonthPolicyDetail.set(claimKey, [
+          'First-Month Policy',
+          '',
+          'Submission Date: ' + (formatShortDate_(dSub) || '-'),
+          'Start Date Policy : ' + (formatShortDate_(dStart) || '-'),
+          'Policy Age : ' + diff + ' days'
+        ].join('\n'));
+      }
     }
 
     // 3) Policy Remaining <= 1 Month if (policy_end_date - claim_submission_date) < 30 days
@@ -622,7 +649,10 @@ function buildOperationalClaimHighlightSetsFromRaw_(rawValues, headerIndexRaw) {
     }
   }
 
-  return { expired, flex, b2b, duplicate, secondYear, firstMonthPolicy, remaining1Month };
+  return {
+    expired, flex, b2b, duplicate, secondYear, firstMonthPolicy, remaining1Month,
+    secondYearDetail, firstMonthPolicyDetail
+  };
 }
 
 
@@ -841,8 +871,8 @@ function applyOperationalClaimHighlightsByRaw_(ss, rawValues, headerIndexRaw, pi
     if (n.indexOf(dupPrefix) === 0) return 'duplicate';
     if (n === expiredNote) return 'expired';
     if (n === b2bNote) return 'b2b';
-    if (n === secondYearNote) return 'secondYear';
-    if (n === firstMonthPolicyNote) return 'firstMonthPolicy';
+    if (n === secondYearNote || n.indexOf(secondYearNote + '\n') === 0) return 'secondYear';
+    if (n === firstMonthPolicyNote || n.indexOf(firstMonthPolicyNote + '\n') === 0) return 'firstMonthPolicy';
     if (n === remaining1MonthNote) return 'remaining1Month';
     if (flexNoteAlt.has(n)) return 'flex';
     return null;
@@ -924,8 +954,8 @@ const __setNotes05b__ = (range, matrix, sheetName) => {
         else if (sets.expired.has(claimKey)) desiredNote = expiredNote;
         else if (sets.flex.has(claimKey)) desiredNote = flexNote;
         else if (sets.b2b.has(claimKey)) desiredNote = b2bNote;
-        else if (sets.secondYear && sets.secondYear.has(claimKey)) desiredNote = secondYearNote;
-        else if (sets.firstMonthPolicy && sets.firstMonthPolicy.has(claimKey)) desiredNote = firstMonthPolicyNote;
+        else if (sets.secondYear && sets.secondYear.has(claimKey)) desiredNote = (sets.secondYearDetail && sets.secondYearDetail.get(claimKey)) || secondYearNote;
+        else if (sets.firstMonthPolicy && sets.firstMonthPolicy.has(claimKey)) desiredNote = (sets.firstMonthPolicyDetail && sets.firstMonthPolicyDetail.get(claimKey)) || firstMonthPolicyNote;
         else if (sets.remaining1Month && sets.remaining1Month.has(claimKey)) desiredNote = remaining1MonthNote;
       }
 
@@ -1407,15 +1437,16 @@ function routeRawToOperationalSheetsInMemory_(ss, rawValues, headerIndexRaw, pic
     // We always route all incoming data in the single master workflow.
 
     if (!targets.length) {
+      targets = [scFallbackName];
       unknownStatuses.push({
-      rowNumber,
-      claim: claimVal,
-      partner: partnerVal,
-      status: statusVal,
-      sc: scNameVal,
+        rowNumber,
+        claim: claimVal,
+        partner: partnerVal,
+        status: statusVal,
+        sc: scNameVal,
         daysAging,
+        reason: 'unmapped_last_status_routed_to_sc_unmapped',
       });
-      continue;
     }
 
     let writtenCount = 0;

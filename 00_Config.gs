@@ -1418,7 +1418,6 @@ const OPS_ROUTING_POLICY = Object.freeze({
     'OR - OLD': Object.freeze(['WAITING_PAYMENT']),
 
     'Start': Object.freeze([
-      'DONE_EXPIRED',
       'WAITING_WALKIN_START',
       'WAITING_COURIER_START',
       'QOALA_CLAIM_APPROVE_WALKIN',
@@ -1511,6 +1510,7 @@ const OPS_ROUTING_POLICY = Object.freeze({
     ]),
 
     'Exclusion': Object.freeze([
+      'DONE_EXPIRED',
       'DONE_REJECTED',
       'DONE',
       'DONE_REPLACED',

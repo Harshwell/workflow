@@ -1166,6 +1166,62 @@ function __ensureHeaderAtColumn06_(sh, headerName, targetCol) {
   return true;
 }
 
+function __removeHeaderColumns06_(sh, headersToRemove, keepFirstByHeader) {
+  if (!sh || DRY_RUN) return 0;
+  const lc = sh.getLastColumn();
+  if (lc < 1) return 0;
+  const hdr = sh.getRange(1, 1, 1, lc).getValues()[0].map(v => String(v || '').trim());
+  const normalizedKeep = Object.create(null);
+  Object.keys(keepFirstByHeader || {}).forEach(function(k) {
+    normalizedKeep[__normalizeHeaderText06_(k)] = !!keepFirstByHeader[k];
+  });
+  const removeSet = new Set((headersToRemove || []).map(function(h) { return __normalizeHeaderText06_(h); }).filter(Boolean));
+  const firstSeen = Object.create(null);
+  const toDelete = [];
+  for (let i = 0; i < hdr.length; i++) {
+    const key = __normalizeHeaderText06_(hdr[i]);
+    if (!key || !removeSet.has(key)) continue;
+    if (normalizedKeep[key]) {
+      if (!firstSeen[key]) {
+        firstSeen[key] = true;
+        continue;
+      }
+    }
+    toDelete.push(i + 1);
+  }
+  for (let i = toDelete.length - 1; i >= 0; i--) {
+    try { sh.deleteColumn(toDelete[i]); } catch (e) {}
+  }
+  return toDelete.length;
+}
+
+function __fillBranchFromServiceCenter06_(sh) {
+  if (!sh || DRY_RUN) return 0;
+  const lr = sh.getLastRow();
+  const lc = sh.getLastColumn();
+  if (lr < 2 || lc < 1) return 0;
+  const header = sh.getRange(1, 1, 1, lc).getValues()[0].map(__normalizeHeaderText06_);
+  const idxSc = __findHeaderIndexFlexible06_(header, 'Service Center');
+  const idxBranch = __findHeaderIndexFlexible06_(header, 'Branch');
+  if (idxSc === -1 || idxBranch === -1) return 0;
+  const n = lr - 1;
+  const scVals = sh.getRange(2, idxSc + 1, n, 1).getValues();
+  const branchVals = sh.getRange(2, idxBranch + 1, n, 1).getValues();
+  const out = new Array(n);
+  let touched = 0;
+  for (let i = 0; i < n; i++) {
+    const cur = String(branchVals[i][0] || '').trim();
+    if (cur) { out[i] = [branchVals[i][0]]; continue; }
+    const fill = __getBranchFromServiceCenter06_(scVals[i][0]);
+    out[i] = [fill || ''];
+    if (fill) touched++;
+  }
+  if (touched > 0) {
+    try { sh.getRange(2, idxBranch + 1, n, 1).setValues(out); } catch (e) {}
+  }
+  return touched;
+}
+
 function enforceOperationalLayout06_(ss) {
   if (!ss || DRY_RUN) return { touched: 0 };
   const monthSheets = ['Submission', 'Ask Detail', 'Start', 'SC - Farhan', 'SC - Meilani', 'SC - Meindar', 'Finish', 'PO', 'Exclusion'];
@@ -1180,6 +1236,21 @@ function enforceOperationalLayout06_(ss) {
     if (!sh) return;
     if (__ensureHeaderAtColumn06_(sh, 'Service Center PIC', 14)) touched++;
   });
+
+  const submission = ss.getSheetByName('Submission');
+  if (submission) {
+    touched += __removeHeaderColumns06_(submission, ['Start Date', 'End Date', 'Details', 'Submission Date'], { 'Submission Date': true });
+  }
+
+  ['Ask Detail', 'Start', 'Finish'].forEach(function(name) {
+    const sh = ss.getSheetByName(name);
+    if (!sh) return;
+    touched += __removeHeaderColumns06_(sh, ['Update Status Asso', 'Timestamp Asso', 'Update Status Admin', 'Timestamp Admin'], {});
+  });
+
+  const start = ss.getSheetByName('Start');
+  if (start) touched += __fillBranchFromServiceCenter06_(start);
+
   return { touched: touched };
 }
 
