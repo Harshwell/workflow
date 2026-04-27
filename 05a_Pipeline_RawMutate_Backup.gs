@@ -239,11 +239,29 @@ function coerceTimestamp_(v) {
 /** Submission output rule (source picking) */
 function getSubmissionDateForOutput_(rawRow, headerIndexRaw) {
   const h = CONFIG.headers;
-  const idxDt = headerIndexRaw[h.claimSubmittedDatetime];
-  const dtVal = (idxDt != null) ? rawRow[idxDt] : '';
+  const pick = (keys) => {
+    for (let i = 0; i < keys.length; i++) {
+      const k = keys[i];
+      if (!k) continue;
+      const idx = headerIndexRaw[k];
+      if (idx == null) continue;
+      const v = rawRow[idx];
+      if (v != null && String(v).trim() !== '') return v;
+    }
+    return '';
+  };
 
-  // Source of truth: claim_submitted_datetime only.
-  if (dtVal) return { val: dtVal, mode: 'datetime' };
+  // MAIN exports often provide claim_submission_date (date-only),
+  // while SUB exports provide claim_submitted_datetime.
+  const submissionVal = pick([
+    h.claimSubmittedDatetime,
+    h.claimSubmissionDate,
+    'claim_submitted_datetime',
+    'claim_submission_date',
+    'submission_date',
+    'Submission Date'
+  ]);
+  if (submissionVal) return { val: submissionVal, mode: 'date_or_datetime' };
   return { val: '', mode: 'date' };
 }
 

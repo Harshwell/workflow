@@ -290,9 +290,11 @@ Checklist ini fokus ke area yang paling rawan regressions pas perubahan terakhir
 Catatan ini dipakai sebagai quick-reference maintenance (bukan detail desain):
 
 - Routing/position: `DONE_EXPIRED` harus tetap konsisten ke domain `Exclusion` (hindari drift antara routing map vs position map).
-- `Submission by Month` diperlakukan sebagai label bulan (`MMM yy`) dan disimpan sebagai text untuk mencegah auto-coercion jadi date serial.
+- `Submission by Month` diperlakukan sebagai date bulanan (tanggal 1) dengan display `MMM yy` agar tetap bisa dipakai formula/pivot tanpa kehilangan tampilan bisnis.
 - Optional sheets (B2B/EV-Bike): excluded-status filtering wajib case-insensitive agar aman terhadap variasi casing dari source.
 - B2B partner matching sudah include tambahan partner enterprise terbaru (Bhinneka/PSMS/DIGIMAP EnE/Parastar/GSE/KPD/Tukar Ind/Bumilindo).
+- Fallback `Submission Date` wajib membaca dua sumber utama: `claim_submitted_datetime` (SUB) dan `claim_submission_date` (MAIN), plus alias `submission_date`.
+- Mapping `Exclusion` mencakup tambahan `INSURANCE_CLAIM_WAITING_PAID` dan `CLAIM_CANCELLED`.
 
 Saat ada update policy berikutnya, cek ulang 3 titik ini secara berurutan:
 1. `00_Config.gs` (policy source of truth)

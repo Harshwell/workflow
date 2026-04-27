@@ -8,9 +8,11 @@ Formatnya sengaja sederhana: **Added / Changed / Fixed**. Tidak perlu sok formal
 ## 2026-04-27
 
 ### Changed
-- Hardening `Submission by Month` supaya selalu jadi label bulan (`MMM yy`) dan disimpan sebagai text (`@`) pada jalur operational + Report Base untuk mencegah auto-coercion menjadi tanggal hari ke-1.
+- `Submission by Month` di jalur operational + Report Base disimpan sebagai nilai **date bulanan** (tanggal 1) dengan display format `MMM yy` agar tetap terbaca bisnis namun aman untuk formula/pivot.
 - `POSITION_BY_LAST_STATUS['DONE_EXPIRED']` disejajarkan ke `Exclusion` agar konsisten dengan routing sheet Exclusion.
 - Dokumentasi diperbarui (`README.md`, `docs/WORKFLOW_MAP.md`) dengan ringkasan update Part 9 terbaru + maintenance quick-reference.
+- Fallback source `Submission Date` di routing/enrichment diperluas untuk skenario MAIN/SUB (`claim_submitted_datetime`, `claim_submission_date`, `submission_date`).
+- Mapping `Exclusion` ditambah `INSURANCE_CLAIM_WAITING_PAID` dan `CLAIM_CANCELLED` (routing + position + excluded-status set).
 
 ### Fixed
 - Excluded-status filtering pada optional sheets (B2B/EV-Bike) dibuat case-insensitive dengan normalisasi uppercase sebelum cek membership.

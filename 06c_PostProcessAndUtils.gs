@@ -1140,9 +1140,7 @@ function __parseAnyDateReportBase06_(v) {
 function __formatSubmissionMonthReportBase06_(submissionDateVal) {
   const d = __parseAnyDateReportBase06_(submissionDateVal);
   if (!d) return '';
-  const tz = (Session && Session.getScriptTimeZone) ? (Session.getScriptTimeZone() || 'Asia/Jakarta') : 'Asia/Jakarta';
-  try { return Utilities.formatDate(d, tz, 'MMM yy'); } catch (e) {}
-  return '';
+  return new Date(d.getFullYear(), d.getMonth(), 1, 0, 0, 0, 0);
 }
 
 function __ensureHeaderAtColumn06_(sh, headerName, targetCol) {
@@ -1237,16 +1235,22 @@ function __normalizeSubmissionByMonthColumn06_(sh) {
   let touched = 0;
   for (let i = 0; i < vals.length; i++) {
     const cur = vals[i][0];
-    const norm = normalizeSubmissionMonthName06b_(cur);
-    if (String(cur == null ? '' : cur).trim() !== String(norm || '').trim()) {
-      vals[i][0] = norm;
+    const norm = (typeof toSubmissionMonthDate06b_ === 'function')
+      ? toSubmissionMonthDate06b_(cur)
+      : '';
+    const curTs = (Object.prototype.toString.call(cur) === '[object Date]' && !isNaN(cur.getTime()))
+      ? new Date(cur.getFullYear(), cur.getMonth(), 1, 0, 0, 0, 0).getTime()
+      : null;
+    const normTs = (Object.prototype.toString.call(norm) === '[object Date]' && !isNaN(norm.getTime())) ? norm.getTime() : null;
+    if (curTs !== normTs) {
+      vals[i][0] = norm || '';
       touched++;
     }
   }
   if (touched > 0) {
     try { rg.setValues(vals); } catch (e) {}
   }
-  try { rg.setNumberFormat('@'); } catch (e2) {}
+  try { rg.setNumberFormat('MMM yy'); } catch (e2) {}
   return touched;
 }
 
@@ -1410,7 +1414,7 @@ function refreshReportBaseFromOperational06_(ss, opts) {
     if (rows.length) {
       sh.getRange(2, 1, rows.length, headers.length).setValues(rows);
       try { sh.getRange(2, 1, rows.length, 1).setNumberFormat('dd MMM yy'); } catch (e1) {}
-      try { sh.getRange(2, 2, rows.length, 1).setNumberFormat('@'); } catch (eM1) {}
+      try { sh.getRange(2, 2, rows.length, 1).setNumberFormat('MMM yy'); } catch (eM1) {}
       try { sh.getRange(2, 5, rows.length, 1).setNumberFormat('dd MMM yy, HH:mm'); } catch (e2) {}
     }
     return { written: rows.length, sheets: srcSheets.length, mode: 'full-rewrite' };
@@ -1446,7 +1450,7 @@ function refreshReportBaseFromOperational06_(ss, opts) {
   if (existing.length) {
     sh.getRange(2, 1, existing.length, headers.length).setValues(existing);
     try { sh.getRange(2, 1, existing.length, 1).setNumberFormat('dd MMM yy'); } catch (e3) {}
-    try { sh.getRange(2, 2, existing.length, 1).setNumberFormat('@'); } catch (eM2) {}
+    try { sh.getRange(2, 2, existing.length, 1).setNumberFormat('MMM yy'); } catch (eM2) {}
     try { sh.getRange(2, 5, existing.length, 1).setNumberFormat('dd MMM yy, HH:mm'); } catch (e4) {}
   }
   return { written: upserted, totalRows: existing.length, sheets: srcSheets.length, mode: 'incremental-upsert' };
