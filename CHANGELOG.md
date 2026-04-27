@@ -5,6 +5,19 @@ Formatnya sengaja sederhana: **Added / Changed / Fixed**. Tidak perlu sok formal
 
 ---
 
+## 2026-04-27
+
+### Changed
+- Hardening `Submission by Month` supaya selalu jadi label bulan (`MMM yy`) dan disimpan sebagai text (`@`) pada jalur operational + Report Base untuk mencegah auto-coercion menjadi tanggal hari ke-1.
+- `POSITION_BY_LAST_STATUS['DONE_EXPIRED']` disejajarkan ke `Exclusion` agar konsisten dengan routing sheet Exclusion.
+- Dokumentasi diperbarui (`README.md`, `docs/WORKFLOW_MAP.md`) dengan ringkasan update Part 9 terbaru + maintenance quick-reference.
+
+### Fixed
+- Excluded-status filtering pada optional sheets (B2B/EV-Bike) dibuat case-insensitive dengan normalisasi uppercase sebelum cek membership.
+- Mapping partner B2B diperluas untuk kebutuhan enterprise terbaru: `Bhinneka`, `PSMS`, `DIGIMAP EnE`, `Parastar`, `GSE`, `KPD`, `Tukar Ind`, `Bumilindo`.
+
+---
+
 ## 2026-03-30
 
 ### Changed
@@ -27,40 +40,15 @@ Formatnya sengaja sederhana: **Added / Changed / Fixed**. Tidak perlu sok formal
 
 ## 2026-03-29
 
-### Phase 3 consolidation pass
-
-### 2026-03-29 (phase 3 consolidation pass)
-- `01_Utils` menambahkan helper bersama `computeDbValueFromClaimNumber_` dan `parseClaimLastUpdatedDatetime_` untuk menghapus duplikasi logika lintas modul.
-- `05b`, `05c`, `06b` sekarang mendelegasikan DB/insurance helper ke utility terpusat (`computeDbValueFromClaimNumber_`, `mapInsuranceShort_`).
+### Changed
+- `01_Utils` menambahkan helper bersama `computeDbValueFromClaimNumber_` dan `parseClaimLastUpdatedDatetime_` untuk mengurangi duplikasi lintas modul.
+- `05b`, `05c`, `06b`, `06c` mulai konsolidasi util bersama (DB classifier, header matching, parser datetime, status-type source-of-truth).
 - `05c` DRY_RUN guard disejajarkan ke `isDryRun_()` agar perilaku dry-run konsisten lintas modul.
-- `06c` `getStatusTypeMap06c_` tidak lagi membawa hardcoded fallback map; mapping hanya dari source-of-truth config/global.
-- `06b` dan `06c` parser datetime claim kini mendelegasikan ke parser terpusat `parseClaimLastUpdatedDatetime_`.
-
-### Phase 4 structural pass
-- Split sebagian helper SUB dari `06a_EntryPoints` ke file baru `06e_SubHelpers.gs` (implementasi append Submission + sort operational dipindahkan; `06a` menyisakan delegator untuk menjaga kompatibilitas trigger/caller).
-- `static_smoke_check.js` diperbarui untuk memuat `06e_SubHelpers.gs` agar validasi load-order tetap mencakup helper baru.
-- Tambah modul `06f_RuntimeAssertions.gs` dan preflight non-fatal di `runPipeline_` + `runSubEmailIngest` untuk mendeteksi simbol penting yang hilang lebih awal.
-
-### Changed
-- Phase 4B-4D incremental hardening: `enrichOperationalSheetsFromRaw06_` sekarang memakai resolver indeks raw terpusat (`__resolveEnrichRawIndexes06b_`) untuk mengecilkan kompleksitas fungsi inti.
-- `06e_SubHelpers.gs` sort SUB kini mengutamakan `Submission Date` -> `Last Status Date` -> `Last Status` dan tetap mendukung `sortSpecs` custom saat diberikan.
-- Header matching lintas modul mulai dikonsolidasikan melalui util bersama `findHeaderIndexByCandidates_` (dipakai oleh 05a/06c).
-- Split sebagian helper SUB dari `06a_EntryPoints` ke file baru `06e_SubHelpers` (implementasi append Submission + sort operational dipindahkan; `06a` menyisakan delegator untuk menjaga kompatibilitas trigger/caller).
-- `static_smoke_check.js` diperbarui untuk memuat `06e_SubHelpers` agar validasi load-order tetap mencakup helper baru.
-- Tambah modul `06f_RuntimeAssertions` dan preflight non-fatal di `runPipeline_` + `runSubEmailIngest` untuk mendeteksi simbol penting yang hilang lebih awal.
-
-### Changed
-- Phase 4B-4D incremental hardening: `enrichOperationalSheetsFromRaw06_` sekarang memakai resolver indeks raw terpusat (`__resolveEnrichRawIndexes06b_`) untuk mengecilkan kompleksitas fungsi inti.
-- `06e_SubHelpers` sort SUB kini mengutamakan `Submission Date` -> `Last Status Date` -> `Last Status` dan tetap mendukung `sortSpecs` custom saat diberikan.
-- Header matching lintas modul mulai dikonsolidasikan melalui util bersama `findHeaderIndexByCandidates_` (dipakai oleh 05a/06c).
-### 2026-03-29 (phase 4 structural pass)
-- Split sebagian helper SUB dari `06a_EntryPoints` ke file baru `06e_SubHelpers` (implementasi append Submission + sort operational dipindahkan; `06a` menyisakan delegator untuk menjaga kompatibilitas trigger/caller).
-- `static_smoke_check.js` diperbarui untuk memuat `06e_SubHelpers` agar validasi load-order tetap mencakup helper baru.
-
-### Changed
-- Phase 4B-4D incremental hardening: `enrichOperationalSheetsFromRaw06_` sekarang memakai resolver indeks raw terpusat (`__resolveEnrichRawIndexes06b_`) untuk mengecilkan kompleksitas fungsi inti.
-- Header matching lintas modul mulai dikonsolidasikan melalui util bersama `findHeaderIndexByCandidates_` (dipakai oleh 05a/06c).
-### Changed
+- Split helper SUB dari `06a_EntryPoints` ke `06e_SubHelpers` (append Submission + sort operational) dengan delegator kompatibel di `06a`.
+- Tambah `06f_RuntimeAssertions` + preflight non-fatal di `runPipeline_` / `runSubEmailIngest`.
+- `static_smoke_check.js` diperbarui agar memuat helper SUB/runtime assertions baru.
+- `enrichOperationalSheetsFromRaw06_` memakai resolver indeks raw terpusat (`__resolveEnrichRawIndexes06b_`) untuk menurunkan kompleksitas fungsi inti.
+- Sort SUB di helper terpisah dipertegas: `Submission Date` -> `Last Status Date` -> `Last Status` (tetap dukung `sortSpecs` custom).
 - `03_SheetsAndValidation`: tambah `sv03_getDateAutoNumberFormatForColumn_` sebagai resolver `DATE_AUTO` yang aman (date-only fallback, datetime bila sample berisi komponen waktu).
 - `05b_Pipeline_RoutingOperational`: apply highlight operational kini memakai isolasi error per-sheet agar kegagalan satu sheet tidak memutus pemrosesan sheet lainnya.
 - `05c_Pipeline_OptionalSheets`: dedup EV-Bike diperketat untuk overlay `Submission` pada claim yang sudah diproses dari Raw di run yang sama.

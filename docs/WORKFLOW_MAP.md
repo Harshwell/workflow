@@ -283,3 +283,18 @@ Checklist ini fokus ke area yang paling rawan regressions pas perubahan terakhir
 - Semua flow `runSelfCheck_()` harus `ok=true`.
 - Tidak ada warning baru terkait simbol kritikal pipeline.
 - UAT 1-4 di atas lulus minimal pada 3 sampel claim berbeda.
+
+
+## Recent hardening notes (2026-04-27)
+
+Catatan ini dipakai sebagai quick-reference maintenance (bukan detail desain):
+
+- Routing/position: `DONE_EXPIRED` harus tetap konsisten ke domain `Exclusion` (hindari drift antara routing map vs position map).
+- `Submission by Month` diperlakukan sebagai label bulan (`MMM yy`) dan disimpan sebagai text untuk mencegah auto-coercion jadi date serial.
+- Optional sheets (B2B/EV-Bike): excluded-status filtering wajib case-insensitive agar aman terhadap variasi casing dari source.
+- B2B partner matching sudah include tambahan partner enterprise terbaru (Bhinneka/PSMS/DIGIMAP EnE/Parastar/GSE/KPD/Tukar Ind/Bumilindo).
+
+Saat ada update policy berikutnya, cek ulang 3 titik ini secara berurutan:
+1. `00_Config.gs` (policy source of truth)
+2. `05c_Pipeline_OptionalSheets.gs` (matching + fallback behavior)
+3. `06b/06c` (formatting & report propagation)
