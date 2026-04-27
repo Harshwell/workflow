@@ -567,7 +567,7 @@ function normalizeSubmissionMonthName06b_(v) {
 
   const d = parse(v);
   if (d) {
-    try { return Utilities.formatDate(d, tz, 'MMMM yyyy'); } catch (e) {}
+    try { return Utilities.formatDate(d, tz, 'MMM yy'); } catch (e) {}
   }
 
   const key = raw.toLowerCase().replace(/\./g, '');
@@ -586,8 +586,11 @@ function normalizeSubmissionMonthName06b_(v) {
     dec: 'December', december: 'December'
   };
   const month = map[key] || raw;
-  // Fallback for month text without year.
-  return /\b\d{4}\b/.test(raw) ? (month + ' ' + raw.match(/\b\d{4}\b/)[0]) : month;
+  const year4 = raw.match(/\b(\d{4})\b/);
+  if (year4) return month.substr(0, 3) + ' ' + year4[1].slice(-2);
+  const year2 = raw.match(/\b(\d{2})\b/);
+  if (year2) return month.substr(0, 3) + ' ' + year2[1];
+  return month.substr(0, 3);
 }
 
 function deriveServiceCenterPic06b_(serviceCenterName) {
@@ -1006,7 +1009,8 @@ function enrichOperationalSheetsFromRaw06_(ss, rawValues, headerIndexRaw, pic, o
     setCol(idxLastStatusDateOps, outLastStatusDate, dtFmt);
 
     setCol(idxStatusTypeOps, outStatusType, null);
-    setCol(idxSubmissionMonthOps, outSubmissionMonth, null);
+    // Force text format so month labels never become day-1 dates (e.g. "1 Mar 26").
+    setCol(idxSubmissionMonthOps, outSubmissionMonth, '@');
     setCol(idxServiceCenterPicOps, outServiceCenterPic, null);
   });
 }
