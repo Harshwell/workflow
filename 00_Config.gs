@@ -1081,9 +1081,9 @@ const POSITION_BY_LAST_STATUS = Object.freeze({
   'QOALA_CLAIM_ASK_DETAIL': 'Front',
   'QOALA_CLAIM_RESUBMIT_DOC': 'Front',
   'WAITING_PAYMENT': 'Front',
-  'DONE_EXPIRED': 'Front',
+  'DONE_EXPIRED': 'Exclusion',
   'WAITING_WALKIN_START': 'Front',
-  'WAITING_COURIER_START': 'Front',
+  'WAITING_COURIER_START': 'Expedition',
   'COURIER_PICKED_UP': 'Front',
   'PAYMENT_NOT_COMPLETE': 'Front',
 
@@ -1119,10 +1119,10 @@ const POSITION_BY_LAST_STATUS = Object.freeze({
   'QOALA_CLAIM_APPROVE_WALKIN': 'Front',
   'CLAIM_EXPIRE_WALKIN': 'Front',
   'QOALA_CLAIM_REOPEN_WALKIN': 'Front',
-  'QOALA_CLAIM_APPROVE_PICKUP': 'Front',
-  'WAITING_PICKUP_START': 'Front',
-  'COURIER_PICKUP_START': 'Front',
-  'COURIER_PICKUP_START_DONE': 'Front',
+  'QOALA_CLAIM_APPROVE_PICKUP': 'Expedition',
+  'WAITING_PICKUP_START': 'Expedition',
+  'COURIER_PICKUP_START': 'Expedition',
+  'COURIER_PICKUP_START_DONE': 'Expedition',
   'QOALA_CLAIM_REJECT': 'Front',
 
   'SERVICE_CENTER_CLAIM_RECEIVE': 'Middle',
@@ -1147,10 +1147,10 @@ const POSITION_BY_LAST_STATUS = Object.freeze({
   'SERVICE_CENTER_CLAIM_DONE_REPAIR_WALKIN': 'Middle',
   'SERVICE_CENTER_CLAIM_WAITING_WALKIN_FINISH': 'Middle',
   'SERVICE_CENTER_CLAIM_DONE': 'Middle',
-  'SERVICE_CENTER_CLAIM_DONE_REPAIR_PICKUP': 'Middle',
-  'SERVICE_CENTER_CLAIM_WAITING_PICKUP_FINISH': 'Middle',
-  'COURIER_CLAIM_PICKUP_FINISH': 'Middle',
-  'COURIER_CLAIM_PICKUP_FINISH_DONE': 'Middle',
+  'SERVICE_CENTER_CLAIM_DONE_REPAIR_PICKUP': 'Expedition',
+  'SERVICE_CENTER_CLAIM_WAITING_PICKUP_FINISH': 'Expedition',
+  'COURIER_CLAIM_PICKUP_FINISH': 'Expedition',
+  'COURIER_CLAIM_PICKUP_FINISH_DONE': 'Expedition',
 
   'CUSTOMER_WAITING_PAYMENT_DEDUCTIBLE_EXCESS_FEE_REPLACE': 'Back',
   'CUSTOMER_APPROVE_DEDUCTIBLE_EXCESS_FEE_REPLACE': 'Back',
@@ -1418,7 +1418,6 @@ const OPS_ROUTING_POLICY = Object.freeze({
     'OR - OLD': Object.freeze(['WAITING_PAYMENT']),
 
     'Start': Object.freeze([
-      'DONE_EXPIRED',
       'WAITING_WALKIN_START',
       'WAITING_COURIER_START',
       'QOALA_CLAIM_APPROVE_WALKIN',
@@ -1511,6 +1510,7 @@ const OPS_ROUTING_POLICY = Object.freeze({
     ]),
 
     'Exclusion': Object.freeze([
+      'DONE_EXPIRED',
       'DONE_REJECTED',
       'DONE',
       'DONE_REPLACED',
@@ -2078,7 +2078,8 @@ const CONFIG = Object.freeze({
   patterns: {
     b2bPartners: [
       'EMG','GDN','Helios','MonsterAR','Buminet','AIMS','AIRMAS','Staffinc',
-      'TIGA JEJAK LANGKAH','WPS','PPS','Archor'
+      'TIGA JEJAK LANGKAH','WPS','PPS','Archor',
+      'Bhinneka','PSMS','DIGIMAP EnE','Parastar','GSE','KPD','Tukar Ind','Bumilindo'
     ],
     specialPartners: ['Renewal Qoala', 'Qoala Monsta'],
     evBikePartners: [

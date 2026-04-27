@@ -241,3 +241,60 @@ Urutan refactor yang paling masuk akal:
    - rapikan backward compatibility branch yang sudah tidak perlu
 
 Bukan sebaliknya. Jangan mulai dari operasi kosmetik besar yang hasil akhirnya cuma folder makin ramai.
+
+
+## Part 9 — Final pass hardening + UAT checklist (MAIN/SUB/FORM)
+
+Checklist ini fokus ke area yang paling rawan regressions pas perubahan terakhir.
+
+### 1) Reset 4 kolom manual saat status berubah (SUB)
+- Scope kolom: `Update Status`, `Timestamp`, `Status`, `Remarks`.
+- UAT:
+  1. pilih 1 claim existing di sheet operasional lalu isi manual ke-4 kolom.
+  2. jalankan SUB dengan data NEW yang mengubah `Last Status` claim itu.
+  3. verifikasi ke-4 kolom reset/clear sesuai policy.
+  4. jalankan SUB lagi tanpa perubahan status, pastikan manual input tidak ikut terhapus.
+
+### 2) B2B fallback dari Submission
+- Scope: claim B2B yang tidak ada di Raw window tetap di-upsert lewat sheet `Submission`.
+- UAT:
+  1. siapkan 1 claim token B2B di `Submission` yang tidak muncul di Raw terkini.
+  2. jalankan MAIN atau FORM (MAIN path) sampai optional sheets diproses.
+  3. verifikasi claim muncul di sheet `B2B`.
+  4. cek log metrik B2B untuk memastikan fallback source dihitung.
+
+### 3) EV-Bike overlay + TAT derivation
+- Scope: overlay dari `Submission`, plus isi `TAT` ketika raw `days_aging_from_submission` kosong.
+- UAT:
+  1. siapkan 1 claim EV-Bike di `Submission` dengan `Submission Date` valid.
+  2. pastikan claim tidak punya nilai `TAT` dari raw source.
+  3. jalankan MAIN/FORM dan verifikasi row EV-Bike ter-overlay + `TAT` terisi dari derivasi tanggal.
+  4. cek log `EVBIKE_METRICS` untuk melihat `submission_overlay` > 0 pada run uji.
+
+### 4) Report Base sync
+- Scope: refresh `Report Base` dari `Overview Claim` tetap sinkron untuk `Service Center` dan `PIC`.
+- UAT:
+  1. jalankan MAIN end-to-end.
+  2. pilih sampel claim dari beberapa posisi (Start/Finish/SC/Exclusion).
+  3. cocokkan `Claim Number`, `Position`, `Service Center`, dan `PIC` antara `Overview Claim` vs `Report Base`.
+  4. pastikan tidak ada duplikasi claim di `Report Base`.
+
+### 5) Gate sebelum release
+- Semua flow `runSelfCheck_()` harus `ok=true`.
+- Tidak ada warning baru terkait simbol kritikal pipeline.
+- UAT 1-4 di atas lulus minimal pada 3 sampel claim berbeda.
+
+
+## Recent hardening notes (2026-04-27)
+
+Catatan ini dipakai sebagai quick-reference maintenance (bukan detail desain):
+
+- Routing/position: `DONE_EXPIRED` harus tetap konsisten ke domain `Exclusion` (hindari drift antara routing map vs position map).
+- `Submission by Month` diperlakukan sebagai label bulan (`MMM yy`) dan disimpan sebagai text untuk mencegah auto-coercion jadi date serial.
+- Optional sheets (B2B/EV-Bike): excluded-status filtering wajib case-insensitive agar aman terhadap variasi casing dari source.
+- B2B partner matching sudah include tambahan partner enterprise terbaru (Bhinneka/PSMS/DIGIMAP EnE/Parastar/GSE/KPD/Tukar Ind/Bumilindo).
+
+Saat ada update policy berikutnya, cek ulang 3 titik ini secara berurutan:
+1. `00_Config.gs` (policy source of truth)
+2. `05c_Pipeline_OptionalSheets.gs` (matching + fallback behavior)
+3. `06b/06c` (formatting & report propagation)

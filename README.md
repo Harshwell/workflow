@@ -8,6 +8,19 @@ Dokumen ini sengaja dibuat tetap ramping. Untuk self-project, dokumentasi yang e
 
 ---
 
+
+## Update implementasi terbaru (2026-04-27)
+
+Tambahan update setelah batch Part 9:
+
+- `POSITION_BY_LAST_STATUS['DONE_EXPIRED']` disejajarkan ke `Exclusion` agar konsisten dengan routing sheet Exclusion.
+- `Submission by Month` dipaksa sebagai text (`MMM yy`) di operational/report path untuk mencegah coercion jadi tanggal `1`.
+- normalisasi kolom bulan existing ditambahkan saat enforcement layout supaya nilai lama yang keburu kebaca date ikut dibersihkan.
+- hardening optional sheets: excluded-status check di B2B & EV-Bike sekarang case-insensitive (normalisasi uppercase sebelum compare).
+- partner mapping B2B diperluas sesuai kebutuhan operasional terbaru: `Bhinneka`, `PSMS`, `DIGIMAP EnE`, `Parastar`, `GSE`, `KPD`, `Tukar Ind`, `Bumilindo`.
+
+---
+
 ## Update implementasi terbaru (2026-03-30)
 
 Perubahan terbaru yang sudah masuk ke script:
@@ -19,6 +32,8 @@ Perubahan terbaru yang sudah masuk ke script:
 - perbaikan mapping `Submission Date` (MAIN + SUB) agar lebih toleran pada variasi header source
 - SUB reset workflow columns (`Update Status`, `Timestamp`, `Status`, `Remarks`) saat `Last Status` berubah
 - optional sheet schema self-heal untuk `B2B` dan `EV-Bike` pada kolom `Claim Number`, `Start Date`, `End Date`, `Details`
+- tambah final pass hardening check di `runSelfCheck_` untuk area UAT Part 9 (manual reset, B2B fallback, EV-Bike overlay, Report Base sync)
+- tambah UAT checklist MAIN/SUB/FORM Part 9 di `docs/WORKFLOW_MAP.md`
 
 ---
 
