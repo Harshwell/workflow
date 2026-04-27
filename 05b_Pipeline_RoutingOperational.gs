@@ -1161,16 +1161,23 @@ function buildSheetWriters_(ss, routingMap, headerIndexRaw, pic) {
 
         // Dates (submission)
         if (idxH['Submission Date'] != null) {
-          // Source of truth remains ONE field: claim_submitted_datetime.
-          // Only tolerate formatting variants of this exact header name.
-          const rawSubmissionVal = getRawByCanonicalKey(rawRow, 'claim_submitted_datetime');
+          // Source can come from datetime (SUB) or date-only (MAIN/form) exports.
+          const rawSubmissionVal = getRawAny(rawRow, [
+            'claim_submitted_datetime',
+            'claim_submission_date',
+            'submission_date',
+            'Submission Date'
+          ]);
           const d = coerceDate_(rawSubmissionVal);
           // IMPORTANT: never blank-out when parser misses a valid source representation.
           // Keep raw value as fallback so Submission Date is still populated.
           set('Submission Date', d ? d : (rawSubmissionVal != null ? rawSubmissionVal : ''));
         }
         if (idxH['Submission Datetime'] != null) {
-          const rawSubmissionDatetimeVal = getRawByCanonicalKey(rawRow, 'claim_submitted_datetime');
+          const rawSubmissionDatetimeVal = getRawAny(rawRow, [
+            'claim_submitted_datetime',
+            'claim_submission_date'
+          ]);
           const dt = coerceDateTime_(rawSubmissionDatetimeVal);
           set('Submission Datetime', dt ? dt : '');
         }

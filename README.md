@@ -14,10 +14,12 @@ Dokumen ini sengaja dibuat tetap ramping. Untuk self-project, dokumentasi yang e
 Tambahan update setelah batch Part 9:
 
 - `POSITION_BY_LAST_STATUS['DONE_EXPIRED']` disejajarkan ke `Exclusion` agar konsisten dengan routing sheet Exclusion.
-- `Submission by Month` dipaksa sebagai text (`MMM yy`) di operational/report path untuk mencegah coercion jadi tanggal `1`.
-- normalisasi kolom bulan existing ditambahkan saat enforcement layout supaya nilai lama yang keburu kebaca date ikut dibersihkan.
+- `Submission by Month` sekarang disimpan sebagai **date** (tanggal 1 tiap bulan) dengan display format `MMM yy` di operational + Report Base.
+- normalisasi kolom bulan existing ditambahkan saat enforcement layout supaya nilai lama (text/date campur) dikonversi konsisten jadi date-format bulan.
 - hardening optional sheets: excluded-status check di B2B & EV-Bike sekarang case-insensitive (normalisasi uppercase sebelum compare).
 - partner mapping B2B diperluas sesuai kebutuhan operasional terbaru: `Bhinneka`, `PSMS`, `DIGIMAP EnE`, `Parastar`, `GSE`, `KPD`, `Tukar Ind`, `Bumilindo`.
+- fallback `Submission Date` diperketat untuk skenario MAIN/SUB: prioritas `claim_submitted_datetime`, fallback aman ke `claim_submission_date`/`submission_date`.
+- routing `Exclusion` ditambah status: `INSURANCE_CLAIM_WAITING_PAID` dan `CLAIM_CANCELLED` (termasuk position/excluded set).
 
 ---
 

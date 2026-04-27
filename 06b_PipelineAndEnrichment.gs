@@ -593,6 +593,20 @@ function normalizeSubmissionMonthName06b_(v) {
   return month.substr(0, 3);
 }
 
+function toSubmissionMonthDate06b_(v) {
+  const txt = normalizeSubmissionMonthName06b_(v);
+  if (!txt) return '';
+  const m = txt.match(/^([A-Za-z]{3})\s+(\d{2})$/);
+  if (!m) return '';
+  const monthMap = { Jan: 0, Feb: 1, Mar: 2, Apr: 3, May: 4, Jun: 5, Jul: 6, Aug: 7, Sep: 8, Oct: 9, Nov: 10, Dec: 11 };
+  const mm = monthMap[m[1]];
+  if (mm == null) return '';
+  const yy = Number(m[2]);
+  if (!isFinite(yy)) return '';
+  const yyyy = yy >= 70 ? (1900 + yy) : (2000 + yy);
+  return new Date(yyyy, mm, 1, 0, 0, 0, 0);
+}
+
 function deriveServiceCenterPic06b_(serviceCenterName) {
   const sc = String(serviceCenterName == null ? '' : serviceCenterName).toLowerCase();
   if (!sc) return '';
@@ -965,7 +979,7 @@ function enrichOperationalSheetsFromRaw06_(ss, rawValues, headerIndexRaw, pic, o
       }
       if (outSubmissionMonth) {
         const monthSource = (idxSubmissionDateRaw != null ? rawGet(idxSubmissionDateRaw) : '') || (idxSubmissionMonthRaw != null ? rawGet(idxSubmissionMonthRaw) : '');
-        outSubmissionMonth[r] = [ normalizeSubmissionMonthName06b_(monthSource) ];
+        outSubmissionMonth[r] = [ toSubmissionMonthDate06b_(monthSource) || '' ];
       }
       if (outServiceCenterPic) outServiceCenterPic[r] = [ deriveServiceCenterPic06b_(scNameVal) ];
 
@@ -1009,8 +1023,7 @@ function enrichOperationalSheetsFromRaw06_(ss, rawValues, headerIndexRaw, pic, o
     setCol(idxLastStatusDateOps, outLastStatusDate, dtFmt);
 
     setCol(idxStatusTypeOps, outStatusType, null);
-    // Force text format so month labels never become day-1 dates (e.g. "1 Mar 26").
-    setCol(idxSubmissionMonthOps, outSubmissionMonth, '@');
+    setCol(idxSubmissionMonthOps, outSubmissionMonth, 'MMM yy');
     setCol(idxServiceCenterPicOps, outServiceCenterPic, null);
   });
 }
@@ -1165,6 +1178,8 @@ function __resolveEnrichRawIndexes06b_(headerIndexRaw) {
       (CONFIG && CONFIG.headers && (CONFIG.headers.claimSubmissionDate || CONFIG.headers.claim_submission_date)) ? (CONFIG.headers.claimSubmissionDate || CONFIG.headers.claim_submission_date) : null,
       'claim_submission_date',
       'claim_submitted_datetime',
+      'submission_date',
+      'claim_submitted_date',
       'Submission Date'
     ]),
     idxActivityLogRaw: resolveRawIdx06_(headerIndexRaw, [
