@@ -2041,7 +2041,13 @@ function __updateOperationalSheetsFromRaw06a_(ss, sheetNames, rawMap, ctx) {
 
       // Enforce SUB datetime format if Last Status Date exists.
       if (idxLastStatusDate >= 0) {
-        try { sh.getRange(2, idxLastStatusDate + 1, numDataRows, 1).setNumberFormat((typeof FORMATS !== 'undefined' && FORMATS && (FORMATS.DATETIME_LONG || FORMATS.DATETIME)) ? (FORMATS.DATETIME_LONG || FORMATS.DATETIME) : 'dd MMM yy, HH:mm'); } catch (eFmt) {}
+        const isScUniverse = /^SC\s*-\s*/i.test(name || '');
+        const dtFmt = isScUniverse
+          ? 'mmm d, yyyy, h:mm AM/PM'
+          : ((typeof FORMATS !== 'undefined' && FORMATS && (FORMATS.DATETIME_LONG || FORMATS.DATETIME))
+            ? (FORMATS.DATETIME_LONG || FORMATS.DATETIME)
+            : 'dd MMM yy, HH:mm');
+        try { sh.getRange(2, idxLastStatusDate + 1, numDataRows, 1).setNumberFormat(dtFmt); } catch (eFmt) {}
       }
     }
 
