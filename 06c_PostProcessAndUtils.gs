@@ -1141,7 +1141,7 @@ function __formatSubmissionMonthReportBase06_(submissionDateVal) {
   const d = __parseAnyDateReportBase06_(submissionDateVal);
   if (!d) return '';
   const tz = (Session && Session.getScriptTimeZone) ? (Session.getScriptTimeZone() || 'Asia/Jakarta') : 'Asia/Jakarta';
-  try { return Utilities.formatDate(d, tz, 'MMMM yyyy'); } catch (e) {}
+  try { return Utilities.formatDate(d, tz, 'MMM yy'); } catch (e) {}
   return '';
 }
 
@@ -1222,6 +1222,34 @@ function __fillBranchFromServiceCenter06_(sh) {
   return touched;
 }
 
+function __normalizeSubmissionByMonthColumn06_(sh) {
+  if (!sh || DRY_RUN) return 0;
+  const lr = sh.getLastRow();
+  const lc = sh.getLastColumn();
+  if (lr < 2 || lc < 1) return 0;
+  const header = sh.getRange(1, 1, 1, lc).getValues()[0].map(__normalizeHeaderText06_);
+  const idx = __findHeaderIndexFlexible06_(header, 'Submission by Month');
+  if (idx === -1) return 0;
+
+  const n = lr - 1;
+  const rg = sh.getRange(2, idx + 1, n, 1);
+  const vals = rg.getValues();
+  let touched = 0;
+  for (let i = 0; i < vals.length; i++) {
+    const cur = vals[i][0];
+    const norm = normalizeSubmissionMonthName06b_(cur);
+    if (String(cur == null ? '' : cur).trim() !== String(norm || '').trim()) {
+      vals[i][0] = norm;
+      touched++;
+    }
+  }
+  if (touched > 0) {
+    try { rg.setValues(vals); } catch (e) {}
+  }
+  try { rg.setNumberFormat('@'); } catch (e2) {}
+  return touched;
+}
+
 function enforceOperationalLayout06_(ss) {
   if (!ss || DRY_RUN) return { touched: 0 };
   const monthSheets = ['Submission', 'Ask Detail', 'Start', 'SC - Farhan', 'SC - Meilani', 'SC - Meindar', 'Finish', 'PO', 'Exclusion'];
@@ -1230,6 +1258,7 @@ function enforceOperationalLayout06_(ss) {
     const sh = ss.getSheetByName(monthSheets[i]);
     if (!sh) continue;
     if (__ensureHeaderAtColumn06_(sh, 'Submission by Month', 2)) touched++;
+    touched += __normalizeSubmissionByMonthColumn06_(sh);
   }
   ['Start', 'Finish'].forEach(name => {
     const sh = ss.getSheetByName(name);
@@ -1381,6 +1410,7 @@ function refreshReportBaseFromOperational06_(ss, opts) {
     if (rows.length) {
       sh.getRange(2, 1, rows.length, headers.length).setValues(rows);
       try { sh.getRange(2, 1, rows.length, 1).setNumberFormat('dd MMM yy'); } catch (e1) {}
+      try { sh.getRange(2, 2, rows.length, 1).setNumberFormat('@'); } catch (eM1) {}
       try { sh.getRange(2, 5, rows.length, 1).setNumberFormat('dd MMM yy, HH:mm'); } catch (e2) {}
     }
     return { written: rows.length, sheets: srcSheets.length, mode: 'full-rewrite' };
@@ -1416,6 +1446,7 @@ function refreshReportBaseFromOperational06_(ss, opts) {
   if (existing.length) {
     sh.getRange(2, 1, existing.length, headers.length).setValues(existing);
     try { sh.getRange(2, 1, existing.length, 1).setNumberFormat('dd MMM yy'); } catch (e3) {}
+    try { sh.getRange(2, 2, existing.length, 1).setNumberFormat('@'); } catch (eM2) {}
     try { sh.getRange(2, 5, existing.length, 1).setNumberFormat('dd MMM yy, HH:mm'); } catch (e4) {}
   }
   return { written: upserted, totalRows: existing.length, sheets: srcSheets.length, mode: 'incremental-upsert' };

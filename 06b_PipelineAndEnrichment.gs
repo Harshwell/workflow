@@ -1009,7 +1009,8 @@ function enrichOperationalSheetsFromRaw06_(ss, rawValues, headerIndexRaw, pic, o
     setCol(idxLastStatusDateOps, outLastStatusDate, dtFmt);
 
     setCol(idxStatusTypeOps, outStatusType, null);
-    setCol(idxSubmissionMonthOps, outSubmissionMonth, null);
+    // Force text format so month labels never become day-1 dates (e.g. "1 Mar 26").
+    setCol(idxSubmissionMonthOps, outSubmissionMonth, '@');
     setCol(idxServiceCenterPicOps, outServiceCenterPic, null);
   });
 }

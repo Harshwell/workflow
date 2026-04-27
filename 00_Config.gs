@@ -1081,7 +1081,7 @@ const POSITION_BY_LAST_STATUS = Object.freeze({
   'QOALA_CLAIM_ASK_DETAIL': 'Front',
   'QOALA_CLAIM_RESUBMIT_DOC': 'Front',
   'WAITING_PAYMENT': 'Front',
-  'DONE_EXPIRED': 'Front',
+  'DONE_EXPIRED': 'Exclusion',
   'WAITING_WALKIN_START': 'Front',
   'WAITING_COURIER_START': 'Expedition',
   'COURIER_PICKED_UP': 'Front',
