@@ -542,6 +542,23 @@ function processSpecialCase_(ss, rawValues, headerIndexRaw, pic) { // `pic` kept
   let header = __getHeaderRow05c_(sh);
   let idxH = buildHeaderIndex_(header);
 
+  // EV-Bike cleanup: remove deprecated columns if present.
+  try {
+    const dropCols = new Set(['Start Date', 'End Date', 'Details'].map(__normalizeHeaderText05c_));
+    const toDelete = [];
+    for (let i = 0; i < header.length; i++) {
+      const hk = __normalizeHeaderText05c_(header[i]);
+      if (dropCols.has(hk)) toDelete.push(i + 1);
+    }
+    for (let i = toDelete.length - 1; i >= 0; i--) {
+      sh.deleteColumn(toDelete[i]);
+    }
+    if (toDelete.length) {
+      header = __getHeaderRow05c_(sh);
+      idxH = buildHeaderIndex_(header);
+    }
+  } catch (eDrop) {}
+
   // Ensure mandatory Status Type only when this sheet schema includes Last Status.
   if (idxH['Last Status'] != null) {
     header = __ensureAppendColumnIfMissing05c_(sh, header, 'Status Type');
@@ -1043,25 +1060,28 @@ function processEVBike_(ss, rawValues, headerIndexRaw, pic) { // `pic` kept for 
   let header = __getHeaderRow05c_(sh);
   let idxH = buildHeaderIndex_(header);
 
+  // Remove deprecated EV-Bike columns when still present.
+  try {
+    const dropSet = new Set(['Start Date', 'End Date', 'Details'].map(__normalizeHeaderText05c_));
+    const toDelete = [];
+    for (let i = 0; i < header.length; i++) {
+      if (dropSet.has(__normalizeHeaderText05c_(header[i]))) toDelete.push(i + 1);
+    }
+    for (let i = toDelete.length - 1; i >= 0; i--) {
+      sh.deleteColumn(toDelete[i]);
+    }
+    if (toDelete.length) {
+      header = __getHeaderRow05c_(sh);
+      idxH = buildHeaderIndex_(header);
+    }
+  } catch (eDrop) {}
+
   // Ensure mandatory Status Type only when this sheet schema includes Last Status.
   if (idxH['Last Status'] != null) {
     header = __ensureAppendColumnIfMissing05c_(sh, header, 'Status Type');
     idxH = buildHeaderIndex_(header);
   }
-  // Schema guard + self-heal for required computed columns.
-  try {
-    const need = ['Claim Number','Start Date','End Date','Details'].map(__normalizeHeaderText05c_);
-    const missing = need.filter(n => idxH[n] == null);
-    if (missing.length) {
-      for (let mi = 0; mi < missing.length; mi++) {
-        header = __ensureAppendColumnIfMissing05c_(sh, header, missing[mi]);
-      }
-      idxH = buildHeaderIndex_(header);
-      if (typeof logLine_ === 'function') {
-        logLine_('WARN', 'EVBIKE_SCHEMA_HEAL', 'Auto-added columns: ' + missing.join(', '), '', '');
-      }
-    }
-  } catch (e) {}
+  // Keep schema flexible: do not force legacy EV-Bike columns (Start Date / End Date / Details).
 
   const patterns = (CONFIG.patterns.evBikePartners || []).map(s => String(s || '').toLowerCase());
   const computeTatFromSubmission_ = (v) => {
