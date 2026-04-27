@@ -1472,7 +1472,8 @@ function __processSubAttachment06a_(masterSs, attachmentBlob, opts) {
     const upd = __updateOperationalSheetsFromRaw06a_(masterSs, operationalSheetNames, map, {
       claimKeyRaw: rawHeader.claim_number,
       fieldsRaw: rawHeader,
-      dbTag: dbTag
+      dbTag: dbTag,
+      masterRawFallbackMap: __buildMasterRawFallbackMap06a_(masterSs)
     });
 
     // Extra: append to Submission after updates for this DB.
@@ -1764,11 +1765,30 @@ function __buildSubRawIndex06a_(values) {
   };
 }
 
+function __buildMasterRawFallbackMap06a_(masterSs) {
+  try {
+    const rawSheetName = (typeof MASTER_RAW_SHEET_NAME !== 'undefined' && MASTER_RAW_SHEET_NAME) ? MASTER_RAW_SHEET_NAME : 'Raw Data';
+    const sh = masterSs ? masterSs.getSheetByName(rawSheetName) : null;
+    if (!sh) return new Map();
+    const lr = sh.getLastRow();
+    const lc = sh.getLastColumn();
+    if (lr < 2 || lc < 1) return new Map();
+    const vals = sh.getRange(1, 1, lr, lc).getValues();
+    const idx = __buildSubRawIndex06a_(vals);
+    return (idx && idx.map) ? idx.map : new Map();
+  } catch (e) {
+    return new Map();
+  }
+}
+
 /** Update operational sheets (4 fields) from raw map by Claim Number. */
 /** Update operational sheets (SUB allowed fields only) from raw map by Claim Number. */
 function __updateOperationalSheetsFromRaw06a_(ss, sheetNames, rawMap, ctx) {
   const names = Array.isArray(sheetNames) ? sheetNames : [];
   const map = (rawMap && typeof rawMap.get === 'function') ? rawMap : new Map();
+  const fallbackMap = (ctx && ctx.masterRawFallbackMap && typeof ctx.masterRawFallbackMap.get === 'function')
+    ? ctx.masterRawFallbackMap
+    : new Map();
   const dbTag = String((ctx && ctx.dbTag) ? ctx.dbTag : '').trim().toUpperCase();
   // Policy lookup (single source of truth: 00.gs)
   const opsPolicy = (typeof OPS_ROUTING_POLICY !== 'undefined' && OPS_ROUTING_POLICY) ? OPS_ROUTING_POLICY : null;
@@ -1940,7 +1960,7 @@ function __updateOperationalSheetsFromRaw06a_(ss, sheetNames, rawMap, ctx) {
 
       if (!cn) continue;
 
-      const rec = map.get(cn);
+      const rec = map.get(cn) || fallbackMap.get(cn);
       if (!rec) continue;
 
       // Only update allowed fields. Do NOT touch other columns.
