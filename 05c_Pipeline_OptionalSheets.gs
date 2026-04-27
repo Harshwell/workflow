@@ -233,6 +233,7 @@ function processB2B_(ss, rawValues, headerIndexRaw, pic) { // `pic` kept for bac
   if (typeof RUNTIME !== 'undefined' && RUNTIME && RUNTIME.enableB2B === false) return 0;
 
   const patterns = (CONFIG.patterns.b2bPartners || []).map(s => String(s || '').toLowerCase());
+  const claimToken = String((CONFIG && CONFIG.B2B_CLAIM_NUMBER_SUBSTRING) || 'SMR').trim().toUpperCase();
   const h = CONFIG.headers;
   const sh = ss.getSheetByName('B2B');
   if (!sh) return 0;
@@ -340,6 +341,7 @@ function processB2B_(ss, rawValues, headerIndexRaw, pic) { // `pic` kept for bac
   const dbLinkCol0 = idxH['DB Link'];
   const rows = [];
   const dbUrls = [];
+  const seenClaims = new Set();
 
   for (let i = 0; i < rawValues.length; i++) {
     const row = rawValues[i];
@@ -351,7 +353,7 @@ function processB2B_(ss, rawValues, headerIndexRaw, pic) { // `pic` kept for bac
     if (OPTIONAL_FLAGS.B2B_SKIP_EXCLUDED_LAST_STATUSES && EXCLUDED_LAST_STATUSES.has(lastStatus)) continue;
 
     const matchPartner = patterns.some(p => p && partnerLower.indexOf(p) > -1);
-    const matchClaim = claimUp.indexOf('SMR') > -1;
+    const matchClaim = claimToken ? (claimUp.indexOf(claimToken) > -1) : false;
     if (!matchPartner && !matchClaim) continue;
 
     const out = new Array(header.length).fill('');
@@ -359,6 +361,7 @@ function processB2B_(ss, rawValues, headerIndexRaw, pic) { // `pic` kept for bac
 
     set('Submission Date', buildSubmissionDateCell_(row, headerIndexRaw));
     set('Claim Number', (idxClaim != null) ? row[idxClaim] : '');
+    if (claimUp) seenClaims.add(claimUp);
 
     const dbUrl = (idxDashboard != null) ? row[idxDashboard] : '';
     set('DB Link', dbUrl ? 'LINK' : '');
@@ -409,6 +412,58 @@ function processB2B_(ss, rawValues, headerIndexRaw, pic) { // `pic` kept for bac
 
     rows.push(out);
   }
+
+  // Fallback source: Submission sheet (for claims missing in current Raw pull window).
+  try {
+    const subSh = ss.getSheetByName('Submission');
+    if (subSh && subSh.getLastRow() > 1 && subSh.getLastColumn() > 1) {
+      const subHeader = __getHeaderRow05c_(subSh);
+      const subIdx = buildHeaderIndex_(subHeader);
+      const subVals = subSh.getRange(2, 1, subSh.getLastRow() - 1, subHeader.length).getValues();
+      const sClaim = subIdx['Claim Number'];
+      const sPartner = (subIdx['Partner Name'] != null) ? subIdx['Partner Name'] : subIdx['Partner'];
+      const sSubDate = subIdx['Submission Date'];
+      const sDb = subIdx['DB'];
+      const sDbLink = subIdx['DB Link'];
+      const sInsurance = subIdx['Insurance'];
+      const sDevice = subIdx['Device Type'];
+      const sSc = (subIdx['Service Center'] != null) ? subIdx['Service Center'] : subIdx['Service Center Name'];
+      const sLastStatus = subIdx['Last Status'];
+
+      if (sClaim != null) {
+        for (let i = 0; i < subVals.length; i++) {
+          const r = subVals[i] || [];
+          const claim = String(r[sClaim] || '').trim();
+          if (!claim) continue;
+          const claimUp = claim.toUpperCase();
+          if (seenClaims.has(claimUp)) continue;
+          const partner = String((sPartner != null) ? r[sPartner] : '').trim().toLowerCase();
+          const lastStatus = String((sLastStatus != null) ? r[sLastStatus] : '').trim();
+          const matchPartner = patterns.some(p => p && partner.indexOf(p) > -1);
+          const matchClaim = claimToken ? (claimUp.indexOf(claimToken) > -1) : false;
+          if (!matchPartner && !matchClaim) continue;
+          if (OPTIONAL_FLAGS.B2B_SKIP_EXCLUDED_LAST_STATUSES && EXCLUDED_LAST_STATUSES.has(lastStatus)) continue;
+
+          const out = new Array(header.length).fill('');
+          const set = (k, v) => { const j = idxH[k]; if (j != null) out[j] = v; };
+          set('Submission Date', (sSubDate != null) ? r[sSubDate] : '');
+          set('Claim Number', claim);
+          set('DB', (sDb != null) ? r[sDb] : computeDbValueFromClaimNumber05c_(claimUp));
+          set('Partner Name', (sPartner != null) ? r[sPartner] : '');
+          set('Insurance', (sInsurance != null) ? r[sInsurance] : '');
+          set('Device Type', (sDevice != null) ? r[sDevice] : '');
+          set('Service Center', (sSc != null) ? r[sSc] : '');
+          set('Last Status', lastStatus);
+          if (idxH['Status Type'] != null) set('Status Type', __getStatusType05c_(lastStatus));
+          const dbUrl = (sDbLink != null) ? r[sDbLink] : '';
+          set('DB Link', dbUrl ? 'LINK' : '');
+          dbUrls.push(dbUrl);
+          rows.push(out);
+          seenClaims.add(claimUp);
+        }
+      }
+    }
+  } catch (eSub) {}
 
   if (!rows.length) return 0;
   safeSetValues_(sh.getRange(2, 1, rows.length, header.length), rows);
