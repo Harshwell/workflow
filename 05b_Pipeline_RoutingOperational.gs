@@ -1311,6 +1311,9 @@ function buildSheetWriters_(ss, routingMap, headerIndexRaw, pic) {
 }
 
 function clearOperationalSheets_(ss, pic) {
+  const __MANUAL_HEADERS = ['Update Status', 'Timestamp', 'Status', 'Remarks'];
+  if (typeof globalThis.__OPS_MANUAL_SNAPSHOT05B === 'undefined') globalThis.__OPS_MANUAL_SNAPSHOT05B = null;
+
   // Single-master default: treat missing pic as Admin semantics.
   const isAdmin = (pic === 'Admin' || pic == null);
   const sheetsBase = isAdmin ? CONFIG.sheetsByPic.adminOperational : CONFIG.sheetsByPic.picOperational;
@@ -1318,6 +1321,35 @@ function clearOperationalSheets_(ss, pic) {
   try {
     if (ss.getSheetByName('SC - Unmapped') && sheets.indexOf('SC - Unmapped') === -1) sheets.push('SC - Unmapped');
   } catch (e) {}
+
+  // Snapshot manual operational columns before clear.
+  const snapshot = Object.create(null);
+  sheets.forEach(name => {
+    const sh = ss.getSheetByName(name);
+    if (!sh) return;
+    const lr = sh.getLastRow();
+    const lc = sh.getLastColumn();
+    if (lr < 2 || lc < 1) return;
+    const header = sh.getRange(1, 1, 1, lc).getValues()[0].map(v => String(v || '').trim());
+    const idx = buildHeaderIndex_(header);
+    const idxClaim = (idx['Claim Number'] != null) ? idx['Claim Number'] : -1;
+    if (idxClaim < 0) return;
+    const rows = sh.getRange(2, 1, lr - 1, lc).getValues();
+    const byClaim = Object.create(null);
+    for (let r = 0; r < rows.length; r++) {
+      const row = rows[r] || [];
+      const claim = String(row[idxClaim] || '').trim().toUpperCase();
+      if (!claim) continue;
+      if (!byClaim[claim]) byClaim[claim] = {};
+      for (let i = 0; i < __MANUAL_HEADERS.length; i++) {
+        const h = __MANUAL_HEADERS[i];
+        const c = idx[h];
+        byClaim[claim][h] = (c != null) ? row[c] : '';
+      }
+    }
+    snapshot[name] = byClaim;
+  });
+  globalThis.__OPS_MANUAL_SNAPSHOT05B = snapshot;
 
   sheets.forEach(name => {
     const sh = ss.getSheetByName(name);
@@ -1484,6 +1516,27 @@ function routeRawToOperationalSheetsInMemory_(ss, rawValues, headerIndexRaw, pic
     const startRow = 2;
 
     const idxStatus = header.indexOf('Status');
+    const idxClaim = header.indexOf('Claim Number');
+    const idxUpdate = header.indexOf('Update Status');
+    const idxTs = header.indexOf('Timestamp');
+    const idxRemarks = header.indexOf('Remarks');
+    const snapshot = (typeof globalThis.__OPS_MANUAL_SNAPSHOT05B !== 'undefined' && globalThis.__OPS_MANUAL_SNAPSHOT05B && globalThis.__OPS_MANUAL_SNAPSHOT05B[sheetName])
+      ? globalThis.__OPS_MANUAL_SNAPSHOT05B[sheetName]
+      : null;
+
+    if (snapshot && idxClaim !== -1) {
+      for (let i = 0; i < w.rows.length; i++) {
+        const row = w.rows[i] || [];
+        const claim = String(row[idxClaim] || '').trim().toUpperCase();
+        if (!claim || !snapshot[claim]) continue;
+        const prev = snapshot[claim];
+        if (idxUpdate !== -1 && String(row[idxUpdate] || '').trim() === '' && prev['Update Status'] != null && String(prev['Update Status']).trim() !== '') row[idxUpdate] = prev['Update Status'];
+        if (idxTs !== -1 && String(row[idxTs] || '').trim() === '' && prev['Timestamp'] != null && String(prev['Timestamp']).trim() !== '') row[idxTs] = prev['Timestamp'];
+        if (idxStatus !== -1 && String(row[idxStatus] || '').trim() === '' && prev['Status'] != null && String(prev['Status']).trim() !== '') row[idxStatus] = prev['Status'];
+        if (idxRemarks !== -1 && String(row[idxRemarks] || '').trim() === '' && prev['Remarks'] != null && String(prev['Remarks']).trim() !== '') row[idxRemarks] = prev['Remarks'];
+      }
+    }
+
     if (idxStatus === -1) {
       safeSetValues_(sh.getRange(startRow, 1, n, header.length), w.rows);
     } else {
@@ -1534,6 +1587,7 @@ function routeRawToOperationalSheetsInMemory_(ss, rawValues, headerIndexRaw, pic
   }
 
   // Keep old return shape mostly, but remove EV-Bike artifacts.
+  try { globalThis.__OPS_MANUAL_SNAPSHOT05B = null; } catch (e) {}
   return { total, perSheet: routeCount, unknown: unknownStatuses, missingStatus };
 }
 
