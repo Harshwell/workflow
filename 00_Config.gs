@@ -2078,7 +2078,8 @@ const CONFIG = Object.freeze({
   patterns: {
     b2bPartners: [
       'EMG','GDN','Helios','MonsterAR','Buminet','AIMS','AIRMAS','Staffinc',
-      'TIGA JEJAK LANGKAH','WPS','PPS','Archor'
+      'TIGA JEJAK LANGKAH','WPS','PPS','Archor',
+      'Bhinneka','PSMS','DIGIMAP EnE','Parastar','GSE','KPD','Tukar Ind','Bumilindo'
     ],
     specialPartners: ['Renewal Qoala', 'Qoala Monsta'],
     evBikePartners: [

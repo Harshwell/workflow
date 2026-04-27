@@ -357,8 +357,9 @@ function processB2B_(ss, rawValues, headerIndexRaw, pic) { // `pic` kept for bac
     const partnerLower = String((idxBP != null) ? row[idxBP] : '' || '').toLowerCase();
     const claimUp = String((idxClaim != null) ? row[idxClaim] : '' || '').toUpperCase();
     const lastStatus = String((idxLastStatus != null) ? row[idxLastStatus] : '' || '').trim();
+    const lastStatusKey = lastStatus.toUpperCase();
 
-    if (OPTIONAL_FLAGS.B2B_SKIP_EXCLUDED_LAST_STATUSES && EXCLUDED_LAST_STATUSES.has(lastStatus)) {
+    if (OPTIONAL_FLAGS.B2B_SKIP_EXCLUDED_LAST_STATUSES && EXCLUDED_LAST_STATUSES.has(lastStatusKey)) {
       skippedExcludedRawCount++;
       continue;
     }
@@ -451,10 +452,11 @@ function processB2B_(ss, rawValues, headerIndexRaw, pic) { // `pic` kept for bac
           if (seenClaims.has(claimUp)) continue;
           const partner = String((sPartner != null) ? r[sPartner] : '').trim().toLowerCase();
           const lastStatus = String((sLastStatus != null) ? r[sLastStatus] : '').trim();
+          const lastStatusKey = lastStatus.toUpperCase();
           const matchPartner = patterns.some(p => p && partner.indexOf(p) > -1);
           const matchClaim = claimToken ? (claimUp.indexOf(claimToken) > -1) : false;
           if (!matchPartner && !matchClaim) continue;
-          if (OPTIONAL_FLAGS.B2B_SKIP_EXCLUDED_LAST_STATUSES && EXCLUDED_LAST_STATUSES.has(lastStatus)) {
+          if (OPTIONAL_FLAGS.B2B_SKIP_EXCLUDED_LAST_STATUSES && EXCLUDED_LAST_STATUSES.has(lastStatusKey)) {
             skippedExcludedSubmissionCount++;
             continue;
           }
@@ -1263,8 +1265,9 @@ function processEVBike_(ss, rawValues, headerIndexRaw, pic) { // `pic` kept for 
     if (seenClaims.has(claimUp)) continue;
     seenClaims.add(claimUp);
     const lastStatus = String((idxLastStatus != null) ? row[idxLastStatus] : '' || '').trim();
+    const lastStatusKey = lastStatus.toUpperCase();
 
-    if (OPTIONAL_FLAGS.EVBIKE_SKIP_EXCLUDED_LAST_STATUSES && EXCLUDED_LAST_STATUSES.has(lastStatus)) {
+    if (OPTIONAL_FLAGS.EVBIKE_SKIP_EXCLUDED_LAST_STATUSES && EXCLUDED_LAST_STATUSES.has(lastStatusKey)) {
       evSkippedExcludedCount++;
       continue;
     }
