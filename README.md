@@ -8,6 +8,15 @@ Dokumen ini sengaja dibuat tetap ramping. Untuk self-project, dokumentasi yang e
 
 ---
 
+## Update implementasi terbaru (2026-05-03)
+
+Tambahan update setelah perapihan mapping SC `Report Base`:
+
+- mapping PIC `Middle` diperluas agar SC berikut tidak jatuh ke `Unknown`: `MDP`, `PT DELTASINDO...` (`deltasindo`), `EzCare` / `EZ Care`, dan `B-Store` (diarahkan ke `Meindar`).
+- autofill `Branch` di sheet SC ditambah aturan: `MDP` -> `MDP` dan `PT DELTASINDO...` (`deltasindo`) -> `Deltafone`.
+
+---
+
 
 ## Update implementasi terbaru (2026-04-27)
 

@@ -5,6 +5,14 @@ Formatnya sengaja sederhana: **Added / Changed / Fixed**. Tidak perlu sok formal
 
 ---
 
+## 2026-05-03
+
+### Changed
+- Normalisasi mapping SC di `Report Base` untuk menutup gap `Unknown`: keyword `MDP`, `PT DELTASINDO...` (`deltasindo`), `EzCare`/`EZ Care`, dan `B-Store` sekarang konsisten masuk jalur PIC `Meindar`.
+- Autofill kolom `Branch` di SC sheets diperluas: `MDP` -> `MDP`, dan `PT DELTASINDO...` (`deltasindo`) -> `Deltafone`.
+
+---
+
 ## 2026-04-27
 
 ### Changed
