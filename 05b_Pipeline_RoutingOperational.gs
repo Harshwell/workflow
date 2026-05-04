@@ -864,6 +864,15 @@ function applyOperationalClaimHighlightsByRaw_(ss, rawValues, headerIndexRaw, pi
   const flexNoteAlt = new Set([flexNote, 'FLEX claim.', 'Flex claim.']);
   const dupPrefix = String((policy.duplicate && policy.duplicate.notePrefix) || 'Duplicate Claim - Refer to Claim Number');
 
+  const __matchNoteLabel05b_ = (noteText, label) => {
+    const n = String(noteText || '').trim();
+    const l = String(label || '').trim();
+    if (!n || !l) return false;
+    const strip = s => String(s || '').trim().replace(/[.:]+$/g, '');
+    const nn = strip(n);
+    const ll = strip(l);
+    return nn === ll || nn.indexOf(ll + '\n') === 0;
+  };
 
   const markerFromNote_ = (note) => {
     const n = String(note || '').trim();
@@ -871,9 +880,9 @@ function applyOperationalClaimHighlightsByRaw_(ss, rawValues, headerIndexRaw, pi
     if (n.indexOf(dupPrefix) === 0) return 'duplicate';
     if (n === expiredNote) return 'expired';
     if (n === b2bNote) return 'b2b';
-    if (n === secondYearNote || n.indexOf(secondYearNote + '\n') === 0) return 'secondYear';
-    if (n === firstMonthPolicyNote || n.indexOf(firstMonthPolicyNote + '\n') === 0) return 'firstMonthPolicy';
-    if (n === remaining1MonthNote) return 'remaining1Month';
+    if (__matchNoteLabel05b_(n, secondYearNote) || __matchNoteLabel05b_(n, 'Second-Year (Market Value)')) return 'secondYear';
+    if (__matchNoteLabel05b_(n, firstMonthPolicyNote) || __matchNoteLabel05b_(n, 'First-Month Policy')) return 'firstMonthPolicy';
+    if (__matchNoteLabel05b_(n, remaining1MonthNote) || __matchNoteLabel05b_(n, 'Policy Remaining <= 1 Month')) return 'remaining1Month';
     if (flexNoteAlt.has(n)) return 'flex';
     return null;
   };

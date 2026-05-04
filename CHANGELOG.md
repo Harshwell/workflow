@@ -5,6 +5,14 @@ Formatnya sengaja sederhana: **Added / Changed / Fixed**. Tidak perlu sok formal
 
 ---
 
+## 2026-05-04
+
+### Fixed
+- `processB2B_` tidak lagi membersihkan isi sheet sebelum ada row pengganti. Ini mencegah kondisi sheet `B2B` jadi header-only saat run tertentu tidak menghasilkan kandidat row (mis. jendela Raw sementara kosong / semua row terfilter).
+- Highlight claim number untuk flag `Second-Year (Market Value)`, `First-Month Policy`, dan `Policy Remaining <= 1 Month` kini tetap mewarnai sel walau note detail memakai varian label tanpa tanda titik (normalisasi matcher note dibuat toleran).
+
+---
+
 ## 2026-05-03
 
 ### Changed

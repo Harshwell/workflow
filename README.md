@@ -8,6 +8,15 @@ Dokumen ini sengaja dibuat tetap ramping. Untuk self-project, dokumentasi yang e
 
 ---
 
+## Update implementasi terbaru (2026-05-04)
+
+Tambahan fix untuk stabilitas optional sheet:
+
+- `B2B` sekarang **tidak di-clear duluan**. Data hanya di-rebuild saat ada row hasil filter yang siap ditulis. Ini mencegah kondisi sheet jadi header-only ketika source run sementara kosong atau semua row ter-filter.
+- matcher highlight berdasarkan note untuk `Second-Year (Market Value)`, `First-Month Policy`, dan `Policy Remaining <= 1 Month` dibuat lebih toleran (dengan/tanpa tanda titik), supaya kasus note tampil tapi warna kosong tidak terjadi lagi.
+
+---
+
 ## Update implementasi terbaru (2026-05-03)
 
 Tambahan update setelah perapihan mapping SC `Report Base`:
