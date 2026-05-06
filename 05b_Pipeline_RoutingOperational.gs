@@ -1172,15 +1172,23 @@ function buildSheetWriters_(ss, routingMap, headerIndexRaw, pic) {
         if (idxH['Submission Date'] != null) {
           // Source can come from datetime (SUB) or date-only (MAIN/form) exports.
           const rawSubmissionVal = getRawAny(rawRow, [
-            'claim_submitted_datetime',
             'claim_submission_date',
-            'submission_date',
-            'Submission Date'
+            'claim submission date'
           ]);
-          const d = coerceDate_(rawSubmissionVal);
-          // IMPORTANT: never blank-out when parser misses a valid source representation.
-          // Keep raw value as fallback so Submission Date is still populated.
-          set('Submission Date', d ? d : (rawSubmissionVal != null ? rawSubmissionVal : ''));
+          let d = coerceDate_(rawSubmissionVal);
+          if (!d && rawSubmissionVal != null && rawSubmissionVal !== '') {
+            const s = String(rawSubmissionVal || '').trim();
+            if (s) {
+              try { d = parseClaimLastUpdatedDatetime06b_(s); } catch (e0) {}
+              if (!d && typeof normalizeDate_ === 'function') {
+                try { d = normalizeDate_(s); } catch (e1) {}
+              }
+              if (!d && typeof tryNativeParseUnambiguousDate_ === 'function') {
+                try { d = tryNativeParseUnambiguousDate_(s); } catch (e2) {}
+              }
+            }
+          }
+          set('Submission Date', (d && !isNaN(d.getTime())) ? d : '');
         }
         if (idxH['Submission Datetime'] != null) {
           const rawSubmissionDatetimeVal = getRawAny(rawRow, [

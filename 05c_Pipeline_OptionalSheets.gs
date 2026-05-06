@@ -652,9 +652,9 @@ function processSpecialCase_(ss, rawValues, headerIndexRaw, pic) { // `pic` kept
     header = __ensureAppendColumnIfMissing05c_(sh, header, 'Status Type');
     idxH = buildHeaderIndex_(header);
   }
-  // Schema guard (no auto-add columns). Missing columns are logged and simply skipped.
+  // Schema guard (minimal). Legacy columns (Start Date/End Date/Details) are optional.
   try {
-    const need = ['Claim Number','Start Date','End Date','Details'].map(__normalizeHeaderText05c_);
+    const need = ['Claim Number'].map(__normalizeHeaderText05c_);
     const missing = need.filter(n => idxH[n] == null);
     if (missing.length && typeof logLine_ === 'function') {
       logLine_('ERROR', 'SPECIAL_CASE_SCHEMA_MISSING', 'Missing columns: ' + missing.join(', '), '', '');
@@ -790,6 +790,7 @@ function processSpecialCase_(ss, rawValues, headerIndexRaw, pic) { // `pic` kept
   const rowsOut = [];
   const claimColors = [];
   const claimNotes = [];
+  const reasonNotes = [];
   const dbUrls = [];
 
   for (let i = 0; i < rawValues.length; i++) {
@@ -937,7 +938,8 @@ function processSpecialCase_(ss, rawValues, headerIndexRaw, pic) { // `pic` kept
     if (ps0) set('Start Date', ps0);
     if (pe0) set('End Date', pe0);
 
-    // Details (only for First-Month / Policy Remaining <= 1 Month / Second-Year)
+    // Detail explanation (for note + optional Details column)
+    let detailNote = '';
     try {
       const fmt2y = (typeof formatShortDate2y_ === 'function')
         ? formatShortDate2y_
@@ -968,7 +970,10 @@ function processSpecialCase_(ss, rawValues, headerIndexRaw, pic) { // `pic` kept
         parts.push(lines.join('\n'));
       }
 
-      if (parts.length) set('Details', parts.join('\n\n'));
+      if (parts.length) {
+        detailNote = parts.join('\n\n');
+        set('Details', detailNote);
+      }
     } catch (e) {}
 
     // Color/Note in Special Case:
@@ -984,6 +989,7 @@ try {
   claimNotes.push(parts2.length ? ('Special Case: ' + parts2.join(' | ')) : '');
 } catch (e) { claimNotes.push(''); }
 rowsOut.push(out);
+    reasonNotes.push(detailNote || '');
     dbUrls.push(dbUrl);
     claimColors.push(color);
   }
@@ -1034,6 +1040,7 @@ rowsOut.push(out);
     const urlMap = {};
     const colorMap = {};
     const noteMap = {};
+    const reasonNoteMap = {};
     const updatedRowNums = [];
     const appendRows = [];
     const appendUrls = [];
@@ -1054,6 +1061,7 @@ rowsOut.push(out);
         urlMap[existingRowNum] = dbUrls[r];
         colorMap[existingRowNum] = claimColors[r];
         noteMap[existingRowNum] = claimNotes[r];
+        reasonNoteMap[existingRowNum] = reasonNotes[r];
         updatedRowNums.push(existingRowNum);
       } else {
         appendRows.push(out);
@@ -1068,6 +1076,8 @@ rowsOut.push(out);
       if (dbLinkCol0 > -1) __setDbLinkRichTextSegments_(sh, dbLinkCol0, updatedRowNums, urlMap);
       if (SPECIAL_FLAGS.COLORIZE_CLAIM_CELL && claimCol0 > -1) __setBgSegments_(sh, claimCol0, updatedRowNums, colorMap);
       if (SPECIAL_FLAGS.COLORIZE_CLAIM_CELL && claimCol0 > -1) __setNotesSegments_(sh, claimCol0, updatedRowNums, noteMap);
+      const reasonCol0 = (idxH['Reason'] != null) ? idxH['Reason'] : -1;
+      if (reasonCol0 > -1) __setNotesSegments_(sh, reasonCol0, updatedRowNums, reasonNoteMap);
 
       // Apply formats only to updated blocks (cheap)
       const segs = __groupConsecutive_(updatedRowNums);
@@ -1086,6 +1096,10 @@ rowsOut.push(out);
         sh.getRange(startRow, claimCol0 + 1, appendRows.length, 1)
           .setBackgrounds(appendColors.map(c => [c || '']));
         try { sh.getRange(startRow, claimCol0 + 1, appendRows.length, 1).setNotes(appendNotes.map(n => [n || ''])); } catch (e) {}
+      }
+      const reasonCol0 = (idxH['Reason'] != null) ? idxH['Reason'] : -1;
+      if (reasonCol0 > -1 && !__isDryRun05c__()) {
+        try { sh.getRange(startRow, reasonCol0 + 1, appendRows.length, 1).setNotes(reasonNotes.slice(0, appendRows.length).map(n => [n || ''])); } catch (e) {}
       }
       applyOperationalColumnSchema_(sh, header, startRow, appendRows.length, { orIsMoney: false });
       applyDbLinkFormatting_(sh, header, appendRows.length, startRow);
@@ -1106,6 +1120,10 @@ rowsOut.push(out);
     sh.getRange(startRow, claimCol0 + 1, rowsOut.length, 1)
       .setBackgrounds(claimColors.map(c => [c || '']));
     try { sh.getRange(startRow, claimCol0 + 1, rowsOut.length, 1).setNotes(claimNotes.map(n => [n || ''])); } catch (e) {}
+  }
+  const reasonCol0 = (idxH['Reason'] != null) ? idxH['Reason'] : -1;
+  if (reasonCol0 > -1 && !__isDryRun05c__()) {
+    try { sh.getRange(startRow, reasonCol0 + 1, rowsOut.length, 1).setNotes(reasonNotes.map(n => [n || ''])); } catch (e) {}
   }
 
   applyOperationalColumnSchema_(sh, header, startRow, rowsOut.length, { orIsMoney: false });

@@ -82,6 +82,11 @@ function runPipeline_(pic, fileIds, opts) {
 
   const mainDataRaw = parseUploadedFile_(buckets.main[0], 'PARSE_MAIN');
   const mainData = coerceDatasetToRawSchema_(mainDataRaw);
+  let sourceFileName = '';
+  try { sourceFileName = String(DriveApp.getFileById(String(buckets.main[0])).getName() || ''); } catch (eSf) {}
+  const snapshotDate = (typeof extractSnapshotDateFromFileName_ === 'function')
+    ? (extractSnapshotDateFromFileName_(sourceFileName) || '')
+    : '';
 
   let agingStdMap = null, agingMap = null;
   if (buckets.agingStd.length) {
@@ -452,6 +457,24 @@ function runPipeline_(pic, fileIds, opts) {
   try {
     if (typeof refreshReportBaseFromOperational06_ === 'function') refreshReportBaseFromOperational06_(ss);
   } catch (eRb) { try { logLine_('WARN', 'Report Base refresh failed', '', String(eRb), 'WARN'); } catch (e2) {} }
+  try {
+    SpreadsheetApp.flush();
+    Utilities.sleep(3000);
+    if (typeof fillWeeklyReportBase === 'function') fillWeeklyReportBase(snapshotDate || '', sourceFileName || '', ss);
+  } catch (eWrb) { try { logLine_('WARN', 'Weekly Report Base refresh failed', '', String(eWrb), 'WARN'); } catch (e2) {} }
+  try {
+    const ops = (typeof getOperationalSheetNames06b_ === 'function') ? getOperationalSheetNames06b_(profileName) : [];
+    const optional = ['B2B', 'EV-Bike', 'Special Case', 'Daily Report Base', 'Weekly Report Base'];
+    const seen = Object.create(null);
+    ops.concat(optional).forEach(function(name) {
+      const n = String(name || '').trim();
+      if (!n || seen[n]) return;
+      seen[n] = true;
+      const sh = ss.getSheetByName(n);
+      if (!sh) return;
+      if (typeof __expandSheetFilterToUsedRange06_ === 'function') __expandSheetFilterToUsedRange06_(sh);
+    });
+  } catch (eFlt) { try { logLine_('WARN', 'Filter range sync failed', '', String(eFlt), 'WARN'); } catch (e2) {} }
 
   setProgress_(1.0, 'Done.');
   logLine_(
@@ -1175,12 +1198,9 @@ function __resolveEnrichRawIndexes06b_(headerIndexRaw) {
       'Submission by Month'
     ]),
     idxSubmissionDateRaw: resolveRawIdx06_(headerIndexRaw, [
-      (CONFIG && CONFIG.headers && (CONFIG.headers.claimSubmissionDate || CONFIG.headers.claim_submission_date)) ? (CONFIG.headers.claimSubmissionDate || CONFIG.headers.claim_submission_date) : null,
       'claim_submission_date',
-      'claim_submitted_datetime',
-      'submission_date',
-      'claim_submitted_date',
-      'Submission Date'
+      (CONFIG && CONFIG.headers && (CONFIG.headers.claimSubmissionDate || CONFIG.headers.claim_submission_date)) ? (CONFIG.headers.claimSubmissionDate || CONFIG.headers.claim_submission_date) : null,
+      'claim submission date'
     ]),
     idxActivityLogRaw: resolveRawIdx06_(headerIndexRaw, [
       (CONFIG && CONFIG.headers && (CONFIG.headers.lastActivityLog || CONFIG.headers.last_activity_log)) ? (CONFIG.headers.lastActivityLog || CONFIG.headers.last_activity_log) : null,

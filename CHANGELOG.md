@@ -5,6 +5,29 @@ Formatnya sengaja sederhana: **Added / Changed / Fixed**. Tidak perlu sok formal
 
 ---
 
+## 2026-05-06
+
+### Changed
+- `refreshReportBaseFromOperational06_` sekarang menulis 6 helper column tambahan di `Report Base`: `Position Detail`, `Position Detail Order`, `Status Aging Days`, `Status Aging Bucket`, `Submission Aging Days`, dan `Submission Aging Bucket`.
+- Derivasi `Position Detail` dipertegas: case-insensitive + trim-safe, `Middle - Unassigned` saat PIC kosong, serta canonical casing PIC Middle (`Farhan`/`Meilani`/`Meindar`) agar mapping pivot order stabil.
+- `Position Detail Order` memakai mapping konfiguratif + fallback (`Middle - PIC lain` = `3.9`, `Middle - Unassigned` = `3.99`, lainnya = `99`) untuk menjaga urutan pivot tetap deterministic.
+- Tambah proses historis `fillWeeklyReportBase(snapshotDateOverride, sourceFileName)` berbasis agregasi dari `Daily Report Base` ke `Weekly Report Base` (replace-by-snapshot-date, zero-row hilang, recalculate helper previous/change/last7days, sorting final).
+- Hook weekly snapshot di akhir MAIN sekarang membawa konteks file utama (`sourceFileName`) dan snapshot date hasil extract filename (`yyyy-MM-dd` sebelum `T`) saat tersedia.
+- Hardening filter range: setelah write flow MAIN, filter aktif pada operational + optional (`B2B`, `EV-Bike`, `Special Case`) + `Daily/Weekly Report Base` disinkronkan ke full used range tanpa membuang criteria filter yang ada.
+
+### Fixed
+- Enrichment helper di `Report Base` tidak lagi menghitung `Position Detail` dua kali per row (mengurangi duplikasi perhitungan saat build output rows).
+- Mapping PIC `Report Base` untuk position `Middle` kini tahan variasi casing/spacing pada `Position` dan `Service Center` (termasuk newline/karakter non-alfanumerik), sehingga keyword `MDP`/`deltasindo`/`ezcare`/`b-store` tidak lagi mudah jatuh ke `Unknown`.
+- Sinkronisasi snapshot kini kompatibel dengan rename sheet `Report Base` -> `Daily Report Base` (tetap fallback ke nama lama untuk backward compatibility).
+- Recalculate helper `Weekly Report Base` dioptimasi dari scan nested ke map index berbasis `(snapshotDate + dimensi kombinasi)` untuk menurunkan kompleksitas saat histori membesar.
+- `fillWeeklyReportBase` kini menerima `ssOverride` dari MAIN pipeline agar tidak gagal pada konteks non-active spreadsheet (`Spreadsheet tidak ditemukan`).
+- Penulisan `Submission Date` di routing operasional diperketat: hanya menulis nilai yang valid sebagai tanggal (hapus fallback raw string) untuk mencegah nilai non-date (mis. teks bebas) masuk ke kolom tanggal.
+- Source `Submission Date` dipersempit ke `Raw Data.claim_submission_date` sebagai prioritas utama lintas sheet operasional untuk mencegah drift antar-sheet akibat fallback source tanggal lain.
+- `Special Case` schema guard diperingan: `Start Date`/`End Date`/`Details` tidak lagi dianggap mandatory (hilangkan noise error `SPECIAL_CASE_SCHEMA_MISSING` untuk kolom legacy yang tidak dipakai).
+- Detail penjelasan rule (`First-Month`, `Policy Remaining`, `Second-Year`) kini ditulis sebagai **note** di kolom `Reason`, sehingga tetap informatif tanpa ketergantungan kolom tambahan.
+
+---
+
 ## 2026-05-04
 
 ### Fixed
