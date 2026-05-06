@@ -271,18 +271,39 @@ Checklist ini fokus ke area yang paling rawan regressions pas perubahan terakhir
   3. jalankan MAIN/FORM dan verifikasi row EV-Bike ter-overlay + `TAT` terisi dari derivasi tanggal.
   4. cek log `EVBIKE_METRICS` untuk melihat `submission_overlay` > 0 pada run uji.
 
-### 4) Report Base sync
-- Scope: refresh `Report Base` dari `Overview Claim` tetap sinkron untuk `Service Center` dan `PIC`.
+### 4) Daily + Weekly Report Base sync
+- Scope:
+  - refresh `Daily Report Base` (fallback ke `Report Base` lama) dari jalur operasional.
+  - build historis `Weekly Report Base` dari agregasi `Daily Report Base` pada akhir MAIN.
 - UAT:
   1. jalankan MAIN end-to-end.
   2. pilih sampel claim dari beberapa posisi (Start/Finish/SC/Exclusion).
-  3. cocokkan `Claim Number`, `Position`, `Service Center`, dan `PIC` antara `Overview Claim` vs `Report Base`.
-  4. pastikan tidak ada duplikasi claim di `Report Base`.
+  3. cocokkan `Claim Number`, `Position`, `Service Center`, dan `PIC` antara sumber operasional vs `Daily Report Base`.
+  4. pastikan tidak ada duplikasi claim di `Daily Report Base`.
+  5. cek `Weekly Report Base` terisi row agregasi untuk snapshot saat ini (termasuk `Count`, `Previous Count`, `Daily Change`, `Is Last 7 Days`).
+  6. rerun MAIN di tanggal snapshot yang sama -> pastikan replace snapshot berjalan (tidak duplikat tanggal yang sama).
 
 ### 5) Gate sebelum release
 - Semua flow `runSelfCheck_()` harus `ok=true`.
 - Tidak ada warning baru terkait simbol kritikal pipeline.
 - UAT 1-4 di atas lulus minimal pada 3 sampel claim berbeda.
+
+## Weekly Report Base quick-reference (2026-05-06)
+
+- Function utama: `fillWeeklyReportBase(snapshotDateOverride, sourceFileName)`.
+- Dipanggil di akhir MAIN pipeline setelah:
+  1) refresh `Daily Report Base`,
+  2) `SpreadsheetApp.flush()`,
+  3) `Utilities.sleep(3000)`.
+- Snapshot date priority:
+  1. `snapshotDateOverride`,
+  2. extract dari `sourceFileName` dengan pola `yyyy-MM-dd` sebelum `T`,
+  3. fallback hari ini (timezone spreadsheet).
+- Perilaku penting:
+  - replace row existing pada snapshot date yang sama (idempotent rerun),
+  - preserve history tanggal lain,
+  - generate zero-row terbatas untuk kombinasi yang hilang dari previous snapshot date terdekat,
+  - recalculate full helper (`Previous Snapshot Date`, `Previous Count`, `Daily Change`, `Is Last 7 Days`) untuk antisipasi backfill.
 
 
 ## Recent hardening notes (2026-04-27)

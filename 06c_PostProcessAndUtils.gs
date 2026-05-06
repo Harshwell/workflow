@@ -1292,8 +1292,8 @@ function enforceOperationalLayout06_(ss) {
 
 function refreshReportBaseFromOperational06_(ss, opts) {
   if (!ss) return { written: 0, skipped: 'missing spreadsheet' };
-  const sh = ss.getSheetByName('Report Base');
-  if (!sh) return { written: 0, skipped: 'Report Base not found' };
+  const sh = ss.getSheetByName('Daily Report Base') || ss.getSheetByName('Report Base');
+  if (!sh) return { written: 0, skipped: 'Daily Report Base / Report Base not found' };
   if (DRY_RUN) return { written: 0, skipped: 'DRY_RUN' };
   const incremental = !!(opts && opts.incremental);
 
@@ -1488,6 +1488,239 @@ function refreshReportBaseFromOperational06_(ss, opts) {
     try { sh.getRange(2, 5, existing.length, 1).setNumberFormat('dd MMM yy, HH:mm'); } catch (e4) {}
   }
   return { written: upserted, totalRows: existing.length, sheets: srcSheets.length, mode: 'incremental-upsert' };
+}
+
+function extractSnapshotDateFromFileName_(sourceFileName) {
+  const s = String(sourceFileName || '').trim();
+  if (!s) return null;
+  const m = s.match(/(\d{4}-\d{2}-\d{2})T/);
+  return m ? m[1] : null;
+}
+
+function fillWeeklyReportBase(snapshotDateOverride, sourceFileName) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  if (!ss) throw new Error('fillWeeklyReportBase: Spreadsheet tidak ditemukan.');
+  const tz = ss.getSpreadsheetTimeZone() || 'Asia/Jakarta';
+  const daily = ss.getSheetByName('Daily Report Base');
+  if (!daily) throw new Error('fillWeeklyReportBase: sheet "Daily Report Base" tidak ditemukan.');
+
+  const weeklyName = 'Weekly Report Base';
+  const weekly = ss.getSheetByName(weeklyName) || ss.insertSheet(weeklyName);
+  const headers = [
+    'Snapshot Run At','Snapshot Date','Submission by Month','Branch','PIC','Position','Position Detail',
+    'Position Detail Order','Last Status','Count','Previous Snapshot Date','Previous Count','Daily Change',
+    'Is Last 7 Days','Position Order','Source File Name'
+  ];
+
+  const now = new Date();
+  const snapshotKey = (function() {
+    const fromOverride = String(snapshotDateOverride || '').trim();
+    if (fromOverride) return fromOverride;
+    const fromFile = extractSnapshotDateFromFileName_(sourceFileName);
+    if (fromFile) return fromFile;
+    return Utilities.formatDate(now, tz, 'yyyy-MM-dd');
+  })();
+  const snapshotDate = new Date(snapshotKey + 'T00:00:00');
+  if (isNaN(snapshotDate.getTime())) throw new Error('fillWeeklyReportBase: Snapshot Date invalid: ' + snapshotKey);
+
+  const lr = daily.getLastRow();
+  const lc = daily.getLastColumn();
+  if (lr < 2 || lc < 1) throw new Error('fillWeeklyReportBase: Daily Report Base kosong.');
+  const h = daily.getRange(1, 1, 1, lc).getValues()[0].map(__normalizeHeaderText06_);
+  function req(header) {
+    const i = __findHeaderIndexFlexible06_(h, header);
+    if (i === -1) throw new Error('fillWeeklyReportBase: kolom wajib tidak ditemukan di Daily Report Base: ' + header);
+    return i;
+  }
+  const idxClaim = req('Claim Number');
+  const idxSubMonth = req('Submission by Month');
+  const idxBranch = req('Branch');
+  const idxPic = req('PIC');
+  const idxPos = req('Position');
+  const idxLast = req('Last Status');
+  const idxPosDet = __findHeaderIndexFlexible06_(h, 'Position Detail');
+  const idxPosDetOrder = __findHeaderIndexFlexible06_(h, 'Position Detail Order');
+  const idxPosOrder = __findHeaderIndexFlexible06_(h, 'Position Order');
+
+  const vals = daily.getRange(2, 1, lr - 1, lc).getValues();
+  const agg = new Map();
+  for (let i = 0; i < vals.length; i++) {
+    const r = vals[i];
+    const claim = String(r[idxClaim] || '').trim();
+    if (!claim) continue;
+    const subMonth = __formatSubmissionMonthReportBase06_(r[idxSubMonth]);
+    if (!subMonth) continue;
+    const branch = String(r[idxBranch] || '').trim();
+    const pic = __toTitleCaseReportBase06_(r[idxPic]);
+    const posRaw = String(r[idxPos] || '').trim();
+    const pos = __toTitleCaseReportBase06_(posRaw);
+    const lastStatus = String(r[idxLast] || '').trim();
+    if (!lastStatus) continue;
+    const posDetailRaw = (idxPosDet !== -1) ? String(r[idxPosDet] || '').trim() : '';
+    const posDetail = posDetailRaw || __buildPositionDetailReportBase06_(pos, pic);
+    const pdoRaw = (idxPosDetOrder !== -1) ? r[idxPosDetOrder] : '';
+    const pdoNum = (pdoRaw === '' || pdoRaw == null || !isFinite(Number(pdoRaw))) ? __getPositionDetailOrderReportBase06_(posDetail) : Number(pdoRaw);
+    const poRaw = (idxPosOrder !== -1) ? r[idxPosOrder] : '';
+    const poNum = (poRaw === '' || poRaw == null || !isFinite(Number(poRaw))) ? __getPositionOrderWeekly06_(pos) : Number(poRaw);
+    const subMonthKey = Utilities.formatDate(subMonth, tz, 'yyyy-MM-dd');
+    const key = [snapshotKey, subMonthKey, branch, pic, pos, posDetail, lastStatus].join('|');
+    if (!agg.has(key)) {
+      agg.set(key, { subMonth: subMonth, branch: branch, pic: pic, pos: pos, posDetail: posDetail, pdo: pdoNum, lastStatus: lastStatus, count: 0, po: poNum });
+    }
+    agg.get(key).count += 1;
+  }
+
+  const wr = weekly.getLastRow();
+  const wc = Math.max(weekly.getLastColumn(), headers.length);
+  let existing = [];
+  if (wr >= 2) existing = weekly.getRange(2, 1, wr - 1, wc).getValues();
+  const idxW = {};
+  const wh = (wr >= 1) ? weekly.getRange(1, 1, 1, wc).getValues()[0] : [];
+  for (let i = 0; i < headers.length; i++) idxW[headers[i]] = i;
+  if (wh.length < headers.length || headers.some((x, i) => String(wh[i] || '').trim() !== x)) {
+    weekly.getRange(1, 1, 1, headers.length).setValues([headers]);
+  }
+
+  function dKey(v) { const d = __parseAnyDateReportBase06_(v); return d ? Utilities.formatDate(d, tz, 'yyyy-MM-dd') : ''; }
+  const keep = existing.filter(r => dKey(r[idxW['Snapshot Date']]) !== snapshotKey);
+  const allDates = Array.from(new Set(keep.map(r => dKey(r[idxW['Snapshot Date']])).filter(Boolean))).sort();
+  const prevDateKey = allDates.filter(d => d < snapshotKey).slice(-1)[0] || '';
+
+  const prevMap = new Map();
+  if (prevDateKey) {
+    keep.forEach(function(r) {
+      if (dKey(r[idxW['Snapshot Date']]) !== prevDateKey) return;
+      const k = [
+        dKey(r[idxW['Submission by Month']]),
+        String(r[idxW['Branch']] || '').trim(),
+        String(r[idxW['PIC']] || '').trim(),
+        String(r[idxW['Position']] || '').trim(),
+        String(r[idxW['Position Detail']] || '').trim(),
+        String(r[idxW['Last Status']] || '').trim()
+      ].join('|');
+      prevMap.set(k, r);
+    });
+  }
+
+  const runAt = now;
+  const srcName = String(sourceFileName || '');
+  const currentRows = [];
+  agg.forEach(function(v) {
+    currentRows.push([runAt, snapshotDate, v.subMonth, v.branch, v.pic, v.pos, v.posDetail, v.pdo, v.lastStatus, v.count, '', '', '', false, v.po, srcName]);
+  });
+  if (prevDateKey) {
+    const curKeys = new Set(currentRows.map(r => [Utilities.formatDate(r[2], tz, 'yyyy-MM-dd'), r[3], r[4], r[5], r[6], r[8]].join('|')));
+    prevMap.forEach(function(prevRow, k) {
+      if (curKeys.has(k)) return;
+      currentRows.push([runAt, snapshotDate, __parseAnyDateReportBase06_(prevRow[idxW['Submission by Month']]), prevRow[idxW['Branch']], prevRow[idxW['PIC']], prevRow[idxW['Position']], prevRow[idxW['Position Detail']], Number(prevRow[idxW['Position Detail Order']] || 99), prevRow[idxW['Last Status']], 0, '', '', '', false, Number(prevRow[idxW['Position Order']] || 99), srcName]);
+    });
+  }
+
+  const all = keep.concat(currentRows);
+  __recalculateWeeklyHelpers06_(all, tz, idxW);
+  all.sort(function(a, b) {
+    return __cmpWeeklySort06_(a, b, idxW, tz);
+  });
+
+  weekly.clearContents();
+  weekly.getRange(1, 1, 1, headers.length).setValues([headers]);
+  if (all.length) weekly.getRange(2, 1, all.length, headers.length).setValues(all.map(r => r.slice(0, headers.length)));
+  __formatWeeklyReportBase06_(weekly, Math.max(2, all.length + 1));
+}
+
+function __getPositionOrderWeekly06_(position) {
+  const p = String(position || '').trim().toLowerCase();
+  if (p === 'front') return 1;
+  if (p === 'expedition') return 2;
+  if (p === 'middle') return 3;
+  if (p === 'back') return 4;
+  if (p === 'closed') return 5;
+  return 99;
+}
+
+function __recalculateWeeklyHelpers06_(rows, tz, idxW) {
+  const dateSet = Array.from(new Set(rows.map(r => Utilities.formatDate(__parseAnyDateReportBase06_(r[idxW['Snapshot Date']]), tz, 'yyyy-MM-dd')).filter(Boolean))).sort();
+  const latest = dateSet[dateSet.length - 1] || '';
+  const prevByDate = {};
+  for (let i = 0; i < dateSet.length; i++) prevByDate[dateSet[i]] = i > 0 ? dateSet[i - 1] : '';
+
+  const countByDateKey = new Map();
+  for (let i = 0; i < rows.length; i++) {
+    const r = rows[i];
+    const d = Utilities.formatDate(__parseAnyDateReportBase06_(r[idxW['Snapshot Date']]), tz, 'yyyy-MM-dd');
+    const k = [
+      Utilities.formatDate(__parseAnyDateReportBase06_(r[idxW['Submission by Month']]), tz, 'yyyy-MM-dd'),
+      String(r[idxW['Branch']] || '').trim(),
+      String(r[idxW['PIC']] || '').trim(),
+      String(r[idxW['Position']] || '').trim(),
+      String(r[idxW['Position Detail']] || '').trim(),
+      String(r[idxW['Last Status']] || '').trim()
+    ].join('|');
+    countByDateKey.set(d + '|' + k, Number(r[idxW['Count']] || 0));
+  }
+
+  for (let i = 0; i < rows.length; i++) {
+    const r = rows[i];
+    const curDate = Utilities.formatDate(__parseAnyDateReportBase06_(r[idxW['Snapshot Date']]), tz, 'yyyy-MM-dd');
+    const prevDate = prevByDate[curDate] || '';
+    r[idxW['Previous Snapshot Date']] = prevDate ? new Date(prevDate + 'T00:00:00') : '';
+    if (!prevDate) {
+      r[idxW['Previous Count']] = '';
+      r[idxW['Daily Change']] = '';
+    } else {
+      const key = [
+        Utilities.formatDate(__parseAnyDateReportBase06_(r[idxW['Submission by Month']]), tz, 'yyyy-MM-dd'),
+        String(r[idxW['Branch']] || '').trim(),
+        String(r[idxW['PIC']] || '').trim(),
+        String(r[idxW['Position']] || '').trim(),
+        String(r[idxW['Position Detail']] || '').trim(),
+        String(r[idxW['Last Status']] || '').trim()
+      ].join('|');
+      const prevCount = Number(countByDateKey.get(prevDate + '|' + key) || 0);
+      r[idxW['Previous Count']] = prevCount;
+      r[idxW['Daily Change']] = Number(r[idxW['Count']] || 0) - prevCount;
+    }
+    if (!latest) r[idxW['Is Last 7 Days']] = false;
+    else {
+      const d = new Date(curDate + 'T00:00:00');
+      const l = new Date(latest + 'T00:00:00');
+      const min = new Date(l.getTime() - (6 * 24 * 60 * 60 * 1000));
+      r[idxW['Is Last 7 Days']] = d.getTime() >= min.getTime();
+    }
+  }
+}
+
+function __cmpWeeklySort06_(a, b, idxW, tz) {
+  function ds(v) { return Utilities.formatDate(__parseAnyDateReportBase06_(v), tz, 'yyyy-MM-dd'); }
+  const cands = [
+    [ds(a[idxW['Snapshot Date']]), ds(b[idxW['Snapshot Date']])],
+    [ds(a[idxW['Submission by Month']]), ds(b[idxW['Submission by Month']])],
+    [String(a[idxW['Branch']] || ''), String(b[idxW['Branch']] || '')],
+    [String(a[idxW['PIC']] || ''), String(b[idxW['PIC']] || '')],
+    [Number(a[idxW['Position Detail Order']] || 99), Number(b[idxW['Position Detail Order']] || 99)],
+    [String(a[idxW['Last Status']] || ''), String(b[idxW['Last Status']] || '')]
+  ];
+  for (let i = 0; i < cands.length; i++) {
+    if (cands[i][0] < cands[i][1]) return -1;
+    if (cands[i][0] > cands[i][1]) return 1;
+  }
+  return 0;
+}
+
+function __formatWeeklyReportBase06_(sh, lastRow) {
+  try { sh.getRange(1, 1, 1, 16).setFontWeight('bold'); } catch (e0) {}
+  try { sh.setFrozenRows(1); } catch (e1) {}
+  if (lastRow < 2) return;
+  try { sh.getRange(2, 1, lastRow - 1, 1).setNumberFormat('yyyy-mm-dd hh:mm:ss'); } catch (e2) {}
+  try { sh.getRange(2, 2, lastRow - 1, 1).setNumberFormat('yyyy-mm-dd'); } catch (e3) {}
+  try { sh.getRange(2, 3, lastRow - 1, 1).setNumberFormat('mmm yyyy'); } catch (e4) {}
+  try { sh.getRange(2, 8, lastRow - 1, 1).setNumberFormat('0.00'); } catch (e5) {}
+  try { sh.getRange(2, 10, lastRow - 1, 1).setNumberFormat('#,##0'); } catch (e6) {}
+  try { sh.getRange(2, 11, lastRow - 1, 1).setNumberFormat('yyyy-mm-dd'); } catch (e7) {}
+  try { sh.getRange(2, 12, lastRow - 1, 1).setNumberFormat('#,##0'); } catch (e8) {}
+  try { sh.getRange(2, 13, lastRow - 1, 1).setNumberFormat('+#,##0;-#,##0;0'); } catch (e9) {}
+  try { sh.getRange(2, 15, lastRow - 1, 1).setNumberFormat('0'); } catch (e10) {}
+  try { sh.autoResizeColumns(1, 16); } catch (e11) {}
 }
 
 const POSITION_DETAIL_ORDER_MAP_06_ = Object.freeze({

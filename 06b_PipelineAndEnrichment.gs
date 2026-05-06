@@ -82,6 +82,11 @@ function runPipeline_(pic, fileIds, opts) {
 
   const mainDataRaw = parseUploadedFile_(buckets.main[0], 'PARSE_MAIN');
   const mainData = coerceDatasetToRawSchema_(mainDataRaw);
+  let sourceFileName = '';
+  try { sourceFileName = String(DriveApp.getFileById(String(buckets.main[0])).getName() || ''); } catch (eSf) {}
+  const snapshotDate = (typeof extractSnapshotDateFromFileName_ === 'function')
+    ? (extractSnapshotDateFromFileName_(sourceFileName) || '')
+    : '';
 
   let agingStdMap = null, agingMap = null;
   if (buckets.agingStd.length) {
@@ -452,6 +457,11 @@ function runPipeline_(pic, fileIds, opts) {
   try {
     if (typeof refreshReportBaseFromOperational06_ === 'function') refreshReportBaseFromOperational06_(ss);
   } catch (eRb) { try { logLine_('WARN', 'Report Base refresh failed', '', String(eRb), 'WARN'); } catch (e2) {} }
+  try {
+    SpreadsheetApp.flush();
+    Utilities.sleep(3000);
+    if (typeof fillWeeklyReportBase === 'function') fillWeeklyReportBase(snapshotDate || '', sourceFileName || '');
+  } catch (eWrb) { try { logLine_('WARN', 'Weekly Report Base refresh failed', '', String(eWrb), 'WARN'); } catch (e2) {} }
 
   setProgress_(1.0, 'Done.');
   logLine_(
