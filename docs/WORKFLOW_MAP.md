@@ -319,7 +319,8 @@ Catatan ini dipakai sebagai quick-reference maintenance (bukan detail desain):
 - Optional sheets (B2B/EV-Bike): excluded-status filtering wajib case-insensitive agar aman terhadap variasi casing dari source.
 - B2B partner matching sudah include tambahan partner enterprise terbaru (Bhinneka/PSMS/DIGIMAP EnE/Parastar/GSE/KPD/Tukar Ind/Bumilindo).
 - `Submission Date` wajib strict dari `Raw Data.claim_submission_date` (tanpa fallback field lain).
-- Setelah routing+enrichment, kolom `Submission Date` di sheet operasional utama (`Submission`,`Ask Detail`,`Start`,`Finish`,`PO`,`B2B`) di-overwrite ulang dari mapping `Claim Number -> Raw Data.claim_submission_date` untuk mencegah kebocoran nilai dari kolom lain (mis. `OR`/`Remarks`).
+- Setelah routing+enrichment, kolom `Submission Date` di sheet operasional utama (`Submission`,`Ask Detail`,`Start`,`Finish`,`PO`,`B2B`,`Special Case`) di-overwrite ulang dari mapping `Claim Number -> Raw Data.claim_submission_date` untuk mencegah kebocoran nilai dari kolom lain (mis. `OR`/`Remarks`).
+- Sinkronisasi strict `Submission Date`/`Submission by Month` dijalankan ulang setelah optional processors (`B2B`/`EV-Bike`/`Special Case`) supaya row hasil rebuild `B2B` (termasuk FORM - MAIN) tetap terisi.
 - `Weekly Report Base` refresh rule: `SUB` pure wajib gate jam 09:00 + 1x per tanggal (script timezone), sedangkan `FORM - SUB` boleh refresh saat flow selesai (bukan `FORM - MAIN`).
 - Enrichment `Submission by Month` juga diterapkan ke sheet `B2B` untuk menjaga konsistensi agregasi `Daily Report Base`.
 

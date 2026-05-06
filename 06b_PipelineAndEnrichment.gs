@@ -430,6 +430,10 @@ function runPipeline_(pic, fileIds, opts) {
     }
   }
 
+  // Re-apply strict Submission Date/Month after optional sheet processors
+  // so newly rebuilt rows (e.g. B2B on FORM - MAIN) are not left blank.
+  try { applyStrictSubmissionDateAndMonth06b_(ss, rawValues, headerIndexRaw); } catch (eSubFix2) { try { logLine_('WARN', 'Submission date/month strict re-sync failed', '', String(eSubFix2), 'WARN'); } catch (e2) {} }
+
   // Defensive sanitizer for known validation regressions:
   // - Submission Date turning into checkbox
   // - EV-Bike Last Status validation violation
@@ -1148,7 +1152,7 @@ function applyStrictSubmissionDateAndMonth06b_(ss, rawValues, headerIndexRaw) {
     byClaim[claim] = row;
   }
 
-  const targetSheets = ['Submission', 'Ask Detail', 'Start', 'Finish', 'PO', 'B2B'];
+  const targetSheets = ['Submission', 'Ask Detail', 'Start', 'Finish', 'PO', 'B2B', 'Special Case'];
   targetSheets.forEach(function(name) {
     const sh = ss.getSheetByName(name);
     if (!sh) return;
