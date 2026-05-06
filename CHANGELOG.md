@@ -24,6 +24,7 @@ Formatnya sengaja sederhana: **Added / Changed / Fixed**. Tidak perlu sok formal
 - `fillWeeklyReportBase` kini menerima `ssOverride` dari MAIN pipeline agar tidak gagal pada konteks non-active spreadsheet (`Spreadsheet tidak ditemukan`).
 - Penulisan `Submission Date` di routing operasional diperketat: hanya menulis nilai yang valid sebagai tanggal (hapus fallback raw string) untuk mencegah nilai non-date (mis. teks bebas) masuk ke kolom tanggal.
 - Source `Submission Date` dipertegas strict ke `Raw Data.claim_submission_date` (tanpa fallback sumber tanggal lain) untuk menghilangkan drift antar-sheet.
+- Setelah routing+enrichment, kolom `Submission Date` di sheet operasional utama (`Submission`,`Ask Detail`,`Start`,`Finish`,`PO`,`B2B`) di-overwrite ulang dari mapping `Claim Number -> Raw Data.claim_submission_date` untuk mencegah kebocoran nilai dari kolom lain (mis. `OR`/`Remarks`).
 - `Special Case` schema guard diperingan: `Start Date`/`End Date`/`Details` tidak lagi dianggap mandatory (hilangkan noise error `SPECIAL_CASE_SCHEMA_MISSING` untuk kolom legacy yang tidak dipakai).
 - Detail penjelasan rule (`First-Month`, `Policy Remaining`, `Second-Year`) kini ditulis sebagai **note** di kolom `Reason`, sehingga tetap informatif tanpa ketergantungan kolom tambahan.
 

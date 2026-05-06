@@ -60,6 +60,7 @@ Tambahan update setelah batch Part 9:
 - `POSITION_BY_LAST_STATUS['DONE_EXPIRED']` disejajarkan ke `Exclusion` agar konsisten dengan routing sheet Exclusion.
 - `Submission by Month` sekarang disimpan sebagai **date** (tanggal 1 tiap bulan) dengan display format `MMM yy` di operational + Report Base.
 - `Submission Date` operasional sekarang **strict** hanya dari `Raw Data.claim_submission_date` (tanpa fallback source lain), tetap ditulis sebagai tanggal valid.
+- Setelah routing+enrichment, kolom `Submission Date` di sheet operasional utama (`Submission`,`Ask Detail`,`Start`,`Finish`,`PO`,`B2B`) di-overwrite ulang dari mapping `Claim Number -> Raw Data.claim_submission_date` untuk mencegah kebocoran nilai dari kolom lain (mis. `OR`/`Remarks`).
 - Enrichment juga menulis `Submission by Month` ke sheet `B2B` agar konsisten dengan sheet operasional lain.
 - Refresh `Weekly Report Base`: untuk **pure SUB** dijalankan maksimal 1x/hari di jam 09:00 (script timezone); untuk **FORM - SUB** dijalankan saat flow selesai (tidak terikat jam 09:00).
 

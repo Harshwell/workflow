@@ -384,6 +384,7 @@ function runPipeline_(pic, fileIds, opts) {
   // - Mandatory: Status Type (derived from Last Status)
   // - Optional: Last Status Date (date-only for main/form; datetime for sub elsewhere)
   try { enrichOperationalSheetsFromRaw06_(ss, rawValues, headerIndexRaw, profileName, { flow: flowName }); } catch (eEn) { try { logLine_('WARN', 'Ops enrichment failed', '', String(eEn), 'WARN'); } catch (e2) {} }
+  try { applyStrictSubmissionDateAndMonth06b_(ss, rawValues, headerIndexRaw); } catch (eSubFix) { try { logLine_('WARN', 'Submission date/month strict sync failed', '', String(eSubFix), 'WARN'); } catch (e2) {} }
 
   // Remarks values are restored by restoreOpsFieldsFromRawBackup_ (value-level) and applyRemarksRichTextToOperational_ (format-level).
 
@@ -1126,6 +1127,68 @@ function shouldRunWeeklyReportBaseForSub06b_() {
   } catch (e) {
     return false;
   }
+}
+
+
+function applyStrictSubmissionDateAndMonth06b_(ss, rawValues, headerIndexRaw) {
+  if (!ss || !rawValues || !rawValues.length || !headerIndexRaw) return;
+
+  const idxClaimRaw = resolveRawIdx06_(headerIndexRaw, ['claim_number', 'Claim Number']);
+  if (idxClaimRaw == null) return;
+
+  // Strict source: only Raw Data claim_submission_date (allow header formatting variants only).
+  const idxSubmissionDateRaw = resolveRawIdx06_(headerIndexRaw, ['claim_submission_date']);
+  if (idxSubmissionDateRaw == null) return;
+
+  const byClaim = Object.create(null);
+  for (let i = 0; i < rawValues.length; i++) {
+    const row = rawValues[i];
+    const claim = String((row && row[idxClaimRaw]) || '').trim().toUpperCase();
+    if (!claim) continue;
+    byClaim[claim] = row;
+  }
+
+  const targetSheets = ['Submission', 'Ask Detail', 'Start', 'Finish', 'PO', 'B2B'];
+  targetSheets.forEach(function(name) {
+    const sh = ss.getSheetByName(name);
+    if (!sh) return;
+    const lr = sh.getLastRow();
+    if (lr < 2) return;
+    const lc = sh.getLastColumn();
+    const header = sh.getRange(1, 1, 1, lc).getValues()[0];
+    const hidx = buildOpsHeaderIndex06_(header);
+
+    const idxClaimOps = resolveOpsColIdx06_(hidx, ['Claim Number']);
+    const idxSubDateOps = resolveOpsColIdx06_(hidx, ['Submission Date']);
+    const idxSubMonthOps = resolveOpsColIdx06_(hidx, ['Submission by Month']);
+    if (idxClaimOps === -1 || (idxSubDateOps === -1 && idxSubMonthOps === -1)) return;
+
+    const n = lr - 1;
+    const claims = sh.getRange(2, idxClaimOps + 1, n, 1).getValues();
+    const outSubDate = (idxSubDateOps !== -1) ? new Array(n) : null;
+    const outSubMonth = (idxSubMonthOps !== -1) ? new Array(n) : null;
+
+    for (let r = 0; r < n; r++) {
+      const claim = String((claims[r] && claims[r][0]) || '').trim().toUpperCase();
+      const rawRow = claim ? byClaim[claim] : null;
+      const rawVal = (rawRow ? rawRow[idxSubmissionDateRaw] : '');
+      const d = coerceDate_(rawVal);
+      const validDate = (d && !isNaN(d.getTime())) ? d : '';
+      if (outSubDate) outSubDate[r] = [validDate];
+      if (outSubMonth) outSubMonth[r] = [validDate ? toSubmissionMonthDate06b_(validDate) : ''];
+    }
+
+    if (outSubDate) {
+      const rg = sh.getRange(2, idxSubDateOps + 1, n, 1);
+      rg.setValues(outSubDate);
+      rg.setNumberFormat('dd MMM yy');
+    }
+    if (outSubMonth) {
+      const rgM = sh.getRange(2, idxSubMonthOps + 1, n, 1);
+      rgM.setValues(outSubMonth);
+      rgM.setNumberFormat('MMM yy');
+    }
+  });
 }
 
 function __resolveEnrichRawIndexes06b_(headerIndexRaw) {
