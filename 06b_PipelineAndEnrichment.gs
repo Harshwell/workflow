@@ -460,7 +460,7 @@ function runPipeline_(pic, fileIds, opts) {
   try {
     SpreadsheetApp.flush();
     Utilities.sleep(3000);
-    if (typeof fillWeeklyReportBase === 'function') fillWeeklyReportBase(snapshotDate || '', sourceFileName || '');
+    if (typeof fillWeeklyReportBase === 'function') fillWeeklyReportBase(snapshotDate || '', sourceFileName || '', ss);
   } catch (eWrb) { try { logLine_('WARN', 'Weekly Report Base refresh failed', '', String(eWrb), 'WARN'); } catch (e2) {} }
   try {
     const ops = (typeof getOperationalSheetNames06b_ === 'function') ? getOperationalSheetNames06b_(profileName) : [];
@@ -1198,12 +1198,9 @@ function __resolveEnrichRawIndexes06b_(headerIndexRaw) {
       'Submission by Month'
     ]),
     idxSubmissionDateRaw: resolveRawIdx06_(headerIndexRaw, [
-      (CONFIG && CONFIG.headers && (CONFIG.headers.claimSubmissionDate || CONFIG.headers.claim_submission_date)) ? (CONFIG.headers.claimSubmissionDate || CONFIG.headers.claim_submission_date) : null,
       'claim_submission_date',
-      'claim_submitted_datetime',
-      'submission_date',
-      'claim_submitted_date',
-      'Submission Date'
+      (CONFIG && CONFIG.headers && (CONFIG.headers.claimSubmissionDate || CONFIG.headers.claim_submission_date)) ? (CONFIG.headers.claimSubmissionDate || CONFIG.headers.claim_submission_date) : null,
+      'claim submission date'
     ]),
     idxActivityLogRaw: resolveRawIdx06_(headerIndexRaw, [
       (CONFIG && CONFIG.headers && (CONFIG.headers.lastActivityLog || CONFIG.headers.last_activity_log)) ? (CONFIG.headers.lastActivityLog || CONFIG.headers.last_activity_log) : null,

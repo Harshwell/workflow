@@ -1498,8 +1498,8 @@ function extractSnapshotDateFromFileName_(sourceFileName) {
   return m ? m[1] : null;
 }
 
-function fillWeeklyReportBase(snapshotDateOverride, sourceFileName) {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
+function fillWeeklyReportBase(snapshotDateOverride, sourceFileName, ssOverride) {
+  const ss = ssOverride || SpreadsheetApp.getActiveSpreadsheet();
   if (!ss) throw new Error('fillWeeklyReportBase: Spreadsheet tidak ditemukan.');
   const tz = ss.getSpreadsheetTimeZone() || 'Asia/Jakarta';
   const daily = ss.getSheetByName('Daily Report Base');

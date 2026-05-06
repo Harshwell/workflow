@@ -20,6 +20,11 @@ Formatnya sengaja sederhana: **Added / Changed / Fixed**. Tidak perlu sok formal
 - Mapping PIC `Report Base` untuk position `Middle` kini tahan variasi casing/spacing pada `Position` dan `Service Center` (termasuk newline/karakter non-alfanumerik), sehingga keyword `MDP`/`deltasindo`/`ezcare`/`b-store` tidak lagi mudah jatuh ke `Unknown`.
 - Sinkronisasi snapshot kini kompatibel dengan rename sheet `Report Base` -> `Daily Report Base` (tetap fallback ke nama lama untuk backward compatibility).
 - Recalculate helper `Weekly Report Base` dioptimasi dari scan nested ke map index berbasis `(snapshotDate + dimensi kombinasi)` untuk menurunkan kompleksitas saat histori membesar.
+- `fillWeeklyReportBase` kini menerima `ssOverride` dari MAIN pipeline agar tidak gagal pada konteks non-active spreadsheet (`Spreadsheet tidak ditemukan`).
+- Penulisan `Submission Date` di routing operasional diperketat: hanya menulis nilai yang valid sebagai tanggal (hapus fallback raw string) untuk mencegah nilai non-date (mis. teks bebas) masuk ke kolom tanggal.
+- Source `Submission Date` dipersempit ke `Raw Data.claim_submission_date` sebagai prioritas utama lintas sheet operasional untuk mencegah drift antar-sheet akibat fallback source tanggal lain.
+- `Special Case` schema guard diperingan: `Start Date`/`End Date`/`Details` tidak lagi dianggap mandatory (hilangkan noise error `SPECIAL_CASE_SCHEMA_MISSING` untuk kolom legacy yang tidak dipakai).
+- Detail penjelasan rule (`First-Month`, `Policy Remaining`, `Second-Year`) kini ditulis sebagai **note** di kolom `Reason`, sehingga tetap informatif tanpa ketergantungan kolom tambahan.
 
 ---
 

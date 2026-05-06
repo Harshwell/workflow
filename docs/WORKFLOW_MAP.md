@@ -295,6 +295,7 @@ Checklist ini fokus ke area yang paling rawan regressions pas perubahan terakhir
   1) refresh `Daily Report Base`,
   2) `SpreadsheetApp.flush()`,
   3) `Utilities.sleep(3000)`.
+- Pada jalur MAIN, fungsi dipanggil dengan context spreadsheet aktif pipeline (`ss`) untuk menghindari error `Spreadsheet tidak ditemukan` pada runtime non-active.
 - Snapshot date priority:
   1. `snapshotDateOverride`,
   2. extract dari `sourceFileName` dengan pola `yyyy-MM-dd` sebelum `T`,
@@ -305,6 +306,8 @@ Checklist ini fokus ke area yang paling rawan regressions pas perubahan terakhir
   - generate zero-row terbatas untuk kombinasi yang hilang dari previous snapshot date terdekat,
   - recalculate full helper (`Previous Snapshot Date`, `Previous Count`, `Daily Change`, `Is Last 7 Days`) untuk antisipasi backfill.
   - setelah write selesai, filter aktif di sheet target disinkronkan ke full used range dengan mempertahankan filter criteria yang ada (agar row baru yang match filter bisa langsung ikut terlihat).
+  - `Submission Date` di routing operasional hanya diisi dari source `Raw Data.claim_submission_date` yang berhasil diparse menjadi tanggal valid (tidak fallback ke raw string non-date).
+  - `Special Case` tidak lagi mewajibkan kolom legacy `Start Date`/`End Date`/`Details`; detail alasan tetap tersedia melalui note pada kolom `Reason`.
 
 
 ## Recent hardening notes (2026-04-27)
