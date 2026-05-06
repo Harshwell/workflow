@@ -458,9 +458,11 @@ function runPipeline_(pic, fileIds, opts) {
     if (typeof refreshReportBaseFromOperational06_ === 'function') refreshReportBaseFromOperational06_(ss);
   } catch (eRb) { try { logLine_('WARN', 'Report Base refresh failed', '', String(eRb), 'WARN'); } catch (e2) {} }
   try {
-    SpreadsheetApp.flush();
-    Utilities.sleep(3000);
-    if (typeof fillWeeklyReportBase === 'function') fillWeeklyReportBase(snapshotDate || '', sourceFileName || '', ss);
+    if (flowName === 'sub' && shouldRunWeeklyReportBaseForSub06b_()) {
+      SpreadsheetApp.flush();
+      Utilities.sleep(3000);
+      if (typeof fillWeeklyReportBase === 'function') fillWeeklyReportBase(snapshotDate || '', sourceFileName || '', ss);
+    }
   } catch (eWrb) { try { logLine_('WARN', 'Weekly Report Base refresh failed', '', String(eWrb), 'WARN'); } catch (e2) {} }
   try {
     const ops = (typeof getOperationalSheetNames06b_ === 'function') ? getOperationalSheetNames06b_(profileName) : [];
@@ -799,6 +801,7 @@ function enrichOperationalSheetsFromRaw06_(ss, rawValues, headerIndexRaw, pic, o
   if (!ss || !rawValues || !rawValues.length || !headerIndexRaw) return;
 
   let sheets = getOperationalSheetNames06b_(pic);
+  sheets = Array.from(new Set((sheets || []).concat(['B2B'])));
 
   // Flow context for formatting decisions (default: main)
   const flowName = ((opts && (opts.flow || opts.Flow || opts.flowName)) || (typeof RUNTIME !== 'undefined' && RUNTIME ? RUNTIME.flowName : '') || 'main')
@@ -1088,6 +1091,27 @@ function getOperationalSheetNames06b_(pic) {
   }
   // Only core operational sheets (exclude optional modules)
   return sheets.filter(n => n && n !== 'B2B' && n !== 'EV-Bike' && n !== 'Special Case' && n !== 'Raw Data');
+}
+
+
+function shouldRunWeeklyReportBaseForSub06b_() {
+  try {
+    const tz = (typeof getTzSafe_ === 'function') ? getTzSafe_() : (Session.getScriptTimeZone() || 'Asia/Jakarta');
+    const now = new Date();
+    const hour = Number(Utilities.formatDate(now, tz, 'H'));
+    if (hour !== 9) return false;
+
+    const props = PropertiesService.getScriptProperties();
+    const key = 'WEEKLY_REPORT_BASE_LAST_RUN_DATE';
+    const today = Utilities.formatDate(now, tz, 'yyyy-MM-dd');
+    const last = String(props.getProperty(key) || '');
+    if (last === today) return false;
+
+    props.setProperty(key, today);
+    return true;
+  } catch (e) {
+    return false;
+  }
 }
 
 function __resolveEnrichRawIndexes06b_(headerIndexRaw) {
