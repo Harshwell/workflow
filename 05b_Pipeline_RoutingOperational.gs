@@ -1172,8 +1172,7 @@ function buildSheetWriters_(ss, routingMap, headerIndexRaw, pic) {
         if (idxH['Submission Date'] != null) {
           // Source can come from datetime (SUB) or date-only (MAIN/form) exports.
           const rawSubmissionVal = getRawAny(rawRow, [
-            'claim_submission_date',
-            'claim submission date'
+            'claim_submission_date'
           ]);
           let d = coerceDate_(rawSubmissionVal);
           if (!d && rawSubmissionVal != null && rawSubmissionVal !== '') {
