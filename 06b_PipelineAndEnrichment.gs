@@ -16,6 +16,7 @@ function runPipeline_(pic, fileIds, opts) {
 
   // Flow context (default: main). Used by enrichment/sorting and Overview tagging.
   const flowName = (options.flow || options.Flow || options.flowName || 'main').toString().trim().toLowerCase();
+  const sourceName = String((options.source || options.Source || (typeof RUNTIME !== 'undefined' && RUNTIME ? RUNTIME.source : '') || '')).trim().toUpperCase();
   try { if (typeof RUNTIME !== 'undefined' && RUNTIME) RUNTIME.flowName = flowName; } catch (e) {}
 
   // Defer trashing uploaded files until end of a successful run.
@@ -383,6 +384,7 @@ function runPipeline_(pic, fileIds, opts) {
   // - Mandatory: Status Type (derived from Last Status)
   // - Optional: Last Status Date (date-only for main/form; datetime for sub elsewhere)
   try { enrichOperationalSheetsFromRaw06_(ss, rawValues, headerIndexRaw, profileName, { flow: flowName }); } catch (eEn) { try { logLine_('WARN', 'Ops enrichment failed', '', String(eEn), 'WARN'); } catch (e2) {} }
+  try { applyStrictSubmissionDateAndMonth06b_(ss, rawValues, headerIndexRaw); } catch (eSubFix) { try { logLine_('WARN', 'Submission date/month strict sync failed', '', String(eSubFix), 'WARN'); } catch (e2) {} }
 
   // Remarks values are restored by restoreOpsFieldsFromRawBackup_ (value-level) and applyRemarksRichTextToOperational_ (format-level).
 
@@ -428,6 +430,10 @@ function runPipeline_(pic, fileIds, opts) {
     }
   }
 
+  // Re-apply strict Submission Date/Month after optional sheet processors
+  // so newly rebuilt rows (e.g. B2B on FORM - MAIN) are not left blank.
+  try { applyStrictSubmissionDateAndMonth06b_(ss, rawValues, headerIndexRaw); } catch (eSubFix2) { try { logLine_('WARN', 'Submission date/month strict re-sync failed', '', String(eSubFix2), 'WARN'); } catch (e2) {} }
+
   // Defensive sanitizer for known validation regressions:
   // - Submission Date turning into checkbox
   // - EV-Bike Last Status validation violation
@@ -458,9 +464,11 @@ function runPipeline_(pic, fileIds, opts) {
     if (typeof refreshReportBaseFromOperational06_ === 'function') refreshReportBaseFromOperational06_(ss);
   } catch (eRb) { try { logLine_('WARN', 'Report Base refresh failed', '', String(eRb), 'WARN'); } catch (e2) {} }
   try {
-    SpreadsheetApp.flush();
-    Utilities.sleep(3000);
-    if (typeof fillWeeklyReportBase === 'function') fillWeeklyReportBase(snapshotDate || '', sourceFileName || '', ss);
+    if (shouldRunWeeklyReportBaseNow06b_(flowName, sourceName)) {
+      SpreadsheetApp.flush();
+      Utilities.sleep(3000);
+      if (typeof fillWeeklyReportBase === 'function') fillWeeklyReportBase(snapshotDate || '', sourceFileName || '', ss);
+    }
   } catch (eWrb) { try { logLine_('WARN', 'Weekly Report Base refresh failed', '', String(eWrb), 'WARN'); } catch (e2) {} }
   try {
     const ops = (typeof getOperationalSheetNames06b_ === 'function') ? getOperationalSheetNames06b_(profileName) : [];
@@ -799,6 +807,7 @@ function enrichOperationalSheetsFromRaw06_(ss, rawValues, headerIndexRaw, pic, o
   if (!ss || !rawValues || !rawValues.length || !headerIndexRaw) return;
 
   let sheets = getOperationalSheetNames06b_(pic);
+  sheets = Array.from(new Set((sheets || []).concat(['B2B'])));
 
   // Flow context for formatting decisions (default: main)
   const flowName = ((opts && (opts.flow || opts.Flow || opts.flowName)) || (typeof RUNTIME !== 'undefined' && RUNTIME ? RUNTIME.flowName : '') || 'main')
@@ -1088,6 +1097,106 @@ function getOperationalSheetNames06b_(pic) {
   }
   // Only core operational sheets (exclude optional modules)
   return sheets.filter(n => n && n !== 'B2B' && n !== 'EV-Bike' && n !== 'Special Case' && n !== 'Raw Data');
+}
+
+
+function shouldRunWeeklyReportBaseNow06b_(flowName, sourceName) {
+  const flow = String(flowName || '').trim().toLowerCase();
+  const src = String(sourceName || '').trim().toUpperCase();
+
+  // FORM - SUB: run immediately (not tied to 09:00 gate).
+  if (flow === 'form' && src === 'FORM_SUB') return true;
+
+  // Pure SUB: strict gate 09:00 + once/day.
+  if (flow === 'sub') return shouldRunWeeklyReportBaseForSub06b_();
+
+  return false;
+}
+
+function shouldRunWeeklyReportBaseForSub06b_() {
+  try {
+    const tz = (typeof getTzSafe_ === 'function') ? getTzSafe_() : (Session.getScriptTimeZone() || 'Asia/Jakarta');
+    const now = new Date();
+    const hour = Number(Utilities.formatDate(now, tz, 'H'));
+    if (hour !== 9) return false;
+
+    const props = PropertiesService.getScriptProperties();
+    const key = 'WEEKLY_REPORT_BASE_LAST_RUN_DATE';
+    const today = Utilities.formatDate(now, tz, 'yyyy-MM-dd');
+    const last = String(props.getProperty(key) || '');
+    if (last === today) return false;
+
+    props.setProperty(key, today);
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
+
+function applyStrictSubmissionDateAndMonth06b_(ss, rawValues, headerIndexRaw) {
+  if (!ss || !rawValues || !rawValues.length || !headerIndexRaw) return;
+
+  const idxClaimRaw = resolveRawIdx06_(headerIndexRaw, ['claim_number', 'Claim Number']);
+  if (idxClaimRaw == null) return;
+
+  // Strict source: only Raw Data claim_submission_date (allow header formatting variants only).
+  const idxSubmissionDateRaw = resolveRawIdx06_(headerIndexRaw, ['claim_submission_date']);
+  if (idxSubmissionDateRaw == null) return;
+
+  const byClaim = Object.create(null);
+  for (let i = 0; i < rawValues.length; i++) {
+    const row = rawValues[i];
+    const claim = String((row && row[idxClaimRaw]) || '').trim().toUpperCase();
+    if (!claim) continue;
+    byClaim[claim] = row;
+  }
+
+  const targetSheets = ['Submission', 'Ask Detail', 'Start', 'Finish', 'PO', 'B2B', 'Special Case'];
+  targetSheets.forEach(function(name) {
+    const sh = ss.getSheetByName(name);
+    if (!sh) return;
+    const lr = sh.getLastRow();
+    if (lr < 2) return;
+    const lc = sh.getLastColumn();
+    const header = sh.getRange(1, 1, 1, lc).getValues()[0];
+    const hidx = buildOpsHeaderIndex06_(header);
+
+    const idxClaimOps = resolveOpsColIdx06_(hidx, ['Claim Number']);
+    const idxSubDateOps = resolveOpsColIdx06_(hidx, ['Submission Date']);
+    const idxSubMonthOps = resolveOpsColIdx06_(hidx, ['Submission by Month']);
+    if (idxClaimOps === -1 || (idxSubDateOps === -1 && idxSubMonthOps === -1)) return;
+
+    const n = lr - 1;
+    const claims = sh.getRange(2, idxClaimOps + 1, n, 1).getValues();
+    const curSubDate = (idxSubDateOps !== -1) ? sh.getRange(2, idxSubDateOps + 1, n, 1).getValues() : null;
+    const curSubMonth = (idxSubMonthOps !== -1) ? sh.getRange(2, idxSubMonthOps + 1, n, 1).getValues() : null;
+    const outSubDate = (idxSubDateOps !== -1) ? new Array(n) : null;
+    const outSubMonth = (idxSubMonthOps !== -1) ? new Array(n) : null;
+
+    for (let r = 0; r < n; r++) {
+      const claim = String((claims[r] && claims[r][0]) || '').trim().toUpperCase();
+      const rawRow = claim ? byClaim[claim] : null;
+      const rawVal = (rawRow ? rawRow[idxSubmissionDateRaw] : '');
+      const d = coerceDate_(rawVal);
+      const validDate = (d && !isNaN(d.getTime())) ? d : null;
+      const keepDate = (curSubDate && curSubDate[r]) ? curSubDate[r][0] : '';
+      const keepMonth = (curSubMonth && curSubMonth[r]) ? curSubMonth[r][0] : '';
+      if (outSubDate) outSubDate[r] = [validDate || keepDate || ''];
+      if (outSubMonth) outSubMonth[r] = [validDate ? toSubmissionMonthDate06b_(validDate) : (keepMonth || '')];
+    }
+
+    if (outSubDate) {
+      const rg = sh.getRange(2, idxSubDateOps + 1, n, 1);
+      rg.setValues(outSubDate);
+      rg.setNumberFormat('dd MMM yy');
+    }
+    if (outSubMonth) {
+      const rgM = sh.getRange(2, idxSubMonthOps + 1, n, 1);
+      rgM.setValues(outSubMonth);
+      rgM.setNumberFormat('MMM yy');
+    }
+  });
 }
 
 function __resolveEnrichRawIndexes06b_(headerIndexRaw) {

@@ -1035,11 +1035,16 @@ function __getMiddlePicFromServiceCenter06_(serviceCenter) {
 
 function __getReportBasePicFromPosition06_(position, serviceCenter) {
   const pos = String(position || '').trim().toLowerCase();
-  if (!pos) return 'Unknown';
   if (pos === 'front') return 'Adi & Yudha';
   if (pos === 'expedition') return 'Adit';
   if (pos === 'back') return 'Suci & Detha';
-  if (pos === 'middle') return __getMiddlePicFromServiceCenter06_(serviceCenter);
+
+  const middlePic = __getMiddlePicFromServiceCenter06_(serviceCenter);
+  if (pos === 'middle') return middlePic;
+
+  // Fallback: when position is missing/unmapped but SC keyword is known,
+  // still assign middle PIC instead of leaving Unknown.
+  if (middlePic !== 'Unknown') return middlePic;
   return 'Unknown';
 }
 
@@ -1294,6 +1299,12 @@ function refreshReportBaseFromOperational06_(ss, opts) {
   if (!ss) return { written: 0, skipped: 'missing spreadsheet' };
   const sh = ss.getSheetByName('Daily Report Base') || ss.getSheetByName('Report Base');
   if (!sh) return { written: 0, skipped: 'Daily Report Base / Report Base not found' };
+
+  // Hard reset filter before rewrite/upsert to avoid stale hidden-row behavior during writes.
+  try {
+    const f0 = sh.getFilter ? sh.getFilter() : null;
+    if (f0) f0.remove();
+  } catch (eF0) {}
   if (DRY_RUN) return { written: 0, skipped: 'DRY_RUN' };
   const incremental = !!(opts && opts.incremental);
 
@@ -1499,7 +1510,13 @@ function extractSnapshotDateFromFileName_(sourceFileName) {
 }
 
 function fillWeeklyReportBase(snapshotDateOverride, sourceFileName, ssOverride) {
-  const ss = ssOverride || SpreadsheetApp.getActiveSpreadsheet();
+  let ss = ssOverride || SpreadsheetApp.getActiveSpreadsheet();
+  if (!ss) {
+    try {
+      const fallbackId = String((CONFIG && CONFIG.masterSpreadsheetId) ? CONFIG.masterSpreadsheetId : '').trim();
+      if (fallbackId) ss = SpreadsheetApp.openById(fallbackId);
+    } catch (e0) {}
+  }
   if (!ss) throw new Error('fillWeeklyReportBase: Spreadsheet tidak ditemukan.');
   const tz = ss.getSpreadsheetTimeZone() || 'Asia/Jakarta';
   const daily = ss.getSheetByName('Daily Report Base');

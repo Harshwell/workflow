@@ -16,13 +16,20 @@ Formatnya sengaja sederhana: **Added / Changed / Fixed**. Tidak perlu sok formal
 - Hardening filter range: setelah write flow MAIN, filter aktif pada operational + optional (`B2B`, `EV-Bike`, `Special Case`) + `Daily/Weekly Report Base` disinkronkan ke full used range tanpa membuang criteria filter yang ada.
 
 ### Fixed
+- Refresh `Weekly Report Base`: jalur `SUB` tetap dibatasi 1x per hari di jam 09:00 (script timezone), sedangkan jalur `FORM - SUB` boleh refresh saat flow selesai (tanpa gate jam 09:00).
+- Tambah manual trigger `runWeeklyReportBaseManual(...)` untuk force refresh `Weekly Report Base` dari `Daily Report Base` di luar jadwal otomatis.
+- `fillWeeklyReportBase` + `runWeeklyReportBaseManual` kini fallback buka `CONFIG.masterSpreadsheetId` saat `getActiveSpreadsheet()`/context aktif tidak tersedia (hindari error `Spreadsheet tidak ditemukan`).
 - Enrichment helper di `Report Base` tidak lagi menghitung `Position Detail` dua kali per row (mengurangi duplikasi perhitungan saat build output rows).
 - Mapping PIC `Report Base` untuk position `Middle` kini tahan variasi casing/spacing pada `Position` dan `Service Center` (termasuk newline/karakter non-alfanumerik), sehingga keyword `MDP`/`deltasindo`/`ezcare`/`b-store` tidak lagi mudah jatuh ke `Unknown`.
 - Sinkronisasi snapshot kini kompatibel dengan rename sheet `Report Base` -> `Daily Report Base` (tetap fallback ke nama lama untuk backward compatibility).
 - Recalculate helper `Weekly Report Base` dioptimasi dari scan nested ke map index berbasis `(snapshotDate + dimensi kombinasi)` untuk menurunkan kompleksitas saat histori membesar.
 - `fillWeeklyReportBase` kini menerima `ssOverride` dari MAIN pipeline agar tidak gagal pada konteks non-active spreadsheet (`Spreadsheet tidak ditemukan`).
 - Penulisan `Submission Date` di routing operasional diperketat: hanya menulis nilai yang valid sebagai tanggal (hapus fallback raw string) untuk mencegah nilai non-date (mis. teks bebas) masuk ke kolom tanggal.
-- Source `Submission Date` dipersempit ke `Raw Data.claim_submission_date` sebagai prioritas utama lintas sheet operasional untuk mencegah drift antar-sheet akibat fallback source tanggal lain.
+- Source `Submission Date` dipertegas strict ke `Raw Data.claim_submission_date` (tanpa fallback sumber tanggal lain) untuk menghilangkan drift antar-sheet.
+- Setelah routing+enrichment, kolom `Submission Date` di sheet operasional utama (`Submission`,`Ask Detail`,`Start`,`Finish`,`PO`,`B2B`,`Special Case`) di-overwrite ulang dari mapping `Claim Number -> Raw Data.claim_submission_date` untuk mencegah kebocoran nilai dari kolom lain (mis. `OR`/`Remarks`).
+- Sinkronisasi strict `Submission Date`/`Submission by Month` dijalankan ulang setelah optional processors agar row `B2B` hasil rebuild (termasuk flow `FORM - MAIN`) tidak tertinggal kosong.
+- Refresh `Daily Report Base` setelah SUB diubah ke full rewrite, sekaligus melepas filter sheet sebelum write agar row tersembunyi filter tidak tertinggal stale.
+- Fallback PIC `Daily Report Base` ditambah: bila position kosong/unmapped tapi keyword service center dikenal (mis. `B-Store`), PIC tetap terisi (`Meindar`).
 - `Special Case` schema guard diperingan: `Start Date`/`End Date`/`Details` tidak lagi dianggap mandatory (hilangkan noise error `SPECIAL_CASE_SCHEMA_MISSING` untuk kolom legacy yang tidak dipakai).
 - Detail penjelasan rule (`First-Month`, `Policy Remaining`, `Second-Year`) kini ditulis sebagai **note** di kolom `Reason`, sehingga tetap informatif tanpa ketergantungan kolom tambahan.
 
@@ -124,3 +131,7 @@ Formatnya sengaja sederhana: **Added / Changed / Fixed**. Tidak perlu sok formal
 
 ### Notes
 - Repo ini masih besar, tetapi duplikasi shadow-override yang paling mengganggu sudah dipangkas dulu. Prioritas berikutnya sebaiknya fokus ke pemecahan `06a_EntryPoints` secara bertahap, bukan kosmetik folder.
+
+- Routing operasional `Submission Date` sekarang prioritas ke `claim_submitted_datetime` lalu fallback ke `claim_submission_date`/`submission_date` agar SUB tidak blank dan tidak drift ke kolom non-tanggal.
+- Enrichment operational sekarang juga mencakup sheet `B2B` untuk pengisian `Submission by Month` dari Raw agar kolom bulanan tidak kosong.
+- Refresh `Weekly Report Base` dipindah menjadi hanya saat flow `SUB` selesai (termasuk trigger jam 9), tidak lagi dieksekusi di flow `MAIN`.
