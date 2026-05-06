@@ -1035,11 +1035,16 @@ function __getMiddlePicFromServiceCenter06_(serviceCenter) {
 
 function __getReportBasePicFromPosition06_(position, serviceCenter) {
   const pos = String(position || '').trim().toLowerCase();
-  if (!pos) return 'Unknown';
   if (pos === 'front') return 'Adi & Yudha';
   if (pos === 'expedition') return 'Adit';
   if (pos === 'back') return 'Suci & Detha';
-  if (pos === 'middle') return __getMiddlePicFromServiceCenter06_(serviceCenter);
+
+  const middlePic = __getMiddlePicFromServiceCenter06_(serviceCenter);
+  if (pos === 'middle') return middlePic;
+
+  // Fallback: when position is missing/unmapped but SC keyword is known,
+  // still assign middle PIC instead of leaving Unknown.
+  if (middlePic !== 'Unknown') return middlePic;
   return 'Unknown';
 }
 
