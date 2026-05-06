@@ -16,6 +16,7 @@ function runPipeline_(pic, fileIds, opts) {
 
   // Flow context (default: main). Used by enrichment/sorting and Overview tagging.
   const flowName = (options.flow || options.Flow || options.flowName || 'main').toString().trim().toLowerCase();
+  const sourceName = String((options.source || options.Source || (typeof RUNTIME !== 'undefined' && RUNTIME ? RUNTIME.source : '') || '')).trim().toUpperCase();
   try { if (typeof RUNTIME !== 'undefined' && RUNTIME) RUNTIME.flowName = flowName; } catch (e) {}
 
   // Defer trashing uploaded files until end of a successful run.
@@ -458,7 +459,7 @@ function runPipeline_(pic, fileIds, opts) {
     if (typeof refreshReportBaseFromOperational06_ === 'function') refreshReportBaseFromOperational06_(ss);
   } catch (eRb) { try { logLine_('WARN', 'Report Base refresh failed', '', String(eRb), 'WARN'); } catch (e2) {} }
   try {
-    if (flowName === 'sub' && shouldRunWeeklyReportBaseForSub06b_()) {
+    if (shouldRunWeeklyReportBaseNow06b_(flowName, sourceName)) {
       SpreadsheetApp.flush();
       Utilities.sleep(3000);
       if (typeof fillWeeklyReportBase === 'function') fillWeeklyReportBase(snapshotDate || '', sourceFileName || '', ss);
@@ -1093,6 +1094,19 @@ function getOperationalSheetNames06b_(pic) {
   return sheets.filter(n => n && n !== 'B2B' && n !== 'EV-Bike' && n !== 'Special Case' && n !== 'Raw Data');
 }
 
+
+function shouldRunWeeklyReportBaseNow06b_(flowName, sourceName) {
+  const flow = String(flowName || '').trim().toLowerCase();
+  const src = String(sourceName || '').trim().toUpperCase();
+
+  // FORM - SUB: run immediately (not tied to 09:00 gate).
+  if (flow === 'form' && src === 'FORM_SUB') return true;
+
+  // Pure SUB: strict gate 09:00 + once/day.
+  if (flow === 'sub') return shouldRunWeeklyReportBaseForSub06b_();
+
+  return false;
+}
 
 function shouldRunWeeklyReportBaseForSub06b_() {
   try {

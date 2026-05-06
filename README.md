@@ -61,7 +61,7 @@ Tambahan update setelah batch Part 9:
 - `Submission by Month` sekarang disimpan sebagai **date** (tanggal 1 tiap bulan) dengan display format `MMM yy` di operational + Report Base.
 - `Submission Date` operasional sekarang **strict** hanya dari `Raw Data.claim_submission_date` (tanpa fallback source lain), tetap ditulis sebagai tanggal valid.
 - Enrichment juga menulis `Submission by Month` ke sheet `B2B` agar konsisten dengan sheet operasional lain.
-- Refresh `Weekly Report Base` dijalankan **maksimal 1x/hari** dan hanya pada flow `SUB` di jam 09:00 (script timezone).
+- Refresh `Weekly Report Base`: untuk **pure SUB** dijalankan maksimal 1x/hari di jam 09:00 (script timezone); untuk **FORM - SUB** dijalankan saat flow selesai (tidak terikat jam 09:00).
 
 - normalisasi kolom bulan existing ditambahkan saat enforcement layout supaya nilai lama (text/date campur) dikonversi konsisten jadi date-format bulan.
 - hardening optional sheets: excluded-status check di B2B & EV-Bike sekarang case-insensitive (normalisasi uppercase sebelum compare).

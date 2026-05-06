@@ -16,7 +16,7 @@ Formatnya sengaja sederhana: **Added / Changed / Fixed**. Tidak perlu sok formal
 - Hardening filter range: setelah write flow MAIN, filter aktif pada operational + optional (`B2B`, `EV-Bike`, `Special Case`) + `Daily/Weekly Report Base` disinkronkan ke full used range tanpa membuang criteria filter yang ada.
 
 ### Fixed
-- Refresh `Weekly Report Base` dibatasi 1x per hari dan hanya dijalankan pada flow `SUB` jam 09:00 (script timezone).
+- Refresh `Weekly Report Base`: jalur `SUB` tetap dibatasi 1x per hari di jam 09:00 (script timezone), sedangkan jalur `FORM - SUB` boleh refresh saat flow selesai (tanpa gate jam 09:00).
 - Enrichment helper di `Report Base` tidak lagi menghitung `Position Detail` dua kali per row (mengurangi duplikasi perhitungan saat build output rows).
 - Mapping PIC `Report Base` untuk position `Middle` kini tahan variasi casing/spacing pada `Position` dan `Service Center` (termasuk newline/karakter non-alfanumerik), sehingga keyword `MDP`/`deltasindo`/`ezcare`/`b-store` tidak lagi mudah jatuh ke `Unknown`.
 - Sinkronisasi snapshot kini kompatibel dengan rename sheet `Report Base` -> `Daily Report Base` (tetap fallback ke nama lama untuk backward compatibility).
