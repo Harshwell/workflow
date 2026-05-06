@@ -1299,6 +1299,12 @@ function refreshReportBaseFromOperational06_(ss, opts) {
   if (!ss) return { written: 0, skipped: 'missing spreadsheet' };
   const sh = ss.getSheetByName('Daily Report Base') || ss.getSheetByName('Report Base');
   if (!sh) return { written: 0, skipped: 'Daily Report Base / Report Base not found' };
+
+  // Hard reset filter before rewrite/upsert to avoid stale hidden-row behavior during writes.
+  try {
+    const f0 = sh.getFilter ? sh.getFilter() : null;
+    if (f0) f0.remove();
+  } catch (eF0) {}
   if (DRY_RUN) return { written: 0, skipped: 'DRY_RUN' };
   const incremental = !!(opts && opts.incremental);
 

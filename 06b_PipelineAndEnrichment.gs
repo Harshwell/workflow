@@ -1169,6 +1169,8 @@ function applyStrictSubmissionDateAndMonth06b_(ss, rawValues, headerIndexRaw) {
 
     const n = lr - 1;
     const claims = sh.getRange(2, idxClaimOps + 1, n, 1).getValues();
+    const curSubDate = (idxSubDateOps !== -1) ? sh.getRange(2, idxSubDateOps + 1, n, 1).getValues() : null;
+    const curSubMonth = (idxSubMonthOps !== -1) ? sh.getRange(2, idxSubMonthOps + 1, n, 1).getValues() : null;
     const outSubDate = (idxSubDateOps !== -1) ? new Array(n) : null;
     const outSubMonth = (idxSubMonthOps !== -1) ? new Array(n) : null;
 
@@ -1177,9 +1179,11 @@ function applyStrictSubmissionDateAndMonth06b_(ss, rawValues, headerIndexRaw) {
       const rawRow = claim ? byClaim[claim] : null;
       const rawVal = (rawRow ? rawRow[idxSubmissionDateRaw] : '');
       const d = coerceDate_(rawVal);
-      const validDate = (d && !isNaN(d.getTime())) ? d : '';
-      if (outSubDate) outSubDate[r] = [validDate];
-      if (outSubMonth) outSubMonth[r] = [validDate ? toSubmissionMonthDate06b_(validDate) : ''];
+      const validDate = (d && !isNaN(d.getTime())) ? d : null;
+      const keepDate = (curSubDate && curSubDate[r]) ? curSubDate[r][0] : '';
+      const keepMonth = (curSubMonth && curSubMonth[r]) ? curSubMonth[r][0] : '';
+      if (outSubDate) outSubDate[r] = [validDate || keepDate || ''];
+      if (outSubMonth) outSubMonth[r] = [validDate ? toSubmissionMonthDate06b_(validDate) : (keepMonth || '')];
     }
 
     if (outSubDate) {
