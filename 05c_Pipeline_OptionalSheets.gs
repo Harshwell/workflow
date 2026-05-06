@@ -339,9 +339,6 @@ function processB2B_(ss, rawValues, headerIndexRaw, pic) { // `pic` kept for bac
   } catch (e) {}
 
 
-  // Rebuild list every run to avoid stale rows
-  clearSheetDataHard_(sh, { bufferRows: 1200 });
-
   const dbLinkCol0 = idxH['DB Link'];
   const rows = [];
   const dbUrls = [];
@@ -484,6 +481,9 @@ function processB2B_(ss, rawValues, headerIndexRaw, pic) { // `pic` kept for bac
   } catch (eSub) {}
 
   if (!rows.length) return 0;
+  // Rebuild list only when we have replacement rows.
+  // Prevent accidental "header-only" sheet when source window is temporarily empty.
+  clearSheetDataHard_(sh, { bufferRows: 1200 });
   safeSetValues_(sh.getRange(2, 1, rows.length, header.length), rows);
 
   // DB Link as RichText (avoid #ERROR!, display "LINK")
