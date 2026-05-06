@@ -318,7 +318,10 @@ Catatan ini dipakai sebagai quick-reference maintenance (bukan detail desain):
 - `Submission by Month` diperlakukan sebagai date bulanan (tanggal 1) dengan display `MMM yy` agar tetap bisa dipakai formula/pivot tanpa kehilangan tampilan bisnis.
 - Optional sheets (B2B/EV-Bike): excluded-status filtering wajib case-insensitive agar aman terhadap variasi casing dari source.
 - B2B partner matching sudah include tambahan partner enterprise terbaru (Bhinneka/PSMS/DIGIMAP EnE/Parastar/GSE/KPD/Tukar Ind/Bumilindo).
-- Fallback `Submission Date` wajib membaca dua sumber utama: `claim_submitted_datetime` (SUB) dan `claim_submission_date` (MAIN), plus alias `submission_date`.
+- `Submission Date` wajib strict dari `Raw Data.claim_submission_date` (tanpa fallback field lain).
+- `Weekly Report Base` refresh rule: `SUB` pure wajib gate jam 09:00 + 1x per tanggal (script timezone), sedangkan `FORM - SUB` boleh refresh saat flow selesai (bukan `FORM - MAIN`).
+- Enrichment `Submission by Month` juga diterapkan ke sheet `B2B` untuk menjaga konsistensi agregasi `Daily Report Base`.
+
 - Mapping `Exclusion` mencakup tambahan `INSURANCE_CLAIM_WAITING_PAID` dan `CLAIM_CANCELLED`.
 
 Saat ada update policy berikutnya, cek ulang 3 titik ini secara berurutan:
