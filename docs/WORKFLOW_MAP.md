@@ -304,6 +304,7 @@ Checklist ini fokus ke area yang paling rawan regressions pas perubahan terakhir
   - preserve history tanggal lain,
   - generate zero-row terbatas untuk kombinasi yang hilang dari previous snapshot date terdekat,
   - recalculate full helper (`Previous Snapshot Date`, `Previous Count`, `Daily Change`, `Is Last 7 Days`) untuk antisipasi backfill.
+  - setelah write selesai, filter aktif di sheet target disinkronkan ke full used range dengan mempertahankan filter criteria yang ada (agar row baru yang match filter bisa langsung ikut terlihat).
 
 
 ## Recent hardening notes (2026-04-27)

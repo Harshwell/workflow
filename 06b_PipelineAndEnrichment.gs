@@ -462,6 +462,19 @@ function runPipeline_(pic, fileIds, opts) {
     Utilities.sleep(3000);
     if (typeof fillWeeklyReportBase === 'function') fillWeeklyReportBase(snapshotDate || '', sourceFileName || '');
   } catch (eWrb) { try { logLine_('WARN', 'Weekly Report Base refresh failed', '', String(eWrb), 'WARN'); } catch (e2) {} }
+  try {
+    const ops = (typeof getOperationalSheetNames06b_ === 'function') ? getOperationalSheetNames06b_(profileName) : [];
+    const optional = ['B2B', 'EV-Bike', 'Special Case', 'Daily Report Base', 'Weekly Report Base'];
+    const seen = Object.create(null);
+    ops.concat(optional).forEach(function(name) {
+      const n = String(name || '').trim();
+      if (!n || seen[n]) return;
+      seen[n] = true;
+      const sh = ss.getSheetByName(n);
+      if (!sh) return;
+      if (typeof __expandSheetFilterToUsedRange06_ === 'function') __expandSheetFilterToUsedRange06_(sh);
+    });
+  } catch (eFlt) { try { logLine_('WARN', 'Filter range sync failed', '', String(eFlt), 'WARN'); } catch (e2) {} }
 
   setProgress_(1.0, 'Done.');
   logLine_(

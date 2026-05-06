@@ -13,6 +13,7 @@ Formatnya sengaja sederhana: **Added / Changed / Fixed**. Tidak perlu sok formal
 - `Position Detail Order` memakai mapping konfiguratif + fallback (`Middle - PIC lain` = `3.9`, `Middle - Unassigned` = `3.99`, lainnya = `99`) untuk menjaga urutan pivot tetap deterministic.
 - Tambah proses historis `fillWeeklyReportBase(snapshotDateOverride, sourceFileName)` berbasis agregasi dari `Daily Report Base` ke `Weekly Report Base` (replace-by-snapshot-date, zero-row hilang, recalculate helper previous/change/last7days, sorting final).
 - Hook weekly snapshot di akhir MAIN sekarang membawa konteks file utama (`sourceFileName`) dan snapshot date hasil extract filename (`yyyy-MM-dd` sebelum `T`) saat tersedia.
+- Hardening filter range: setelah write flow MAIN, filter aktif pada operational + optional (`B2B`, `EV-Bike`, `Special Case`) + `Daily/Weekly Report Base` disinkronkan ke full used range tanpa membuang criteria filter yang ada.
 
 ### Fixed
 - Enrichment helper di `Report Base` tidak lagi menghitung `Position Detail` dua kali per row (mengurangi duplikasi perhitungan saat build output rows).

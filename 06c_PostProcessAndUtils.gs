@@ -1487,6 +1487,7 @@ function refreshReportBaseFromOperational06_(ss, opts) {
     try { sh.getRange(2, 2, existing.length, 1).setNumberFormat('MMM yy'); } catch (eM2) {}
     try { sh.getRange(2, 5, existing.length, 1).setNumberFormat('dd MMM yy, HH:mm'); } catch (e4) {}
   }
+  try { __expandSheetFilterToUsedRange06_(sh); } catch (eF3) {}
   return { written: upserted, totalRows: existing.length, sheets: srcSheets.length, mode: 'incremental-upsert' };
 }
 
@@ -1626,6 +1627,41 @@ function fillWeeklyReportBase(snapshotDateOverride, sourceFileName) {
   weekly.getRange(1, 1, 1, headers.length).setValues([headers]);
   if (all.length) weekly.getRange(2, 1, all.length, headers.length).setValues(all.map(r => r.slice(0, headers.length)));
   __formatWeeklyReportBase06_(weekly, Math.max(2, all.length + 1));
+  try { __expandSheetFilterToUsedRange06_(weekly); } catch (eFwk) {}
+}
+
+function __expandSheetFilterToUsedRange06_(sh) {
+  if (!sh || typeof sh.getFilter !== 'function') return false;
+  const filter = sh.getFilter();
+  if (!filter || !filter.getRange) return false;
+  const oldRange = filter.getRange();
+  const oldRow = oldRange.getRow();
+  const oldCol = oldRange.getColumn();
+  const oldCols = oldRange.getNumColumns();
+  const oldRows = oldRange.getNumRows();
+  if (oldRow !== 1 || oldCols < 1) return false;
+
+  const criteriaByAbsCol = {};
+  for (let rel = 1; rel <= oldCols; rel++) {
+    const c = filter.getColumnFilterCriteria(rel);
+    if (c) criteriaByAbsCol[oldCol + rel - 1] = c;
+  }
+
+  const lastCol = Math.max(sh.getLastColumn(), oldCol + oldCols - 1);
+  const lastRow = Math.max(sh.getLastRow(), 1);
+  const needResize = (oldCol !== 1) || (oldCols !== lastCol) || (oldRows !== lastRow);
+  if (!needResize) return false;
+
+  filter.remove();
+  sh.getRange(1, 1, lastRow, lastCol).createFilter();
+  const nf = sh.getFilter();
+  if (!nf) return true;
+  Object.keys(criteriaByAbsCol).forEach(function(absStr) {
+    const abs = Number(absStr);
+    if (!isFinite(abs) || abs < 1 || abs > lastCol) return;
+    try { nf.setColumnFilterCriteria(abs, criteriaByAbsCol[abs]); } catch (e) {}
+  });
+  return true;
 }
 
 function __getPositionOrderWeekly06_(position) {
