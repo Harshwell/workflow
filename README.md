@@ -64,6 +64,7 @@ Tambahan update setelah batch Part 9:
 - Sinkronisasi strict `Submission Date`/`Submission by Month` dijalankan ulang setelah optional processors (`B2B`/`EV-Bike`/`Special Case`) supaya row hasil rebuild `B2B` (termasuk FORM - MAIN) tetap terisi.
 - Enrichment juga menulis `Submission by Month` ke sheet `B2B` agar konsisten dengan sheet operasional lain.
 - Refresh `Weekly Report Base`: untuk **pure SUB** dijalankan maksimal 1x/hari di jam 09:00 (script timezone); untuk **FORM - SUB** dijalankan saat flow selesai (tidak terikat jam 09:00).
+- Tambah manual trigger `runWeeklyReportBaseManual(snapshotDateOverride, sourceFileNameOverride)` untuk force update `Weekly Report Base` dari `Daily Report Base` saat diperlukan.
 
 - normalisasi kolom bulan existing ditambahkan saat enforcement layout supaya nilai lama (text/date campur) dikonversi konsisten jadi date-format bulan.
 - hardening optional sheets: excluded-status check di B2B & EV-Bike sekarang case-insensitive (normalisasi uppercase sebelum compare).

@@ -322,6 +322,7 @@ Catatan ini dipakai sebagai quick-reference maintenance (bukan detail desain):
 - Setelah routing+enrichment, kolom `Submission Date` di sheet operasional utama (`Submission`,`Ask Detail`,`Start`,`Finish`,`PO`,`B2B`,`Special Case`) di-overwrite ulang dari mapping `Claim Number -> Raw Data.claim_submission_date` untuk mencegah kebocoran nilai dari kolom lain (mis. `OR`/`Remarks`).
 - Sinkronisasi strict `Submission Date`/`Submission by Month` dijalankan ulang setelah optional processors (`B2B`/`EV-Bike`/`Special Case`) supaya row hasil rebuild `B2B` (termasuk FORM - MAIN) tetap terisi.
 - `Weekly Report Base` refresh rule: `SUB` pure wajib gate jam 09:00 + 1x per tanggal (script timezone), sedangkan `FORM - SUB` boleh refresh saat flow selesai (bukan `FORM - MAIN`).
+- Manual override tersedia lewat fungsi `runWeeklyReportBaseManual(...)` untuk force refresh `Weekly Report Base` dari `Daily Report Base` tanpa menunggu flow otomatis.
 - Enrichment `Submission by Month` juga diterapkan ke sheet `B2B` untuk menjaga konsistensi agregasi `Daily Report Base`.
 
 - Mapping `Exclusion` mencakup tambahan `INSURANCE_CLAIM_WAITING_PAID` dan `CLAIM_CANCELLED`.
