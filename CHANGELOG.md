@@ -5,6 +5,19 @@ Formatnya sengaja sederhana: **Added / Changed / Fixed**. Tidak perlu sok formal
 
 ---
 
+## 2026-05-06
+
+### Changed
+- `refreshReportBaseFromOperational06_` sekarang menulis 6 helper column tambahan di `Report Base`: `Position Detail`, `Position Detail Order`, `Status Aging Days`, `Status Aging Bucket`, `Submission Aging Days`, dan `Submission Aging Bucket`.
+- Derivasi `Position Detail` dipertegas: case-insensitive + trim-safe, `Middle - Unassigned` saat PIC kosong, serta canonical casing PIC Middle (`Farhan`/`Meilani`/`Meindar`) agar mapping pivot order stabil.
+- `Position Detail Order` memakai mapping konfiguratif + fallback (`Middle - PIC lain` = `3.9`, `Middle - Unassigned` = `3.99`, lainnya = `99`) untuk menjaga urutan pivot tetap deterministic.
+
+### Fixed
+- Enrichment helper di `Report Base` tidak lagi menghitung `Position Detail` dua kali per row (mengurangi duplikasi perhitungan saat build output rows).
+- Mapping PIC `Report Base` untuk position `Middle` kini tahan variasi casing/spacing pada `Position` dan `Service Center` (termasuk newline/karakter non-alfanumerik), sehingga keyword `MDP`/`deltasindo`/`ezcare`/`b-store` tidak lagi mudah jatuh ke `Unknown`.
+
+---
+
 ## 2026-05-04
 
 ### Fixed

@@ -1013,7 +1013,7 @@ function __getBranchFromServiceCenter06_(serviceCenter) {
 }
 
 function __getMiddlePicFromServiceCenter06_(serviceCenter) {
-  const sc = String(serviceCenter || '').toLowerCase();
+  const sc = __normalizeScKeywordText06c_(serviceCenter);
   if (!sc) return 'Unknown';
 
   const map = [
@@ -1034,11 +1034,12 @@ function __getMiddlePicFromServiceCenter06_(serviceCenter) {
 }
 
 function __getReportBasePicFromPosition06_(position, serviceCenter) {
-  const pos = String(position || '').trim();
-  if (pos === 'Front') return 'Adi & Yudha';
-  if (pos === 'Expedition') return 'Adit';
-  if (pos === 'Back') return 'Suci & Detha';
-  if (pos === 'Middle') return __getMiddlePicFromServiceCenter06_(serviceCenter);
+  const pos = String(position || '').trim().toLowerCase();
+  if (!pos) return 'Unknown';
+  if (pos === 'front') return 'Adi & Yudha';
+  if (pos === 'expedition') return 'Adit';
+  if (pos === 'back') return 'Suci & Detha';
+  if (pos === 'middle') return __getMiddlePicFromServiceCenter06_(serviceCenter);
   return 'Unknown';
 }
 
@@ -1305,7 +1306,13 @@ function refreshReportBaseFromOperational06_(ss, opts) {
     'Service Center',
     'Branch',
     'Position',
-    'PIC'
+    'PIC',
+    'Position Detail',
+    'Position Detail Order',
+    'Status Aging Days',
+    'Status Aging Bucket',
+    'Submission Aging Days',
+    'Submission Aging Bucket'
   ];
 
   const srcSheets = __getReportBaseSourceSheets06_(ss);
@@ -1343,6 +1350,15 @@ function refreshReportBaseFromOperational06_(ss, opts) {
       }
       return -1;
     })();
+    const idxLsa = (function() {
+      const cands = ['Last Status Aging', 'LSA'];
+      for (let ci = 0; ci < cands.length; ci++) {
+        const ix = __findHeaderIndexFlexible06_(hdr, cands[ci]);
+        if (ix !== -1) return ix;
+      }
+      return -1;
+    })();
+    const idxTat = __findHeaderIndexFlexible06_(hdr, 'TAT');
     const vals = src.getRange(2, 1, lr - 1, lc).getValues();
 
     for (let r = 0; r < vals.length; r++) {
@@ -1354,6 +1370,8 @@ function refreshReportBaseFromOperational06_(ss, opts) {
       const subDateVal = (idxSubDate !== -1) ? row[idxSubDate] : '';
       const lastDateVal = (idxLastDate !== -1) ? row[idxLastDate] : '';
       const scVal = (idxSc !== -1) ? row[idxSc] : '';
+      const lsaVal = (idxLsa !== -1) ? row[idxLsa] : '';
+      const tatVal = (idxTat !== -1) ? row[idxTat] : '';
 
       const lastDateObj = __parseAnyDateReportBase06_(lastDateVal);
       const lastDateTs = lastDateObj ? lastDateObj.getTime() : -1;
@@ -1377,6 +1395,8 @@ function refreshReportBaseFromOperational06_(ss, opts) {
         branch: __getBranchFromServiceCenter06_(scVal || ''),
         position: position || '',
         pic: __getReportBasePicFromPosition06_(position || '', scVal || ''),
+        statusAgingDays: __toNonNegativeIntReportBase06_(lsaVal),
+        submissionAgingDays: __toNonNegativeIntReportBase06_(tatVal),
         lastDateTs: lastDateTs
       };
 
@@ -1387,6 +1407,8 @@ function refreshReportBaseFromOperational06_(ss, opts) {
         candidate.branch = pickValue_(candidate.branch, prev.branch);
         candidate.position = pickValue_(candidate.position, prev.position);
         candidate.pic = pickValue_(candidate.pic, prev.pic);
+        candidate.statusAgingDays = pickValue_(candidate.statusAgingDays, prev.statusAgingDays);
+        candidate.submissionAgingDays = pickValue_(candidate.submissionAgingDays, prev.submissionAgingDays);
       }
 
       candidate.pic = __getReportBasePicFromPosition06_(candidate.position, candidate.serviceCenter);
@@ -1395,17 +1417,27 @@ function refreshReportBaseFromOperational06_(ss, opts) {
     }
   }
 
-  const rows = Object.keys(byClaim).map(k => byClaim[k]).map(x => [
-    x.subDate,
-    x.subMonth,
-    x.claim,
-    x.lastStatus,
-    x.lastDate,
-    x.serviceCenter,
-    x.branch,
-    x.position,
-    x.pic
-  ]);
+  const rows = Object.keys(byClaim).map(function(k) {
+    const x = byClaim[k];
+    const positionDetail = __buildPositionDetailReportBase06_(x.position, x.pic);
+    return [
+      x.subDate,
+      x.subMonth,
+      x.claim,
+      x.lastStatus,
+      x.lastDate,
+      x.serviceCenter,
+      x.branch,
+      x.position,
+      x.pic,
+      positionDetail,
+      __getPositionDetailOrderReportBase06_(positionDetail),
+      (x.statusAgingDays == null) ? '' : x.statusAgingDays,
+      __getStatusAgingBucketReportBase06_(x.statusAgingDays),
+      (x.submissionAgingDays == null) ? '' : x.submissionAgingDays,
+      __getSubmissionAgingBucketReportBase06_(x.submissionAgingDays)
+    ];
+  });
 
   sh.getRange(1, 1, 1, headers.length).setValues([headers]);
   try { sh.getRange(1, 1, 1, headers.length).setHorizontalAlignment('center').setVerticalAlignment('middle'); } catch (e0) {}
@@ -1456,6 +1488,82 @@ function refreshReportBaseFromOperational06_(ss, opts) {
     try { sh.getRange(2, 5, existing.length, 1).setNumberFormat('dd MMM yy, HH:mm'); } catch (e4) {}
   }
   return { written: upserted, totalRows: existing.length, sheets: srcSheets.length, mode: 'incremental-upsert' };
+}
+
+const POSITION_DETAIL_ORDER_MAP_06_ = Object.freeze({
+  'Front': 1,
+  'Expedition': 2,
+  'Middle - Farhan': 3.1,
+  'Middle - Meilani': 3.2,
+  'Middle - Meindar': 3.3,
+  'Back': 4,
+  'Closed': 5
+});
+
+function __toNonNegativeIntReportBase06_(v) {
+  if (v == null || v === '') return null;
+  const n = Number(v);
+  if (!isFinite(n)) return null;
+  const out = Math.floor(n);
+  return out < 0 ? null : out;
+}
+
+function __toTitleCaseReportBase06_(v) {
+  const s = String(v == null ? '' : v).trim().toLowerCase();
+  if (!s) return '';
+  return s.split(/\s+/).map(function(part) {
+    return part ? (part.charAt(0).toUpperCase() + part.slice(1)) : '';
+  }).join(' ');
+}
+
+function __buildPositionDetailReportBase06_(position, pic) {
+  const posNorm = String(position == null ? '' : position).trim().toLowerCase();
+  if (!posNorm) return 'Unknown';
+  if (posNorm === 'middle') {
+    const picNorm = String(pic == null ? '' : pic).trim().toLowerCase();
+    const canonicalPic = ({
+      'farhan': 'Farhan',
+      'meilani': 'Meilani',
+      'meindar': 'Meindar'
+    })[picNorm];
+    const picClean = canonicalPic || __toTitleCaseReportBase06_(pic);
+    return 'Middle - ' + (picClean || 'Unassigned');
+  }
+  return __toTitleCaseReportBase06_(position);
+}
+
+function __getPositionDetailOrderReportBase06_(positionDetail) {
+  const pd = String(positionDetail == null ? '' : positionDetail).trim();
+  if (!pd) return 99;
+  if (POSITION_DETAIL_ORDER_MAP_06_[pd] != null) return POSITION_DETAIL_ORDER_MAP_06_[pd];
+  if (pd.indexOf('Middle - ') === 0) {
+    if (pd === 'Middle - Unassigned') return 3.99;
+    return 3.9;
+  }
+  return 99;
+}
+
+function __getStatusAgingBucketReportBase06_(days) {
+  if (days == null || days === '') return '';
+  const d = Number(days);
+  if (!isFinite(d) || d < 0) return '';
+  if (d <= 1) return '01. 0-1 days';
+  if (d <= 3) return '02. 2-3 days';
+  if (d <= 7) return '03. 4-7 days';
+  if (d <= 14) return '04. 8-14 days';
+  if (d <= 30) return '05. 15-30 days';
+  return '06. >30 days';
+}
+
+function __getSubmissionAgingBucketReportBase06_(days) {
+  if (days == null || days === '') return '';
+  const d = Number(days);
+  if (!isFinite(d) || d < 0) return '';
+  if (d <= 7) return '01. 0-7 days';
+  if (d <= 14) return '02. 8-14 days';
+  if (d <= 30) return '03. 15-30 days';
+  if (d <= 60) return '04. 31-60 days';
+  return '05. >60 days';
 }
 
 function __isFinishStatus06_(status) {

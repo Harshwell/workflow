@@ -8,6 +8,29 @@ Dokumen ini sengaja dibuat tetap ramping. Untuk self-project, dokumentasi yang e
 
 ---
 
+## Update implementasi terbaru (2026-05-06)
+
+Tambahan update untuk helper analitik `Report Base`:
+
+- `Report Base` sekarang mengisi 6 helper column otomatis saat refresh:
+  - `Position Detail`
+  - `Position Detail Order`
+  - `Status Aging Days`
+  - `Status Aging Bucket`
+  - `Submission Aging Days`
+  - `Submission Aging Bucket`
+- `Position Detail` dibuat case-insensitive + trim-safe:
+  - `Position` kosong -> `Unknown`
+  - `Position = Middle` + `PIC` kosong -> `Middle - Unassigned`
+  - `Position = Middle` + `PIC` terisi -> `Middle - <PIC>`
+  - selain `Middle` -> nama posisi rapi (title case)
+- urutan pivot `Position Detail Order` memakai mapping tetap:
+  - `Front` (1), `Expedition` (2), `Middle - Farhan` (3.1), `Middle - Meilani` (3.2), `Middle - Meindar` (3.3), `Back` (4), `Closed` (5)
+  - fallback: `Middle - PIC lain` (3.9), `Middle - Unassigned` (3.99), lainnya (99)
+- `Status Aging Days` diambil dari `Last Status Aging` / `LSA`, dan `Submission Aging Days` dari `TAT` (invalid -> blank), lalu dibucket untuk sorting pivot yang konsisten.
+
+---
+
 ## Update implementasi terbaru (2026-05-04)
 
 Tambahan fix untuk stabilitas optional sheet:
