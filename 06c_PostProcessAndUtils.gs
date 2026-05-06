@@ -1510,7 +1510,13 @@ function extractSnapshotDateFromFileName_(sourceFileName) {
 }
 
 function fillWeeklyReportBase(snapshotDateOverride, sourceFileName, ssOverride) {
-  const ss = ssOverride || SpreadsheetApp.getActiveSpreadsheet();
+  let ss = ssOverride || SpreadsheetApp.getActiveSpreadsheet();
+  if (!ss) {
+    try {
+      const fallbackId = String((CONFIG && CONFIG.masterSpreadsheetId) ? CONFIG.masterSpreadsheetId : '').trim();
+      if (fallbackId) ss = SpreadsheetApp.openById(fallbackId);
+    } catch (e0) {}
+  }
   if (!ss) throw new Error('fillWeeklyReportBase: Spreadsheet tidak ditemukan.');
   const tz = ss.getSpreadsheetTimeZone() || 'Asia/Jakarta';
   const daily = ss.getSheetByName('Daily Report Base');

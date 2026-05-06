@@ -2954,7 +2954,13 @@ function runWeeklyReportBaseManual(snapshotDateOverride, sourceFileNameOverride)
   try { if (typeof resetRuntime_ === 'function') resetRuntime_(); } catch (e0) {}
   const masterKey = 'Master';
   validateConfigForPic_(masterKey);
-  const ss = __tryOpenSpreadsheetForKey06_(masterKey);
+  let ss = __tryOpenSpreadsheetForKey06_(masterKey);
+  if (!ss) {
+    try {
+      const fallbackId = String((CONFIG && CONFIG.masterSpreadsheetId) ? CONFIG.masterSpreadsheetId : '').trim();
+      if (fallbackId) ss = SpreadsheetApp.openById(fallbackId);
+    } catch (eOpen) {}
+  }
   if (!ss) throw new Error('runWeeklyReportBaseManual: master spreadsheet tidak ditemukan.');
 
   const snapshotDate = String(snapshotDateOverride || '').trim();
