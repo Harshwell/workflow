@@ -258,9 +258,11 @@ const EMAIL_INGEST_POLICY = Object.freeze({
   MAX_EMAILS_PER_RUN: 1,
 
   FROM: getPropString_('EMAIL_INGEST_FROM', 'data-reporting@qoala.id'),
+  // Ops tip: when subject prefix changes (e.g., "4. ..."), override Script Property
+  // EMAIL_INGEST_SUBJECT without code change.
   SUBJECT: getPropString_(
     'EMAIL_INGEST_SUBJECT',
-    'Daily Claim Pending Monitoring'
+    '3. Daily Claim Pending Monitoring'
   ),
 
   // Attachment name starts with this prefix (case-sensitive match is safer).

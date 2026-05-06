@@ -14,6 +14,9 @@ Tambahan fix untuk stabilitas optional sheet:
 
 - `B2B` sekarang **tidak di-clear duluan**. Data hanya di-rebuild saat ada row hasil filter yang siap ditulis. Ini mencegah kondisi sheet jadi header-only ketika source run sementara kosong atau semua row ter-filter.
 - matcher highlight berdasarkan note untuk `Second-Year (Market Value)`, `First-Month Policy`, dan `Policy Remaining <= 1 Month` dibuat lebih toleran (dengan/tanpa tanda titik), supaya kasus note tampil tapi warna kosong tidak terjadi lagi.
+- default subject filter untuk email ingest `MAIN` digeser ke title terbaru: `3. Daily Claim Pending Monitoring`.
+- jika prefix subject berubah lagi (contoh `4.`), cukup set Script Property `EMAIL_INGEST_SUBJECT` tanpa edit code.
+- panel METABASE di `Overview` sekarang terisi konsisten: `Pulling Time` (start datetime), `Processing Time` (durasi eksekusi), dan `Flow` (`MAIN` / `SUB` / `FORM - MAIN` / `FORM - SUB`).
 
 ---
 

@@ -370,6 +370,14 @@ function __logOverviewDuration06_(pic, startedAt, ssMaybe) {
   return ss;
 }
 
+function __logOverviewFlow06_(pic, flowLabel, ssMaybe) {
+  const ss = ssMaybe || __tryOpenSpreadsheetForKey06_(pic);
+  if (!ss) return null;
+  const flow = String(flowLabel || '').trim().toUpperCase();
+  __writeOverviewValueNextToLabel06_(ss, 'Flow', 5, flow);
+  return ss;
+}
+
 
 /** =========================
  * Trigger entrypoint
@@ -397,6 +405,7 @@ function onFormSubmit(e) {
       }
     } catch (e2) {}
 
+    try { __logOverviewFlow06_('Master', 'FORM - ' + flowLabel, ssTiming); } catch (eOvFlow) {}
     try { setProgressForFlow_(flowLabel, 0, 'Starting...', { runId: runId, prefixFlowInStep: true }); } catch (e3) {}
     try { setProgressForFlow_(flowLabel, 0, 'Starting…', { runId: runId, prefixFlowInStep: true }); } catch (e3) {}
     try { logLine_('FORM', 'Trigger received', 'flow=' + flowLabel + ' runId=' + runId, 'files=' + (req.allFileIds ? req.allFileIds.length : 0), 'INFO'); } catch (e4) {}
@@ -896,6 +905,7 @@ function runEmailIngest(maxThreads) {
     const startedAt = new Date();
     let ssTiming = null;
     try { ssTiming = __logOverviewStart06_('Master', startedAt); } catch (e) {}
+    try { __logOverviewFlow06_('Master', 'MAIN', ssTiming); } catch (eF) {}
 
     try {
       const policy = (CONFIG && CONFIG.emailIngest) ? CONFIG.emailIngest : {};
@@ -1096,6 +1106,13 @@ function runSubEmailIngest(maxThreads) {
     if (PIPELINE_FLAGS.CLEAR_LOG_BEFORE_RUN) clearLogSheet_();
 
     const startedAt = new Date();
+    let ssTiming = null;
+    try { ssTiming = __logOverviewStart06_('Master', startedAt); } catch (eT0) {}
+    try { __logOverviewFlow06_('Master', 'SUB', ssTiming); } catch (eT1) {}
+    const __finishSub06a_ = (out) => {
+      try { __logOverviewDuration06_('Master', startedAt, ssTiming); } catch (eT2) {}
+      return out;
+    };
     try { logLine_('SUB_START', 'Start SUB email ingest', '', startedAt.toISOString(), 'INFO'); } catch (e2) {}
 
     const policy = (CONFIG && CONFIG.subEmailIngest) ? CONFIG.subEmailIngest : {};
@@ -1112,7 +1129,7 @@ function runSubEmailIngest(maxThreads) {
     if (!threads || !threads.length) {
       try { setProgressForFlow_('SUB', 1.0, 'No queued emails.', { prefixFlowInStep: true }); } catch (eP1) {}
       try { logLine_('SUB', 'No queued SUB emails', query, '', 'INFO'); } catch (e3) {}
-      return { severity: 'INFO', message: 'No queued SUB emails', processed: 0, failed: 0 };
+      return __finishSub06a_({ severity: 'INFO', message: 'No queued SUB emails', processed: 0, failed: 0 });
     }
 
     // Deterministic: process first thread only (per run).
@@ -1163,7 +1180,7 @@ function runSubEmailIngest(maxThreads) {
       try { setProgressForFlow_('SUB', 1.0, 'Failed (OLD/NEW attachment missing)', { prefixFlowInStep: true }); } catch (eP2) {}
       try { logLine_('SUB_ERR', 'Missing OLD/NEW attachments (expected 2 XLSX)', names, '', 'ERROR'); } catch (e6) {}
       // Leave queued for retry.
-      return { severity: 'ERROR', message: 'Missing OLD/NEW attachments', processed: 0, failed: 1 };
+      return __finishSub06a_({ severity: 'ERROR', message: 'Missing OLD/NEW attachments', processed: 0, failed: 1 });
     }
 
     // Open master workbook (same as MAIN).
@@ -1229,7 +1246,7 @@ function runSubEmailIngest(maxThreads) {
         try { msg.markRead(); } catch (eMR2) {}
         try { thread.removeLabel(queuedLabel); } catch (eRL2) {}
         try { thread.moveToTrash(); } catch (eTR2) {}
-        return { severity: 'INFO', message: 'Duplicate SUB token (skipped).', processed: 0, failed: 0, skipped: true };
+        return __finishSub06a_({ severity: 'INFO', message: 'Duplicate SUB token (skipped).', processed: 0, failed: 0, skipped: true });
       }
     } catch (eId2) {}
 
@@ -1258,7 +1275,7 @@ try {
     if (!rOld || String(rOld.severity || '').toUpperCase() === 'ERROR') {
       try { setProgressForFlow_('SUB', 1.0, 'Failed (OLD)', { prefixFlowInStep: true }); } catch (eP6) {}
       try { logLine_('SUB_FAIL', 'OLD processing failed; leave email queued', '', '', 'ERROR'); } catch (e7) {}
-      return { severity: 'ERROR', message: 'SUB OLD failed', processed: 0, failed: 1, details: rOld };
+      return __finishSub06a_({ severity: 'ERROR', message: 'SUB OLD failed', processed: 0, failed: 1, details: rOld });
     }
 
     try { setProgressForFlow_('SUB', 0.62, 'Process NEW...', { prefixFlowInStep: true }); } catch (eP7) {}
@@ -1270,7 +1287,7 @@ try {
     if (!rNew || String(rNew.severity || '').toUpperCase() === 'ERROR') {
       try { setProgressForFlow_('SUB', 1.0, 'Failed (NEW)', { prefixFlowInStep: true }); } catch (eP8) {}
       try { logLine_('SUB_FAIL', 'NEW processing failed; leave email queued', '', '', 'ERROR'); } catch (e8) {}
-      return { severity: 'ERROR', message: 'SUB NEW failed', processed: 0, failed: 1, details: rNew };
+      return __finishSub06a_({ severity: 'ERROR', message: 'SUB NEW failed', processed: 0, failed: 1, details: rNew });
     }
     // Relocate rows by Last Status mapping (move FULL row, dedupe by Claim Number).
     try { setProgressForFlow_('SUB', 0.80, 'Relocate + sort...', { prefixFlowInStep: true }); } catch (eP9) {}
@@ -1316,7 +1333,7 @@ try {
     try { logLine_('SUB_DONE', 'Completed SUB ingest', __formatProcessingDuration06_(durMs), '', 'INFO'); } catch (e11) {}
     try { setProgressForFlow_('SUB', 1.0, 'Done.', { prefixFlowInStep: true }); } catch (eP11) {}
 
-    return {
+    return __finishSub06a_({
       severity: 'INFO',
       message: 'SUB ingest completed',
       processed: 1,
@@ -1324,7 +1341,7 @@ try {
       old: rOld,
       new: rNew,
       sorted: sortRes
-    };
+    });
   });
 }
 
