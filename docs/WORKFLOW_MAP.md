@@ -321,6 +321,8 @@ Catatan ini dipakai sebagai quick-reference maintenance (bukan detail desain):
 - `Submission Date` wajib strict dari `Raw Data.claim_submission_date` (tanpa fallback field lain).
 - Setelah routing+enrichment, kolom `Submission Date` di sheet operasional utama (`Submission`,`Ask Detail`,`Start`,`Finish`,`PO`,`B2B`,`Special Case`) di-overwrite ulang dari mapping `Claim Number -> Raw Data.claim_submission_date` untuk mencegah kebocoran nilai dari kolom lain (mis. `OR`/`Remarks`).
 - Sinkronisasi strict `Submission Date`/`Submission by Month` dijalankan ulang setelah optional processors (`B2B`/`EV-Bike`/`Special Case`) supaya row hasil rebuild `B2B` (termasuk FORM - MAIN) tetap terisi.
+- Sync `Daily Report Base` pasca SUB memakai full rewrite (non-incremental) untuk mencegah stale rows saat sheet sedang difilter.
+- PIC fallback `Daily Report Base`: jika position tidak terpetakan tapi SC keyword match, isi PIC berdasarkan keyword SC (contoh `B-Store` -> `Meindar`).
 - `Weekly Report Base` refresh rule: `SUB` pure wajib gate jam 09:00 + 1x per tanggal (script timezone), sedangkan `FORM - SUB` boleh refresh saat flow selesai (bukan `FORM - MAIN`).
 - Manual override tersedia lewat fungsi `runWeeklyReportBaseManual(...)` untuk force refresh `Weekly Report Base` dari `Daily Report Base` tanpa menunggu flow otomatis.
 - Enrichment `Submission by Month` juga diterapkan ke sheet `B2B` untuk menjaga konsistensi agregasi `Daily Report Base`.

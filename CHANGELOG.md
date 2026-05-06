@@ -27,6 +27,8 @@ Formatnya sengaja sederhana: **Added / Changed / Fixed**. Tidak perlu sok formal
 - Source `Submission Date` dipertegas strict ke `Raw Data.claim_submission_date` (tanpa fallback sumber tanggal lain) untuk menghilangkan drift antar-sheet.
 - Setelah routing+enrichment, kolom `Submission Date` di sheet operasional utama (`Submission`,`Ask Detail`,`Start`,`Finish`,`PO`,`B2B`,`Special Case`) di-overwrite ulang dari mapping `Claim Number -> Raw Data.claim_submission_date` untuk mencegah kebocoran nilai dari kolom lain (mis. `OR`/`Remarks`).
 - Sinkronisasi strict `Submission Date`/`Submission by Month` dijalankan ulang setelah optional processors agar row `B2B` hasil rebuild (termasuk flow `FORM - MAIN`) tidak tertinggal kosong.
+- Refresh `Daily Report Base` setelah SUB diubah ke full rewrite agar row tersembunyi filter tidak tertinggal stale.
+- Fallback PIC `Daily Report Base` ditambah: bila position kosong/unmapped tapi keyword service center dikenal (mis. `B-Store`), PIC tetap terisi (`Meindar`).
 - `Special Case` schema guard diperingan: `Start Date`/`End Date`/`Details` tidak lagi dianggap mandatory (hilangkan noise error `SPECIAL_CASE_SCHEMA_MISSING` untuk kolom legacy yang tidak dipakai).
 - Detail penjelasan rule (`First-Month`, `Policy Remaining`, `Second-Year`) kini ditulis sebagai **note** di kolom `Reason`, sehingga tetap informatif tanpa ketergantungan kolom tambahan.
 

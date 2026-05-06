@@ -1307,7 +1307,7 @@ try {
 
     // Refresh Overview Claim -> Report Base snapshot after SUB updates.
     try {
-      if (typeof refreshReportBaseFromOperational06_ === 'function') refreshReportBaseFromOperational06_(masterSs, { incremental: true });
+      if (typeof refreshReportBaseFromOperational06_ === 'function') refreshReportBaseFromOperational06_(masterSs);
     } catch (eRb) { try { logLine_('SUB_WARN', 'Report Base refresh failed', String(eRb), '', 'WARN'); } catch (eRb2) {} }
 
 
