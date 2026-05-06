@@ -1307,7 +1307,7 @@ try {
 
     // Refresh Overview Claim -> Report Base snapshot after SUB updates.
     try {
-      if (typeof refreshReportBaseFromOperational06_ === 'function') refreshReportBaseFromOperational06_(masterSs, { incremental: true });
+      if (typeof refreshReportBaseFromOperational06_ === 'function') refreshReportBaseFromOperational06_(masterSs);
     } catch (eRb) { try { logLine_('SUB_WARN', 'Report Base refresh failed', String(eRb), '', 'WARN'); } catch (eRb2) {} }
 
 
@@ -2943,4 +2943,28 @@ function runManual(picOrFileIdsCsv, fileIdsCsvMaybe) {
       try { __logOverviewDuration06_(key, startedAt, ssTiming); } catch (e2) {}
     }
   });
+}
+
+
+/**
+ * Manual runner: force refresh Weekly Report Base from Daily Report Base.
+ * Safe to run manually from Apps Script editor (Run button).
+ */
+function runWeeklyReportBaseManual(snapshotDateOverride, sourceFileNameOverride) {
+  try { if (typeof resetRuntime_ === 'function') resetRuntime_(); } catch (e0) {}
+  const masterKey = 'Master';
+  validateConfigForPic_(masterKey);
+  const ss = __tryOpenSpreadsheetForKey06_(masterKey);
+  if (!ss) throw new Error('runWeeklyReportBaseManual: master spreadsheet tidak ditemukan.');
+
+  const snapshotDate = String(snapshotDateOverride || '').trim();
+  const sourceFileName = String(sourceFileNameOverride || 'MANUAL_TRIGGER').trim();
+
+  if (typeof fillWeeklyReportBase !== 'function') {
+    throw new Error('runWeeklyReportBaseManual: fillWeeklyReportBase tidak tersedia.');
+  }
+
+  const res = fillWeeklyReportBase(snapshotDate, sourceFileName, ss);
+  try { logLine_('INFO', 'Manual Weekly Report Base refresh', sourceFileName, snapshotDate || 'today', 'INFO'); } catch (e1) {}
+  return { ok: true, snapshotDate: snapshotDate || '', sourceFileName: sourceFileName, result: res || {} };
 }

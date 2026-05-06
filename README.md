@@ -59,6 +59,15 @@ Tambahan update setelah batch Part 9:
 
 - `POSITION_BY_LAST_STATUS['DONE_EXPIRED']` disejajarkan ke `Exclusion` agar konsisten dengan routing sheet Exclusion.
 - `Submission by Month` sekarang disimpan sebagai **date** (tanggal 1 tiap bulan) dengan display format `MMM yy` di operational + Report Base.
+- `Submission Date` operasional sekarang **strict** hanya dari `Raw Data.claim_submission_date` (tanpa fallback source lain), tetap ditulis sebagai tanggal valid.
+- Setelah routing+enrichment, kolom `Submission Date` di sheet operasional utama (`Submission`,`Ask Detail`,`Start`,`Finish`,`PO`,`B2B`,`Special Case`) di-overwrite ulang dari mapping `Claim Number -> Raw Data.claim_submission_date` untuk mencegah kebocoran nilai dari kolom lain (mis. `OR`/`Remarks`).
+- Sinkronisasi strict `Submission Date`/`Submission by Month` dijalankan ulang setelah optional processors (`B2B`/`EV-Bike`/`Special Case`) supaya row hasil rebuild `B2B` (termasuk FORM - MAIN) tetap terisi; bila `claim_submission_date` Raw kosong/invalid, nilai existing tidak dipaksa dikosongkan.
+- Refresh `Daily Report Base` setelah SUB sekarang full rewrite (bukan incremental upsert) dan filter sheet dilepas dulu sebelum write agar tidak menyisakan row stale saat user sedang pakai filter.
+- Enrichment juga menulis `Submission by Month` ke sheet `B2B` agar konsisten dengan sheet operasional lain.
+- Mapping PIC `Daily Report Base` ditambah fallback berbasis keyword `Service Center` jika position kosong/unmapped (contoh `B-Store` -> `Meindar`).
+- Refresh `Weekly Report Base`: untuk **pure SUB** dijalankan maksimal 1x/hari di jam 09:00 (script timezone); untuk **FORM - SUB** dijalankan saat flow selesai (tidak terikat jam 09:00).
+- Tambah manual trigger `runWeeklyReportBaseManual(snapshotDateOverride, sourceFileNameOverride)` untuk force update `Weekly Report Base` dari `Daily Report Base` saat diperlukan.
+
 - normalisasi kolom bulan existing ditambahkan saat enforcement layout supaya nilai lama (text/date campur) dikonversi konsisten jadi date-format bulan.
 - hardening optional sheets: excluded-status check di B2B & EV-Bike sekarang case-insensitive (normalisasi uppercase sebelum compare).
 - partner mapping B2B diperluas sesuai kebutuhan operasional terbaru: `Bhinneka`, `PSMS`, `DIGIMAP EnE`, `Parastar`, `GSE`, `KPD`, `Tukar Ind`, `Bumilindo`.
