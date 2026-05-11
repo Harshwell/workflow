@@ -691,8 +691,9 @@ function __runSubCore06a_(masterSs, oldBlob, newBlob, opt) {
 
 function __getSubRelocationSheetNames06a_(sheetNames) {
   const names = Array.isArray(sheetNames) ? sheetNames : [];
-  // EV-Bike and Exclusion are user-managed optional buckets; SUB relocation must not move/delete their rows.
-  const blocked = new Set(['ev-bike', 'exclusion']);
+  // EV-Bike is user-managed optional bucket; SUB relocation must not move/delete its rows.
+  // Exclusion MUST stay in relocation scope so status transitions like DONE_REPAIR -> DONE can move there.
+  const blocked = new Set(['ev-bike']);
   return names.filter(function (name) {
     const key = String(name || '').trim().toLowerCase();
     return key && !blocked.has(key);
