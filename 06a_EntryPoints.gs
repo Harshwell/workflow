@@ -1726,6 +1726,7 @@ function __buildSubRawIndex06a_(values) {
   const idxSpaName = idxOfAny(['3. all transaction - qoala_policy_number → spa_name', 'spa_name', 'spa name']);
 
   const map = new Map();
+  const tsByClaim = new Map(); // claim -> epoch millis (0 when unknown)
   for (let r = 1; r < v.length; r++) {
     const row = v[r];
     if (!row || idxClaim < 0) continue;
@@ -1737,7 +1738,7 @@ function __buildSubRawIndex06a_(values) {
     const act = (idxActLog >= 0 && row[idxActLog] !== '' && row[idxActLog] != null) ? row[idxActLog]
       : (idxLastActLog >= 0 ? row[idxLastActLog] : '');
 
-    map.set(cn, {
+    const rec = {
       claim_number: cn,
       last_status_aging: idxLSA >= 0 ? row[idxLSA] : '',
       activity_log_aging: idxALA >= 0 ? row[idxALA] : '',
@@ -1755,7 +1756,25 @@ function __buildSubRawIndex06a_(values) {
       store_name: idxStoreName >= 0 ? row[idxStoreName] : '',
       pa_name: idxPaName >= 0 ? row[idxPaName] : '',
       spa_name: idxSpaName >= 0 ? row[idxSpaName] : ''
-    });
+    };
+
+    // Handle duplicate claim rows in Raw OLD/NEW by keeping the latest status snapshot.
+    // Without this, later-but-older rows can overwrite newer statuses (e.g., DONE -> DONE_REPAIR).
+    const parsedTs = __parseClaimLastUpdatedDatetimeSub06a_(rec.claim_last_updated_datetime);
+    const nextTs = parsedTs ? parsedTs.getTime() : 0;
+
+    if (!map.has(cn)) {
+      map.set(cn, rec);
+      tsByClaim.set(cn, nextTs);
+      continue;
+    }
+
+    const prevTs = Number(tsByClaim.get(cn) || 0);
+    const keepNext = (nextTs > 0 && nextTs >= prevTs) || (nextTs > 0 && prevTs <= 0);
+    if (keepNext) {
+      map.set(cn, rec);
+      tsByClaim.set(cn, nextTs);
+    }
   }
 
   return {
@@ -1804,10 +1823,6 @@ function __buildMasterRawFallbackMap06a_(masterSs) {
 function __updateOperationalSheetsFromRaw06a_(ss, sheetNames, rawMap, ctx) {
   const names = Array.isArray(sheetNames) ? sheetNames : [];
   const map = (rawMap && typeof rawMap.get === 'function') ? rawMap : new Map();
-  const fallbackMap = (ctx && ctx.masterRawFallbackMap && typeof ctx.masterRawFallbackMap.get === 'function')
-    ? ctx.masterRawFallbackMap
-    : new Map();
-  const dbTag = String((ctx && ctx.dbTag) ? ctx.dbTag : '').trim().toUpperCase();
   // Policy lookup (single source of truth: 00.gs)
   const opsPolicy = (typeof OPS_ROUTING_POLICY !== 'undefined' && OPS_ROUTING_POLICY) ? OPS_ROUTING_POLICY : null;
   const sheetsPolicy = (opsPolicy && opsPolicy.SHEETS) ? opsPolicy.SHEETS : {};
@@ -1978,7 +1993,9 @@ function __updateOperationalSheetsFromRaw06a_(ss, sheetNames, rawMap, ctx) {
 
       if (!cn) continue;
 
-      const rec = map.get(cn) || fallbackMap.get(cn);
+      // SUB update must be driven by current attachment snapshot (Raw OLD/NEW) only.
+      // Falling back to master Raw Data can re-introduce stale MAIN status and overwrite fresh SUB status.
+      const rec = map.get(cn);
       if (!rec) continue;
 
       // Only update allowed fields. Do NOT touch other columns.
