@@ -1823,6 +1823,7 @@ function __buildMasterRawFallbackMap06a_(masterSs) {
 function __updateOperationalSheetsFromRaw06a_(ss, sheetNames, rawMap, ctx) {
   const names = Array.isArray(sheetNames) ? sheetNames : [];
   const map = (rawMap && typeof rawMap.get === 'function') ? rawMap : new Map();
+  const dbTag = String((ctx && ctx.dbTag) ? ctx.dbTag : '').trim().toUpperCase();
   // Policy lookup (single source of truth: 00.gs)
   const opsPolicy = (typeof OPS_ROUTING_POLICY !== 'undefined' && OPS_ROUTING_POLICY) ? OPS_ROUTING_POLICY : null;
   const sheetsPolicy = (opsPolicy && opsPolicy.SHEETS) ? opsPolicy.SHEETS : {};
