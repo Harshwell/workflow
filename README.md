@@ -8,6 +8,15 @@ Dokumen ini sengaja dibuat tetap ramping. Untuk self-project, dokumentasi yang e
 
 ---
 
+## Update implementasi terbaru (2026-05-11)
+
+Tambahan fix untuk konsistensi relocasi flow SUB:
+
+- sheet `Exclusion` sekarang ikut scope relocasi SUB (yang tetap di-skip hanya `EV-Bike`).
+- ini memastikan transisi status ke domain exclusion (mis. `DONE_REPAIR` -> `DONE`) benar-benar pindah dari sheet SC ke `Exclusion`.
+
+---
+
 ## Update implementasi terbaru (2026-05-06)
 
 Tambahan update untuk helper analitik `Report Base`:

@@ -5,6 +5,13 @@ Formatnya sengaja sederhana: **Added / Changed / Fixed**. Tidak perlu sok formal
 
 ---
 
+## 2026-05-11
+
+### Fixed
+- SUB relocation tidak lagi mengecualikan sheet `Exclusion`. Ini memastikan perpindahan status lintas sheet tetap jalan saat claim berubah ke status domain `Exclusion` (contoh `DONE_REPAIR` -> `DONE`) dan tidak tertahan di sheet SC.
+
+---
+
 ## 2026-05-06
 
 ### Changed
