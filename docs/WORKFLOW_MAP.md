@@ -326,6 +326,7 @@ Catatan ini dipakai sebagai quick-reference maintenance (bukan detail desain):
 - `Weekly Report Base` refresh rule: `SUB` pure wajib gate jam 09:00 + 1x per tanggal (script timezone), sedangkan `FORM - SUB` boleh refresh saat flow selesai (bukan `FORM - MAIN`).
 - Manual override tersedia lewat fungsi `runWeeklyReportBaseManual(...)` untuk force refresh `Weekly Report Base` dari `Daily Report Base` tanpa menunggu flow otomatis.
 - Enrichment `Submission by Month` juga diterapkan ke sheet `B2B` untuk menjaga konsistensi agregasi `Daily Report Base`.
+- Relokasi SUB tetap mengecualikan `EV-Bike`, tapi `Exclusion` wajib ikut scope relokasi agar perubahan status ke domain exclusion benar-benar berpindah lintas sheet.
 
 - Mapping `Exclusion` mencakup tambahan `INSURANCE_CLAIM_WAITING_PAID` dan `CLAIM_CANCELLED`.
 
