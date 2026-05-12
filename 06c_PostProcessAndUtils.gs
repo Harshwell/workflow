@@ -687,9 +687,11 @@ function restoreOpsFieldsFromRawBackup_(ss, rawSheet, headerIndexRaw, pic) {
       try { sh.getRange(2, idxTsOps + 1, m, 1).setValues(outTs); } catch (e) {}
     }
 
-    if (idxUpdateOps !== -1 && outUpdate) {
-      try { sh.getRange(2, idxUpdateOps + 1, m, 1).setValues(outUpdate); } catch (e) {}
-    }
+    // IMPORTANT:
+    // Do not write plain Update Status values here.
+    // RichText restoration is handled separately by applyUpdateStatusRichTextToOperational_().
+    // Rewriting this column with setValues() can retrigger sheet formulas/automation tied to
+    // Update Status and unexpectedly refresh Timestamp for many rows in one run.
 
     if (idxRemarksOps !== -1 && outRemarks) {
       try { sh.getRange(2, idxRemarksOps + 1, m, 1).setValues(outRemarks); } catch (e) {}
