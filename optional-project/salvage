@@ -113,7 +113,7 @@ var SALVAGE_TARGET_TO_SOURCE_ALIASES = typeof SALVAGE_TARGET_TO_SOURCE_ALIASES !
     'mart_gadget__fact_claim_tracker - claim_number → ins_approve_datetime',
   ],
   'Service Center': ['sc_name'],
-  'Submission Date': ['claim_submission_date'],
+  'Submission Date': ['claim_submission_date', 'submission_date', 'submission date'],
   'Sum Insured': ['sum_insured_amount'],
   'Month - Week': ['Month - Week'],
   'Insurance': ['insurance_partner_code'],
@@ -124,7 +124,7 @@ var SALVAGE_TARGET_TO_SOURCE_ALIASES = typeof SALVAGE_TARGET_TO_SOURCE_ALIASES !
   'Last Status Update': ['last_update'],
   'Branch': ['branch'],
   'Partner Name': ['business_partner_name'],
-  'DB Link': ['db_link'],
+  'DB Link': ['dashboard_link', 'dashboard link', 'db_link', 'db link', 'dblink', 'database_link', 'database link'],
 });
 
 var SALVAGE_TARGET_HEADER_ALIASES = typeof SALVAGE_TARGET_HEADER_ALIASES !== 'undefined'
