@@ -733,14 +733,19 @@ function previewQueuedSalvageDiff() {
 
     const diffPreview = buildSyncDiffPreview_(sourceSnapshot, targetSnapshot);
 
+    const previewSummarySeverity = diffPreview.blankGapCount > 0 ? 'WARN' : 'INFO';
+    const previewSummaryNotes = diffPreview.filterActive && diffPreview.hiddenByFilterClaimCount > 0
+      ? 'Dry-run diff preview completed. Filter is active; hidden rows are still included in sync by claim mapping.'
+      : 'Dry-run diff preview completed. No target write, no email trash.';
+
     updateProgress_(100, 'Preview completed');
     logStage_(ctx, {
       stage: 'PREVIEW',
       segment: 'diff_summary',
       rawRows: sourceSnapshot.rawRows,
       status: 'SUCCESS',
-      severity: (diffPreview.missingExistingCount > 0 || diffPreview.restoreCount > 0 || diffPreview.insertCount > 0) ? 'WARN' : 'INFO',
-      notes: 'Dry-run diff preview completed. No target write, no email trash.',
+      severity: previewSummarySeverity,
+      notes: previewSummaryNotes,
       metrics: safeJson_(diffPreview),
     });
 
