@@ -348,6 +348,8 @@ function runQueuedSalvage() {
         resolvedSourceColumns: sourceSnapshot.resolvedColumnMap,
         sampleClaims: sourceSnapshot.sampleClaims,
         duplicateClaimNumbers: sourceSnapshot.duplicateClaimNumbers.slice(0, 20),
+        blankSumInsuredCount: sourceSnapshot.blankSumInsuredCount,
+        blankImeiSnCount: sourceSnapshot.blankImeiSnCount,
       }),
     });
 
@@ -1159,6 +1161,8 @@ function readSourceSnapshot_(tempSpreadsheetId) {
   const sourceByClaim = {};
   const duplicates = [];
   let rawRows = 0;
+  let blankSumInsuredCount = 0;
+  let blankImeiSnCount = 0;
 
   values.forEach(function(row, rowIndex) {
     const claimNumber = normalizeKey_(row[sourceColumnMap['Claim Number'] - 1]);
@@ -1178,6 +1182,9 @@ function readSourceSnapshot_(tempSpreadsheetId) {
       record[targetHeader] = sanitizeSourceValueForTarget_(targetHeader, rawValue, displayValue);
     });
 
+    if (!normalizeKey_(record['Sum Insured'])) blankSumInsuredCount += 1;
+    if (!normalizeKey_(record['IMEI/SN'])) blankImeiSnCount += 1;
+
     record['Month - Week'] = deriveMonthWeekFromApproval_(record['Approval Date'], record['Month - Week']);
     sourceByClaim[claimNumber] = record;
   });
@@ -1192,6 +1199,8 @@ function readSourceSnapshot_(tempSpreadsheetId) {
     sampleClaims: Object.keys(sourceByClaim).slice(0, SALVAGE_CONFIG.target.sampleSize),
     sourceByClaim: sourceByClaim,
     duplicateClaimNumbers: Array.from(new Set(duplicates)),
+    blankSumInsuredCount: blankSumInsuredCount,
+    blankImeiSnCount: blankImeiSnCount,
   };
 }
 
@@ -1454,7 +1463,15 @@ function syncTargetSheet_(sourceSnapshot, precheckedTargetSnapshot) {
       const columnValues = values.map(function(row) {
         return [row[targetCol - 1]];
       });
-      sheet.getRange(dataStartRow, targetCol, finalRowCount, 1).setValues(columnValues);
+
+      if (targetHeader === 'DB Link') {
+        const dbLinkFormulas = columnValues.map(function(v) {
+          return [buildHyperlinkFormula_(v[0], 'LINK')];
+        });
+        sheet.getRange(dataStartRow, targetCol, finalRowCount, 1).setFormulas(dbLinkFormulas);
+      } else {
+        sheet.getRange(dataStartRow, targetCol, finalRowCount, 1).setValues(columnValues);
+      }
     });
 
     sheet.getRange(dataStartRow, claimCol, finalRowCount, 1).setBackgrounds(claimBackgrounds);
@@ -2021,6 +2038,15 @@ function normalizeKey_(value) {
     .replace(/\s+/g, '')
     .trim()
     .toLowerCase();
+}
+
+
+function buildHyperlinkFormula_(urlValue, labelText) {
+  const trimmed = String(urlValue || '').trim();
+  if (!trimmed) return '';
+  const escapedUrl = trimmed.replace(/"/g, '""');
+  const escapedLabel = String(labelText || 'LINK').replace(/"/g, '""');
+  return '=HYPERLINK("' + escapedUrl + '","' + escapedLabel + '")';
 }
 
 function ensureSheetHasRows_(sheet, requiredLastRow) {
