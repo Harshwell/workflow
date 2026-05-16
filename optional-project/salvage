@@ -667,6 +667,11 @@ function diagnoseQueuedSalvage() {
 }
 
 
+
+function dryRunQueuedSalvageDiffPreview() {
+  return previewQueuedSalvageDiff();
+}
+
 function previewQueuedSalvageDiff() {
   const lock = LockService.getScriptLock();
   if (!lock.tryLock(30000)) {
