@@ -46,7 +46,7 @@ var SALVAGE_CONFIG = typeof SALVAGE_CONFIG !== 'undefined'
   },
   target: {
     spreadsheetId: '1zRlYrSRssv9LVcPKEq90CmmvTRsZoN_TqfIg2pNufbc',
-    sheetName: 'Salvage',
+    sheetName: 'Salvage 2026',
     fixedHeaderRow: 2,
     headerSearchRows: 10,
     dataStartFallbackHeaderRow: 2,
@@ -113,6 +113,7 @@ var SALVAGE_TARGET_TO_SOURCE_ALIASES = typeof SALVAGE_TARGET_TO_SOURCE_ALIASES !
     'mart_gadget__fact_claim_tracker - claim_number → ins_approve_datetime',
   ],
   'Service Center': ['sc_name'],
+  'Submission Date': ['claim_submission_date', 'submission_date', 'submission date'],
   'Sum Insured': ['sum_insured_amount'],
   'Month - Week': ['Month - Week'],
   'Insurance': ['insurance_partner_code'],
@@ -123,6 +124,7 @@ var SALVAGE_TARGET_TO_SOURCE_ALIASES = typeof SALVAGE_TARGET_TO_SOURCE_ALIASES !
   'Last Status Update': ['last_update'],
   'Branch': ['branch'],
   'Partner Name': ['business_partner_name'],
+  'DB Link': ['dashboard_link', 'dashboard link', 'db_link', 'db link', 'dblink', 'database_link', 'database link'],
 });
 
 var SALVAGE_TARGET_HEADER_ALIASES = typeof SALVAGE_TARGET_HEADER_ALIASES !== 'undefined'
@@ -132,6 +134,7 @@ var SALVAGE_TARGET_HEADER_ALIASES = typeof SALVAGE_TARGET_HEADER_ALIASES !== 'un
   'Approval Date': ['approval date'],
   'Month - Week': ['month - week'],
   'Service Center': ['service center'],
+  'Submission Date': ['submission date'],
   'Sum Insured': ['sum insured'],
   'Insurance': ['insurance'],
   'Device Brand': ['device brand'],
@@ -141,6 +144,7 @@ var SALVAGE_TARGET_HEADER_ALIASES = typeof SALVAGE_TARGET_HEADER_ALIASES !== 'un
   'Last Status Update': ['last status update'],
   'Branch': ['branch'],
   'Partner Name': ['partner name'],
+  'DB Link': ['db link', 'dblink'],
 });
 
 const SALVAGE_RUNTIME = {
@@ -254,15 +258,7 @@ function runQueuedSalvage() {
 
     const validationStart = Date.now();
     const env = validateEnvironment_();
-    logStage_(ctx, {
-      stage: 'INIT',
-      segment: 'validate_environment',
-      durationMs: Date.now() - validationStart,
-      status: 'OK',
-      severity: 'INFO',
-      metrics: safeJson_(env),
-      notes: 'Environment validated.',
-    });
+    logStage_(ctx, buildEnvironmentValidationLogPayload_('INIT', env, Date.now() - validationStart));
 
     updateProgress_(10, 'Searching queued email');
     const emailStart = Date.now();
@@ -543,14 +539,7 @@ function diagnoseQueuedSalvage() {
     });
 
     const env = validateEnvironment_();
-    logStage_(ctx, {
-      stage: 'DIAG',
-      segment: 'validate_environment',
-      status: 'OK',
-      severity: 'INFO',
-      metrics: safeJson_(env),
-      notes: 'Environment validated.',
-    });
+    logStage_(ctx, buildEnvironmentValidationLogPayload_('DIAG', env));
 
     const mailBundle = findLatestEligibleEmail_();
     if (!mailBundle) {
@@ -663,6 +652,11 @@ function diagnoseQueuedSalvage() {
 }
 
 
+
+function dryRunQueuedSalvageDiffPreview() {
+  return previewQueuedSalvageDiff();
+}
+
 function previewQueuedSalvageDiff() {
   const lock = LockService.getScriptLock();
   if (!lock.tryLock(30000)) {
@@ -685,14 +679,7 @@ function previewQueuedSalvageDiff() {
     });
 
     const env = validateEnvironment_();
-    logStage_(ctx, {
-      stage: 'PREVIEW',
-      segment: 'validate_environment',
-      status: 'OK',
-      severity: 'INFO',
-      metrics: safeJson_(env),
-      notes: 'Environment validated.',
-    });
+    logStage_(ctx, buildEnvironmentValidationLogPayload_('PREVIEW', env));
 
     const mailBundle = findLatestEligibleEmail_();
     if (!mailBundle) {
@@ -792,6 +779,22 @@ function createRunContext_() {
     rawRows: '',
     opsUpdated: '',
     subInserted: '',
+  };
+}
+
+
+function buildEnvironmentValidationLogPayload_(stage, env, durationMs) {
+  const hasManagedFilterRestError = String(env && env.managedFilterAction || '') === 'skipped_rest_error';
+  return {
+    stage: stage,
+    segment: 'validate_environment',
+    durationMs: durationMs,
+    status: hasManagedFilterRestError ? 'WARN' : 'OK',
+    severity: hasManagedFilterRestError ? 'WARN' : 'INFO',
+    metrics: safeJson_(env),
+    notes: hasManagedFilterRestError
+      ? 'Environment validated with warning: Gmail filter management API unavailable, fallback labeling still active.'
+      : 'Environment validated.',
   };
 }
 
@@ -1118,7 +1121,12 @@ function readSourceSnapshot_(tempSpreadsheetId) {
   }
 
   const headerMap = buildHeaderMap_(bestCandidate.sheet, bestCandidate.headerRow);
-  const sourceColumnMap = resolveAliasMap_(headerMap, SALVAGE_TARGET_TO_SOURCE_ALIASES, 'source');
+  const sourceColumnMap = resolveAliasMap_(
+    headerMap,
+    SALVAGE_TARGET_TO_SOURCE_ALIASES,
+    'source',
+    ['DB Link']
+  );
 
   const lastRow = bestCandidate.sheet.getLastRow();
   const lastCol = bestCandidate.sheet.getLastColumn();
@@ -1190,7 +1198,7 @@ function sanitizeSourceValueForTarget_(targetHeader, rawValue, displayValue) {
     return textValue || rawValue;
   }
 
-  if (targetHeader === 'Last Status Update') {
+  if (targetHeader === 'Last Status Update' || targetHeader === 'Submission Date') {
     return formatDateOnlyForTarget_(rawValue, displayValue);
   }
   return rawValue;
@@ -1343,6 +1351,9 @@ function buildSyncDiffPreview_(sourceSnapshot, precheckedTargetSnapshot) {
     insertSamples: insertSamples,
     missingSamples: missingSamples,
     restoreSamples: restoreSamples,
+    filterActive: targetSnapshot.filterActive,
+    hiddenByFilterClaimCount: targetSnapshot.hiddenByFilterClaimCount,
+    hiddenByFilterClaimSamples: targetSnapshot.hiddenByFilterClaimSamples,
   };
 }
 
@@ -1460,6 +1471,9 @@ function syncTargetSheet_(sourceSnapshot, precheckedTargetSnapshot) {
     duplicateTargetClaimCount: targetSnapshot.duplicateClaimCount,
     duplicateTargetClaimSamples: targetSnapshot.duplicateClaimSamples,
     finalRowCount: finalRowCount,
+    filterActive: targetSnapshot.filterActive,
+    hiddenByFilterClaimCount: targetSnapshot.hiddenByFilterClaimCount,
+    hiddenByFilterClaimSamples: targetSnapshot.hiddenByFilterClaimSamples,
   };
 }
 
@@ -1509,6 +1523,9 @@ function inspectTargetSnapshot_() {
     duplicateClaimSamples: claimScan.duplicateClaimSamples,
     lastClaimRow: claimScan.lastClaimRow,
     sampleClaims: claimScan.sampleClaims,
+    filterActive: claimScan.filterActive,
+    hiddenByFilterClaimCount: claimScan.hiddenByFilterClaimCount,
+    hiddenByFilterClaimSamples: claimScan.hiddenByFilterClaimSamples,
   };
 }
 
@@ -1539,9 +1556,13 @@ function getClaimColumnScan_(sheet, headerRow, claimCol) {
       duplicateClaimSamples: [],
       lastClaimRow: headerRow,
       sampleClaims: [],
+      filterActive: !!sheet.getFilter(),
+      hiddenByFilterClaimCount: 0,
+      hiddenByFilterClaimSamples: [],
     };
   }
 
+  const filterActive = !!sheet.getFilter();
   const claimValues = sheet.getRange(dataStartRow, claimCol, rowCount, 1).getDisplayValues().map(function(r) {
     return String(r[0] || '');
   });
@@ -1549,10 +1570,12 @@ function getClaimColumnScan_(sheet, headerRow, claimCol) {
   const sampleClaims = [];
   const blankGapSamples = [];
   const duplicateClaimSamples = [];
+  const hiddenByFilterClaimSamples = [];
   const seenRowsByClaim = {};
   let claimRowCount = 0;
   let blankGapCount = 0;
   let duplicateClaimCount = 0;
+  let hiddenByFilterClaimCount = 0;
   let lastClaimOffset = -1;
 
   claimValues.forEach(function(value, idx) {
@@ -1563,6 +1586,13 @@ function getClaimColumnScan_(sheet, headerRow, claimCol) {
     lastClaimOffset = idx;
     if (sampleClaims.length < SALVAGE_CONFIG.target.sampleSize) {
       sampleClaims.push(value);
+    }
+
+    if (filterActive && sheet.isRowHiddenByFilter(dataStartRow + idx)) {
+      hiddenByFilterClaimCount += 1;
+      if (hiddenByFilterClaimSamples.length < SALVAGE_CONFIG.target.sampleSize) {
+        hiddenByFilterClaimSamples.push(value + ' @ row ' + (dataStartRow + idx));
+      }
     }
 
     if (Object.prototype.hasOwnProperty.call(seenRowsByClaim, normalized)) {
@@ -1595,6 +1625,9 @@ function getClaimColumnScan_(sheet, headerRow, claimCol) {
     duplicateClaimSamples: duplicateClaimSamples,
     lastClaimRow: lastClaimOffset >= 0 ? dataStartRow + lastClaimOffset : headerRow,
     sampleClaims: sampleClaims,
+    filterActive: filterActive,
+    hiddenByFilterClaimCount: hiddenByFilterClaimCount,
+    hiddenByFilterClaimSamples: hiddenByFilterClaimSamples,
   };
 }
 
@@ -1936,9 +1969,13 @@ function buildHeaderMap_(sheet, headerRow) {
   return map;
 }
 
-function resolveAliasMap_(headerMap, aliasMap, mapName) {
+function resolveAliasMap_(headerMap, aliasMap, mapName, optionalLogicalNames) {
   const resolved = {};
   const missing = [];
+  const optionalSet = {};
+  (optionalLogicalNames || []).forEach(function(name) {
+    optionalSet[String(name || '')] = true;
+  });
 
   Object.keys(aliasMap).forEach(function(logicalName) {
     const aliases = aliasMap[logicalName];
@@ -1947,7 +1984,9 @@ function resolveAliasMap_(headerMap, aliasMap, mapName) {
     });
 
     if (!matchedAlias) {
-      missing.push(logicalName + ' => [' + aliases.join(' | ') + ']');
+      if (!optionalSet[logicalName]) {
+        missing.push(logicalName + ' => [' + aliases.join(' | ') + ']');
+      }
       return;
     }
 
