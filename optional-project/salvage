@@ -114,6 +114,7 @@ var SALVAGE_TARGET_TO_SOURCE_ALIASES = typeof SALVAGE_TARGET_TO_SOURCE_ALIASES !
   ],
   'Service Center': ['sc_name'],
   'Submission Date': ['claim_submission_date', 'submission_date', 'submission date'],
+  'Submission by Month': ['Submission by Month'],
   'Sum Insured': ['sum_insured_amount'],
   'Month - Week': ['Month - Week'],
   'Insurance': ['insurance_partner_code'],
@@ -135,6 +136,7 @@ var SALVAGE_TARGET_HEADER_ALIASES = typeof SALVAGE_TARGET_HEADER_ALIASES !== 'un
   'Month - Week': ['month - week'],
   'Service Center': ['service center'],
   'Submission Date': ['submission date'],
+  'Submission by Month': ['submission by month'],
   'Sum Insured': ['sum insured'],
   'Insurance': ['insurance'],
   'Device Brand': ['device brand'],
@@ -1186,6 +1188,7 @@ function readSourceSnapshot_(tempSpreadsheetId) {
     if (!normalizeKey_(record['IMEI/SN'])) blankImeiSnCount += 1;
 
     record['Month - Week'] = deriveMonthWeekFromApproval_(record['Approval Date'], record['Month - Week']);
+    record['Submission by Month'] = deriveSubmissionByMonth_(record['Submission Date'], record['Submission by Month']);
     sourceByClaim[claimNumber] = record;
   });
 
@@ -1270,6 +1273,38 @@ function deriveMonthWeekFromApproval_(approvalValue, fallbackValue) {
 
   const weekInMonth = Math.ceil(day / 7);
   return monthName + ' - Week ' + weekInMonth;
+}
+
+
+function deriveSubmissionByMonth_(submissionDateValue, fallbackValue) {
+  const fallbackText = String(fallbackValue || '').trim();
+
+  if (submissionDateValue instanceof Date && !Number.isNaN(submissionDateValue.getTime())) {
+    return Utilities.formatDate(submissionDateValue, SALVAGE_CONFIG.scriptTimeZone, 'MMM yy');
+  }
+
+  const textValue = String(submissionDateValue || '').trim();
+  if (!textValue) return fallbackText;
+
+  const parsed = new Date(textValue);
+  if (!Number.isNaN(parsed.getTime())) {
+    return Utilities.formatDate(parsed, SALVAGE_CONFIG.scriptTimeZone, 'MMM yy');
+  }
+
+  const match = textValue.match(/(?:[A-Za-z]{3},\s*)?(\d{1,2})\s+([A-Za-z]{3,9})\s+(\d{2,4})/);
+  if (!match) return fallbackText;
+
+  const day = match[1];
+  const monthName = match[2];
+  let year = match[3];
+  if (year.length === 2) year = '20' + year;
+  const reconstructed = monthName + ' ' + day + ', ' + year;
+  const reconstructedDate = new Date(reconstructed);
+  if (!Number.isNaN(reconstructedDate.getTime())) {
+    return Utilities.formatDate(reconstructedDate, SALVAGE_CONFIG.scriptTimeZone, 'MMM yy');
+  }
+
+  return fallbackText;
 }
 
 function buildSyncDiffPreview_(sourceSnapshot, precheckedTargetSnapshot) {
