@@ -1513,6 +1513,13 @@ function syncTargetSheet_(sourceSnapshot, precheckedTargetSnapshot) {
           return [buildHyperlinkFormula_(v[0], 'LINK')];
         });
         sheet.getRange(dataStartRow, targetCol, finalRowCount, 1).setFormulas(dbLinkFormulas);
+      } else if (targetHeader === 'Submission by Month') {
+        const monthRange = sheet.getRange(dataStartRow, targetCol, finalRowCount, 1);
+        const monthValues = columnValues.map(function(v) {
+          return [parseSubmissionByMonthToDate_(v[0])];
+        });
+        monthRange.setValues(monthValues);
+        monthRange.setNumberFormat('MMM yy');
       } else {
         sheet.getRange(dataStartRow, targetCol, finalRowCount, 1).setValues(columnValues);
       }
@@ -2084,6 +2091,34 @@ function normalizeKey_(value) {
     .toLowerCase();
 }
 
+
+
+function parseSubmissionByMonthToDate_(value) {
+  if (value instanceof Date && !Number.isNaN(value.getTime())) {
+    return new Date(value.getFullYear(), value.getMonth(), 1);
+  }
+
+  const text = String(value || '').trim();
+  if (!text) return '';
+
+  const parsed = new Date(text);
+  if (!Number.isNaN(parsed.getTime())) {
+    return new Date(parsed.getFullYear(), parsed.getMonth(), 1);
+  }
+
+  const match = text.match(/^([A-Za-z]{3,9})\s+(\d{2,4})$/);
+  if (!match) return value;
+
+  const monthName = match[1];
+  let yearText = match[2];
+  if (yearText.length === 2) yearText = '20' + yearText;
+  const normalized = new Date(monthName + ' 1, ' + yearText);
+  if (!Number.isNaN(normalized.getTime())) {
+    return new Date(normalized.getFullYear(), normalized.getMonth(), 1);
+  }
+
+  return value;
+}
 
 function buildHyperlinkFormula_(urlValue, labelText) {
   const trimmed = String(urlValue || '').trim();
