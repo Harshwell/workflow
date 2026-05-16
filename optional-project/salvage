@@ -149,6 +149,8 @@ var SALVAGE_TARGET_HEADER_ALIASES = typeof SALVAGE_TARGET_HEADER_ALIASES !== 'un
   'DB Link': ['db link', 'dblink'],
 });
 
+const SALVAGE_OPTIONAL_SOURCE_LOGICAL_HEADERS = ['DB Link', 'Submission by Month'];
+
 const SALVAGE_RUNTIME = {
   props: PropertiesService.getScriptProperties(),
   dedupeThreadKey: 'SALVAGE_LAST_PROCESSED_THREAD_ID',
@@ -352,6 +354,7 @@ function runQueuedSalvage() {
         duplicateClaimNumbers: sourceSnapshot.duplicateClaimNumbers.slice(0, 20),
         blankSumInsuredCount: sourceSnapshot.blankSumInsuredCount,
         blankImeiSnCount: sourceSnapshot.blankImeiSnCount,
+        missingOptionalSourceHeaders: sourceSnapshot.missingOptionalSourceHeaders,
       }),
     });
 
@@ -1104,9 +1107,11 @@ function readSourceSnapshot_(tempSpreadsheetId) {
     throw new Error('Temporary spreadsheet has no sheets.');
   }
 
-  const requiredGroups = Object.keys(SALVAGE_TARGET_TO_SOURCE_ALIASES).map(function(key) {
-    return SALVAGE_TARGET_TO_SOURCE_ALIASES[key];
-  });
+  const requiredGroups = Object.keys(SALVAGE_TARGET_TO_SOURCE_ALIASES)
+    .filter(function(key) { return SALVAGE_OPTIONAL_SOURCE_LOGICAL_HEADERS.indexOf(key) === -1; })
+    .map(function(key) {
+      return SALVAGE_TARGET_TO_SOURCE_ALIASES[key];
+    });
 
   let bestCandidate = null;
   sheets.forEach(function(sheet) {
@@ -1134,8 +1139,11 @@ function readSourceSnapshot_(tempSpreadsheetId) {
     headerMap,
     SALVAGE_TARGET_TO_SOURCE_ALIASES,
     'source',
-    ['DB Link', 'Submission by Month']
+    SALVAGE_OPTIONAL_SOURCE_LOGICAL_HEADERS
   );
+  const missingOptionalSourceHeaders = SALVAGE_OPTIONAL_SOURCE_LOGICAL_HEADERS.filter(function(name) {
+    return !sourceColumnMap[name];
+  });
 
   const lastRow = bestCandidate.sheet.getLastRow();
   const lastCol = bestCandidate.sheet.getLastColumn();
@@ -1204,6 +1212,7 @@ function readSourceSnapshot_(tempSpreadsheetId) {
     duplicateClaimNumbers: Array.from(new Set(duplicates)),
     blankSumInsuredCount: blankSumInsuredCount,
     blankImeiSnCount: blankImeiSnCount,
+    missingOptionalSourceHeaders: missingOptionalSourceHeaders,
   };
 }
 
