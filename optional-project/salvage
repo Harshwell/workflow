@@ -258,15 +258,7 @@ function runQueuedSalvage() {
 
     const validationStart = Date.now();
     const env = validateEnvironment_();
-    logStage_(ctx, {
-      stage: 'INIT',
-      segment: 'validate_environment',
-      durationMs: Date.now() - validationStart,
-      status: 'OK',
-      severity: 'INFO',
-      metrics: safeJson_(env),
-      notes: 'Environment validated.',
-    });
+    logStage_(ctx, buildEnvironmentValidationLogPayload_('INIT', env, Date.now() - validationStart));
 
     updateProgress_(10, 'Searching queued email');
     const emailStart = Date.now();
@@ -547,14 +539,7 @@ function diagnoseQueuedSalvage() {
     });
 
     const env = validateEnvironment_();
-    logStage_(ctx, {
-      stage: 'DIAG',
-      segment: 'validate_environment',
-      status: 'OK',
-      severity: 'INFO',
-      metrics: safeJson_(env),
-      notes: 'Environment validated.',
-    });
+    logStage_(ctx, buildEnvironmentValidationLogPayload_('DIAG', env));
 
     const mailBundle = findLatestEligibleEmail_();
     if (!mailBundle) {
@@ -694,14 +679,7 @@ function previewQueuedSalvageDiff() {
     });
 
     const env = validateEnvironment_();
-    logStage_(ctx, {
-      stage: 'PREVIEW',
-      segment: 'validate_environment',
-      status: 'OK',
-      severity: 'INFO',
-      metrics: safeJson_(env),
-      notes: 'Environment validated.',
-    });
+    logStage_(ctx, buildEnvironmentValidationLogPayload_('PREVIEW', env));
 
     const mailBundle = findLatestEligibleEmail_();
     if (!mailBundle) {
@@ -801,6 +779,22 @@ function createRunContext_() {
     rawRows: '',
     opsUpdated: '',
     subInserted: '',
+  };
+}
+
+
+function buildEnvironmentValidationLogPayload_(stage, env, durationMs) {
+  const hasManagedFilterRestError = String(env && env.managedFilterAction || '') === 'skipped_rest_error';
+  return {
+    stage: stage,
+    segment: 'validate_environment',
+    durationMs: durationMs,
+    status: hasManagedFilterRestError ? 'WARN' : 'OK',
+    severity: hasManagedFilterRestError ? 'WARN' : 'INFO',
+    metrics: safeJson_(env),
+    notes: hasManagedFilterRestError
+      ? 'Environment validated with warning: Gmail filter management API unavailable, fallback labeling still active.'
+      : 'Environment validated.',
   };
 }
 
