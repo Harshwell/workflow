@@ -1134,7 +1134,7 @@ function readSourceSnapshot_(tempSpreadsheetId) {
     headerMap,
     SALVAGE_TARGET_TO_SOURCE_ALIASES,
     'source',
-    ['DB Link']
+    ['DB Link', 'Submission by Month']
   );
 
   const lastRow = bestCandidate.sheet.getLastRow();
