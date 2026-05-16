@@ -2101,20 +2101,20 @@ function parseSubmissionByMonthToDate_(value) {
   const text = String(value || '').trim();
   if (!text) return '';
 
+  const monthYearMatch = text.match(/^([A-Za-z]{3,9})\s+(\d{2,4})$/);
+  if (monthYearMatch) {
+    const monthName = monthYearMatch[1];
+    let yearText = monthYearMatch[2];
+    if (yearText.length === 2) yearText = '20' + yearText;
+    const normalizedMonthYear = new Date(monthName + ' 1, ' + yearText);
+    if (!Number.isNaN(normalizedMonthYear.getTime())) {
+      return new Date(normalizedMonthYear.getFullYear(), normalizedMonthYear.getMonth(), 1);
+    }
+  }
+
   const parsed = new Date(text);
   if (!Number.isNaN(parsed.getTime())) {
     return new Date(parsed.getFullYear(), parsed.getMonth(), 1);
-  }
-
-  const match = text.match(/^([A-Za-z]{3,9})\s+(\d{2,4})$/);
-  if (!match) return value;
-
-  const monthName = match[1];
-  let yearText = match[2];
-  if (yearText.length === 2) yearText = '20' + yearText;
-  const normalized = new Date(monthName + ' 1, ' + yearText);
-  if (!Number.isNaN(normalized.getTime())) {
-    return new Date(normalized.getFullYear(), normalized.getMonth(), 1);
   }
 
   return value;
