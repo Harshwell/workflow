@@ -1127,7 +1127,12 @@ function readSourceSnapshot_(tempSpreadsheetId) {
   }
 
   const headerMap = buildHeaderMap_(bestCandidate.sheet, bestCandidate.headerRow);
-  const sourceColumnMap = resolveAliasMap_(headerMap, SALVAGE_TARGET_TO_SOURCE_ALIASES, 'source');
+  const sourceColumnMap = resolveAliasMap_(
+    headerMap,
+    SALVAGE_TARGET_TO_SOURCE_ALIASES,
+    'source',
+    ['DB Link']
+  );
 
   const lastRow = bestCandidate.sheet.getLastRow();
   const lastCol = bestCandidate.sheet.getLastColumn();
@@ -1970,9 +1975,13 @@ function buildHeaderMap_(sheet, headerRow) {
   return map;
 }
 
-function resolveAliasMap_(headerMap, aliasMap, mapName) {
+function resolveAliasMap_(headerMap, aliasMap, mapName, optionalLogicalNames) {
   const resolved = {};
   const missing = [];
+  const optionalSet = {};
+  (optionalLogicalNames || []).forEach(function(name) {
+    optionalSet[String(name || '')] = true;
+  });
 
   Object.keys(aliasMap).forEach(function(logicalName) {
     const aliases = aliasMap[logicalName];
@@ -1981,7 +1990,9 @@ function resolveAliasMap_(headerMap, aliasMap, mapName) {
     });
 
     if (!matchedAlias) {
-      missing.push(logicalName + ' => [' + aliases.join(' | ') + ']');
+      if (!optionalSet[logicalName]) {
+        missing.push(logicalName + ' => [' + aliases.join(' | ') + ']');
+      }
       return;
     }
 
