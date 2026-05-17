@@ -1527,6 +1527,7 @@ function syncTargetSheet_(sourceSnapshot, precheckedTargetSnapshot) {
 
     sheet.getRange(dataStartRow, claimCol, finalRowCount, 1).setBackgrounds(claimBackgrounds);
     sheet.getRange(dataStartRow, claimCol, finalRowCount, 1).setNotes(claimNotes);
+    expandActiveFilterToDataRange_(sheet, headerRow, lastCol, finalRowCount);
   }
 
   SpreadsheetApp.flush();
@@ -1550,6 +1551,53 @@ function syncTargetSheet_(sourceSnapshot, precheckedTargetSnapshot) {
   };
 }
 
+
+
+function expandActiveFilterToDataRange_(sheet, headerRow, lastCol, finalRowCount) {
+  const filter = sheet.getFilter();
+  if (!filter) return false;
+
+  const targetLastRow = Math.max(headerRow + 1, headerRow + finalRowCount);
+  const currentRange = filter.getRange();
+  if (!currentRange) return false;
+
+  const currentStartRow = currentRange.getRow();
+  const currentStartCol = currentRange.getColumn();
+  const currentLastRow = currentStartRow + currentRange.getNumRows() - 1;
+  const currentLastCol = currentStartCol + currentRange.getNumColumns() - 1;
+
+  const desiredStartRow = 2;
+  const desiredStartCol = 1;
+  const desiredLastRow = Math.max(currentLastRow, targetLastRow);
+  const desiredLastCol = Math.max(currentLastCol, lastCol);
+
+  const rangeChanged = currentStartRow !== desiredStartRow
+    || currentStartCol !== desiredStartCol
+    || currentLastRow !== desiredLastRow
+    || currentLastCol !== desiredLastCol;
+
+  if (!rangeChanged) return false;
+
+  const criteriaByCol = {};
+  for (var col = 1; col <= currentRange.getNumColumns(); col += 1) {
+    const c = filter.getColumnFilterCriteria(col);
+    if (c) criteriaByCol[col] = c;
+  }
+
+  filter.remove();
+  const newRange = sheet.getRange(desiredStartRow, desiredStartCol, desiredLastRow - desiredStartRow + 1, desiredLastCol);
+  newRange.createFilter();
+  const newFilter = sheet.getFilter();
+
+  Object.keys(criteriaByCol).forEach(function(colKey) {
+    const col = Number(colKey);
+    if (col >= 1 && col <= desiredLastCol) {
+      newFilter.setColumnFilterCriteria(col, criteriaByCol[colKey]);
+    }
+  });
+
+  return true;
+}
 
 function throwDuplicateTargetError_(targetSnapshot) {
   const samples = (targetSnapshot && targetSnapshot.duplicateClaimSamples || []).slice(0, 3).join(' | ');
