@@ -183,6 +183,14 @@ const CONFIG = {
   DATE_OUTPUT_FORMAT: '[$-id-ID]d mmmm yyyy',
   UNMAPPED_SHEET_NAME: "Unmapped",
   LINK_TEXT: "LINK",
+
+  MEILANI_SC_NAME_OVERRIDES: {
+    "samsung authorized by unicom palangkaraya service center": "Samsung Exclusive",
+    "samsung authorized by unicom ternate service centre": "Samsung Exclusive",
+    "samsung authorized service centre by unicom gorontalo service centre": "Samsung Exclusive",
+    "samsung authorized service centre by unicom makassar service center": "Samsung Exclusive",
+  },
+
 };
 
 const LAST_STATUS_LABELS = {
@@ -932,6 +940,7 @@ function _collectEligibleRowsFromSource_(sheet, controls) {
 
     var claimNumber = String(row[idx.claimNumber] || "").trim();
     var serviceCenterName = String(row[idx.scName] || "").trim();
+    serviceCenterName = _normalizeServiceCenterNameBySource_(sheet.getName(), serviceCenterName);
     if (!claimNumber || !serviceCenterName) continue;
 
     var rawRemarks = idx.remarks == null ? "" : String(row[idx.remarks] || "").trim();
@@ -955,6 +964,17 @@ function _collectEligibleRowsFromSource_(sheet, controls) {
   }
 
   return { picked: picked, errors: errors, totalRows: values.length - 1 };
+}
+
+
+function _normalizeServiceCenterNameBySource_(sourceSheetName, serviceCenterName) {
+  var rawName = String(serviceCenterName || "").trim();
+  if (!rawName) return "";
+
+  if (String(sourceSheetName || "").trim() !== "SC - Meilani") return rawName;
+
+  var override = CONFIG.MEILANI_SC_NAME_OVERRIDES[_norm_(rawName)];
+  return override || rawName;
 }
 
 function _resolvePhaseRank_(isStart, isMiddle, isFinish) {
