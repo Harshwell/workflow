@@ -318,6 +318,13 @@ function runPipeline_(pic, fileIds, opts) {
     }
   } catch (eSnap) {}
 
+  // Extra safety: persist latest manual snapshot into dedicated hidden backup sheet.
+  try {
+    if (opsManualSnapshot && typeof persistOpsManualBackupSheet06c_ === 'function') {
+      persistOpsManualBackupSheet06c_(ss, profileName, opsManualSnapshot);
+    }
+  } catch (eBakSheet) {}
+
   // Ensure required operational column layout (Submission by Month @ B, Service Center PIC @ N on Start/Finish).
   try { if (typeof enforceOperationalLayout06_ === 'function') enforceOperationalLayout06_(ss); } catch (eLay) {}
 
@@ -375,6 +382,23 @@ function runPipeline_(pic, fileIds, opts) {
       restoreOpsManualColumnsRich06c_(ss, profileName, opsManualSnapshot);
     }
   } catch (eSnapRestore) {}
+
+  // Restore audit: detect any gaps on manual fields after all restore passes.
+  let restoreAuditRes = null;
+  try {
+    if (opsManualSnapshot && typeof auditOpsManualRestore06c_ === 'function') {
+      restoreAuditRes = auditOpsManualRestore06c_(ss, profileName, opsManualSnapshot);
+    }
+  } catch (eSnapAudit) {}
+
+  // Fallback repair from backup sheet if audit still finds missing fields.
+  try {
+    if (restoreAuditRes && restoreAuditRes.missing > 0 && typeof restoreOpsManualFromBackupSheet06c_ === 'function') {
+      const fb = restoreOpsManualFromBackupSheet06c_(ss, profileName);
+      try { logLine_('RESTORE_FALLBACK', 'Applied backup-sheet fallback', 'restored=' + (fb ? fb.restored : 0), 'rows=' + (fb ? fb.rows : 0), 'WARN'); } catch (eLf) {}
+      if (typeof auditOpsManualRestore06c_ === 'function') auditOpsManualRestore06c_(ss, profileName, opsManualSnapshot);
+    }
+  } catch (eSnapFallback) {}
 
 // Re-apply Claim Number markers AFTER template format copy
   try { applyOperationalClaimHighlightsByRaw_(ss, rawValues, headerIndexRaw, profileName); } catch (e) {}

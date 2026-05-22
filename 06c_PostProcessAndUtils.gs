@@ -4,6 +4,15 @@
  * exclusion recompute, and Raw Data column reordering
  ***************************************************************/
 'use strict';
+
+function __claimKey06_(v) {
+  let s = String(v == null ? '' : v).trim();
+  if (!s) return '';
+  // Normalize numeric-looking claim ids (e.g. 12345.0 from Sheets numeric coercion)
+  if (/^\d+\.0+$/.test(s)) s = s.replace(/\.0+$/, '');
+  return s.toUpperCase();
+}
+
 function __groupConsecutiveRows_(nums) {
   if (!nums || !nums.length) return [];
   const a = nums.slice().sort((x, y) => x - y);
@@ -40,13 +49,13 @@ function applyUpdateStatusRichTextToOperational_(ss, rawSheet, headerIndexRaw, p
 
   const map = Object.create(null);
   for (let i = 0; i < n; i++) {
-    const c = String((claimVals[i] && claimVals[i][0]) || '').trim();
+    const c = __claimKey06_(claimVals[i] && claimVals[i][0]);
     if (!c) continue;
     const rt = (rtVals[i] && rtVals[i][0]) ? rtVals[i][0] : null;
     if (!rt || !rt.getText) continue;
     const t = String(rt.getText() || '');
     if (!t) continue; // only apply when there is text (rich formatting matters)
-    map[c.toUpperCase()] = rt;
+    map[c] = rt;
   }
 
   const isAdmin = (pic === 'Admin');
@@ -74,9 +83,9 @@ function applyUpdateStatusRichTextToOperational_(ss, rawSheet, headerIndexRaw, p
     const rowMap = Object.create(null);
 
     for (let i = 0; i < rows; i++) {
-      const claim = String((claims[i] && claims[i][0]) || '').trim();
+      const claim = __claimKey06_(claims[i] && claims[i][0]);
       if (!claim) continue;
-      const rt = map[claim.toUpperCase()];
+      const rt = map[claim];
       if (!rt) continue;
       const rno = i + 2;
       rowNums.push(rno);
@@ -118,13 +127,13 @@ function applyRemarksRichTextToOperational_(ss, rawSheet, headerIndexRaw, pic) {
 
   const map = Object.create(null);
   for (let i = 0; i < n; i++) {
-    const c = String((claimVals[i] && claimVals[i][0]) || '').trim();
+    const c = __claimKey06_(claimVals[i] && claimVals[i][0]);
     if (!c) continue;
     const rt = (rtVals[i] && rtVals[i][0]) ? rtVals[i][0] : null;
     if (!rt || !rt.getText) continue;
     const t = String(rt.getText() || '');
     if (t === '') continue;
-    map[c.toUpperCase()] = rt;
+    map[c] = rt;
   }
 
   const isAdmin = (pic === 'Admin');
@@ -152,9 +161,9 @@ function applyRemarksRichTextToOperational_(ss, rawSheet, headerIndexRaw, pic) {
     const rowMap = Object.create(null);
 
     for (let i = 0; i < rows; i++) {
-      const claim = String((claims[i] && claims[i][0]) || '').trim();
+      const claim = __claimKey06_(claims[i] && claims[i][0]);
       if (!claim) continue;
-      const rt = map[claim.toUpperCase()];
+      const rt = map[claim];
       if (!rt) continue;
       const rno = i + 2;
       rowNums.push(rno);
@@ -234,7 +243,7 @@ function snapshotOpsManualColumnsRich06c_(ss, pic) {
     const remWrap = rngRemarks ? rngRemarks.getWrapStrategies() : null;
 
     for (let i = 0; i < n; i++) {
-      const claim = String((claims[i] && claims[i][0]) || '').trim();
+      const claim = __claimKey06_(claims[i] && claims[i][0]);
       if (!claim) continue;
       const key = claim.toUpperCase();
 
@@ -288,6 +297,161 @@ function snapshotOpsManualColumnsRich06c_(ss, pic) {
   return { version: 'ops_manual_v1', map: out, count: count };
 }
 
+
+function auditOpsManualRestore06c_(ss, pic, snapshot) {
+  if (!ss || !snapshot || !snapshot.map) return { total: 0, missing: 0 };
+  const snap = snapshot.map;
+  const sheetNames = (typeof getOperationalSheetsForBackup_ === 'function')
+    ? getOperationalSheetsForBackup_(pic)
+    : (CONFIG && CONFIG.sheetsByPic ? Array.from(new Set([].concat(CONFIG.sheetsByPic.picOperational || [], CONFIG.sheetsByPic.adminOperational || []))) : []);
+
+  let total = 0;
+  let missing = 0;
+
+  for (let si = 0; si < sheetNames.length; si++) {
+    const sh = ss.getSheetByName(sheetNames[si]);
+    if (!sh) continue;
+    const lr = sh.getLastRow();
+    const lc = sh.getLastColumn();
+    if (lr < 2 || lc < 1) continue;
+
+    const header = sh.getRange(1, 1, 1, lc).getValues()[0].map(__normalizeHeaderText06_);
+    const idxClaim = __findHeaderIndexFlexible06_(header, 'Claim Number');
+    if (idxClaim === -1) continue;
+
+    const idxUpdate = __findHeaderIndexFlexible06_(header, 'Update Status');
+    const idxTs = __findHeaderIndexFlexible06_(header, 'Timestamp');
+    const idxStatus = __findHeaderIndexFlexible06_(header, 'Status');
+    const idxRemarks = __findHeaderIndexFlexible06_(header, 'Remarks');
+    if (idxUpdate === -1 && idxTs === -1 && idxStatus === -1 && idxRemarks === -1) continue;
+
+    const n = lr - 1;
+    const claims = sh.getRange(2, idxClaim + 1, n, 1).getValues();
+    const ups = (idxUpdate !== -1) ? sh.getRange(2, idxUpdate + 1, n, 1).getDisplayValues() : null;
+    const tss = (idxTs !== -1) ? sh.getRange(2, idxTs + 1, n, 1).getDisplayValues() : null;
+    const sts = (idxStatus !== -1) ? sh.getRange(2, idxStatus + 1, n, 1).getDisplayValues() : null;
+    const rms = (idxRemarks !== -1) ? sh.getRange(2, idxRemarks + 1, n, 1).getDisplayValues() : null;
+
+    for (let i = 0; i < n; i++) {
+      const key = __claimKey06_(claims[i] && claims[i][0]);
+      if (!key) continue;
+      const rec = snap[key];
+      if (!rec) continue;
+      total++;
+
+      let ok = true;
+      if (rec.u && idxUpdate !== -1) ok = ok && String((ups[i] && ups[i][0]) || '').trim() !== '';
+      if (rec.t && idxTs !== -1) ok = ok && String((tss[i] && tss[i][0]) || '').trim() !== '';
+      if (rec.s && idxStatus !== -1) ok = ok && String((sts[i] && sts[i][0]) || '').trim() !== '';
+      if (rec.r && idxRemarks !== -1) ok = ok && String((rms[i] && rms[i][0]) || '').trim() !== '';
+      if (!ok) missing++;
+    }
+  }
+
+  try {
+    if (missing > 0) logLine_('RESTORE_AUDIT', 'Manual restore gap detected', 'missing=' + missing, 'total=' + total, 'WARN');
+    else logLine_('RESTORE_AUDIT', 'Manual restore audit ok', 'total=' + total, '', 'INFO');
+  } catch (e) {}
+
+  return { total: total, missing: missing };
+}
+
+
+function persistOpsManualBackupSheet06c_(ss, pic, snapshot) {
+  if (!ss || !snapshot || !snapshot.map) return 0;
+  const name = '_OPS_MANUAL_BACKUP';
+  let sh = ss.getSheetByName(name);
+  if (!sh) sh = ss.insertSheet(name);
+  try { sh.hideSheet(); } catch (e0) {}
+
+  const header = ['Backup Timestamp','PIC','Claim Number','Update Status','Timestamp','Status','Remarks'];
+  const rows = [header];
+  const now = new Date();
+  const snap = snapshot.map;
+  const keys = Object.keys(snap);
+  for (let i = 0; i < keys.length; i++) {
+    const k = keys[i];
+    const rec = snap[k] || {};
+    const upd = (rec.u && rec.u.rt && rec.u.rt.getText) ? String(rec.u.rt.getText() || '') : '';
+    const ts = (rec.t && rec.t.v != null) ? rec.t.v : '';
+    const st = (rec.s && rec.s.v != null) ? rec.s.v : '';
+    const rem = (rec.r && rec.r.rt && rec.r.rt.getText) ? String(rec.r.rt.getText() || '') : '';
+    rows.push([now, String(pic || ''), k, upd, ts, st, rem]);
+  }
+
+  sh.clearContents();
+  sh.getRange(1,1,rows.length,header.length).setValues(rows);
+  try { sh.getRange(1,1,1,header.length).setFontWeight('bold'); } catch (e1) {}
+  return Math.max(0, rows.length - 1);
+}
+
+function restoreOpsManualFromBackupSheet06c_(ss, pic) {
+  if (DRY_RUN) return { restored: 0, rows: 0 };
+  if (!ss) return { restored: 0, rows: 0 };
+  const shBak = ss.getSheetByName('_OPS_MANUAL_BACKUP');
+  if (!shBak || shBak.getLastRow() < 2) return { restored: 0, rows: 0 };
+
+  const lc = shBak.getLastColumn();
+  const hdr = shBak.getRange(1,1,1,lc).getValues()[0].map(__normalizeHeaderText06_);
+  const idxPic = __findHeaderIndexFlexible06_(hdr, 'PIC');
+  const idxClaim = __findHeaderIndexFlexible06_(hdr, 'Claim Number');
+  const idxUpd = __findHeaderIndexFlexible06_(hdr, 'Update Status');
+  const idxTs = __findHeaderIndexFlexible06_(hdr, 'Timestamp');
+  const idxSt = __findHeaderIndexFlexible06_(hdr, 'Status');
+  const idxRem = __findHeaderIndexFlexible06_(hdr, 'Remarks');
+  if (idxPic === -1 || idxClaim === -1) return { restored: 0, rows: 0 };
+
+  const vals = shBak.getRange(2,1,shBak.getLastRow()-1,lc).getValues();
+  const map = Object.create(null);
+  const picKey = String(pic || '').trim().toUpperCase();
+  for (let i=0;i<vals.length;i++) {
+    const row=vals[i];
+    if (String(row[idxPic] || '').trim().toUpperCase() !== picKey) continue;
+    const k = __claimKey06_(row[idxClaim]);
+    if (!k) continue;
+    map[k] = { u: idxUpd!==-1?row[idxUpd]:'', t: idxTs!==-1?row[idxTs]:'', s: idxSt!==-1?row[idxSt]:'', r: idxRem!==-1?row[idxRem]:'' };
+  }
+
+  const sheetNames = (typeof getOperationalSheetsForBackup_ === 'function')
+    ? getOperationalSheetsForBackup_(pic)
+    : (CONFIG && CONFIG.sheetsByPic ? Array.from(new Set([].concat(CONFIG.sheetsByPic.picOperational || [], CONFIG.sheetsByPic.adminOperational || []))) : []);
+
+  let restored = 0;
+  for (let si=0; si<sheetNames.length; si++) {
+    const sh = ss.getSheetByName(sheetNames[si]);
+    if (!sh) continue;
+    const lr = sh.getLastRow(); const lc2 = sh.getLastColumn();
+    if (lr < 2 || lc2 < 1) continue;
+    const h = sh.getRange(1,1,1,lc2).getValues()[0].map(__normalizeHeaderText06_);
+    const iC = __findHeaderIndexFlexible06_(h,'Claim Number');
+    if (iC===-1) continue;
+    const iU = __findHeaderIndexFlexible06_(h,'Update Status');
+    const iT = __findHeaderIndexFlexible06_(h,'Timestamp');
+    const iS = __findHeaderIndexFlexible06_(h,'Status');
+    const iR = __findHeaderIndexFlexible06_(h,'Remarks');
+    const n=lr-1;
+    const claims=sh.getRange(2,iC+1,n,1).getValues();
+    const outU=iU!==-1?sh.getRange(2,iU+1,n,1).getValues():null;
+    const outT=iT!==-1?sh.getRange(2,iT+1,n,1).getValues():null;
+    const outS=iS!==-1?sh.getRange(2,iS+1,n,1).getValues():null;
+    const outR=iR!==-1?sh.getRange(2,iR+1,n,1).getValues():null;
+    
+    for (let r=0;r<n;r++) {
+      const rec = map[__claimKey06_(claims[r][0])];
+      if (!rec) continue;
+      if (outU && String(outU[r][0]||'').trim()==='' && String(rec.u||'').trim()!=='') { outU[r][0]=rec.u; restored++; }
+      if (outT && String(outT[r][0]||'').trim()==='' && String(rec.t||'').trim()!=='') { outT[r][0]=rec.t; restored++; }
+      if (outS && String(outS[r][0]||'').trim()==='' && String(rec.s||'').trim()!=='') { outS[r][0]=rec.s; restored++; }
+      if (outR && String(outR[r][0]||'').trim()==='' && String(rec.r||'').trim()!=='') { outR[r][0]=rec.r; restored++; }
+    }
+    try { if (outU) sh.getRange(2,iU+1,n,1).setValues(outU); } catch(e){}
+    try { if (outT) sh.getRange(2,iT+1,n,1).setValues(outT); } catch(e){}
+    try { if (outS) sh.getRange(2,iS+1,n,1).setValues(outS); } catch(e){}
+    try { if (outR) sh.getRange(2,iR+1,n,1).setValues(outR); } catch(e){}
+  }
+  return { restored: restored, rows: Object.keys(map).length };
+}
+
 function restoreOpsManualColumnsRich06c_(ss, pic, snapshot) {
   if (DRY_RUN) return;
   if (!ss || !snapshot || !snapshot.map) return;
@@ -338,7 +502,7 @@ function restoreOpsManualColumnsRich06c_(ss, pic, snapshot) {
     const mapStatus = Object.create(null);
 
     for (let i = 0; i < n; i++) {
-      const claim = String((claims[i] && claims[i][0]) || '').trim();
+      const claim = __claimKey06_(claims[i] && claims[i][0]);
       if (!claim) continue;
       const key = claim.toUpperCase();
       const rec = snap[key];
@@ -607,7 +771,7 @@ function restoreOpsFieldsFromRawBackup_(ss, rawSheet, headerIndexRaw, pic) {
 
   const rawMap = Object.create(null);
   for (let i = 0; i < rawClaims.length; i++) {
-    const key = String(rawClaims[i][0] || '').trim().toUpperCase();
+    const key = __claimKey06_(rawClaims[i][0]);
     if (key) rawMap[key] = i;
   }
 
@@ -657,7 +821,7 @@ function restoreOpsFieldsFromRawBackup_(ss, rawSheet, headerIndexRaw, pic) {
     const outTsAdmin = (idxTsAdminOps !== -1 && rawTsAdmin) ? new Array(m) : null;
 
     for (let r = 0; r < m; r++) {
-      const claimKey = String(claimsOps[r][0] || '').trim().toUpperCase();
+      const claimKey = __claimKey06_(claimsOps[r][0]);
       const ri = claimKey ? rawMap[claimKey] : null;
 
       if (outStatus) outStatus[r] = [ (ri != null ? rawStatus[ri][0] : '') ];

@@ -1176,12 +1176,12 @@ function runSubEmailIngest(maxThreads) {
       }
     } catch (eCtx4) {}
 
-    if (!picked.oldAtt || !picked.newAtt) {
+    if (!picked.oldAtt && !picked.newAtt) {
       const names = (atts || []).map(a => (a && a.getName) ? a.getName() : '').join(' | ');
-      try { setProgressForFlow_('SUB', 1.0, 'Failed (OLD/NEW attachment missing)', { prefixFlowInStep: true }); } catch (eP2) {}
-      try { logLine_('SUB_ERR', 'Missing OLD/NEW attachments (expected 2 XLSX)', names, '', 'ERROR'); } catch (e6) {}
+      try { setProgressForFlow_('SUB', 1.0, 'Failed (SUB attachment missing)', { prefixFlowInStep: true }); } catch (eP2) {}
+      try { logLine_('SUB_ERR', 'Missing SUB attachment (need at least 1 XLSX)', names, '', 'ERROR'); } catch (e6) {}
       // Leave queued for retry.
-      return __finishSub06a_({ severity: 'ERROR', message: 'Missing OLD/NEW attachments', processed: 0, failed: 1 });
+      return __finishSub06a_({ severity: 'ERROR', message: 'Missing SUB attachment', processed: 0, failed: 1 });
     }
 
     // Open master workbook (same as MAIN).
@@ -1240,7 +1240,7 @@ function runSubEmailIngest(maxThreads) {
 
     // Idempotency: prevent duplicate processing of the same queued SUB email.
     try {
-      const tok = ['SUB', thread.getId(), msg.getId(), picked.oldAtt.getName(), picked.oldAtt.getSize(), picked.newAtt.getName(), picked.newAtt.getSize()].join('|');
+      const tok = ['SUB', thread.getId(), msg.getId(), picked.oldAtt ? picked.oldAtt.getName() : '-', picked.oldAtt ? picked.oldAtt.getSize() : 0, picked.newAtt ? picked.newAtt.getName() : '-', picked.newAtt ? picked.newAtt.getSize() : 0].join('|');
       const idem = (typeof checkAndMarkTransaction_ === 'function') ? checkAndMarkTransaction_(tok, 6 * 60 * 60 * 1000) : { duplicate: false };
       if (idem && idem.duplicate) {
         try { logLine_('IDEMPOTENT', 'Duplicate SUB token -> cleanup and skip', tok, '', 'INFO'); } catch (eI2) {}
@@ -1265,30 +1265,40 @@ try {
   try { logLine_('WEBAPP_SNAP_PREV_ERR', 'Snapshot PREV failed (non-fatal)', String(eWp0), '', 'WARN'); } catch (eWp2) {}
 }
 
-    // Process OLD then NEW; cleanup email only if both succeed.
-    try { setProgressForFlow_('SUB', 0.40, 'Process OLD...', { prefixFlowInStep: true }); } catch (eP5) {}
+    // Process available attachment(s). Allow SUB to run with only 1 XLSX.
+    let rOld = null;
+    let rNew = null;
 
-    const rOld = __processSubAttachment06a_(masterSs, picked.oldAtt, {
-      dbTag: 'OLD',
-      rawSheetName: rawOldName,
-      operationalSheetNames: opSheets
-    });
-    if (!rOld || String(rOld.severity || '').toUpperCase() === 'ERROR') {
-      try { setProgressForFlow_('SUB', 1.0, 'Failed (OLD)', { prefixFlowInStep: true }); } catch (eP6) {}
-      try { logLine_('SUB_FAIL', 'OLD processing failed; leave email queued', '', '', 'ERROR'); } catch (e7) {}
-      return __finishSub06a_({ severity: 'ERROR', message: 'SUB OLD failed', processed: 0, failed: 1, details: rOld });
+    if (picked.oldAtt) {
+      try { setProgressForFlow_('SUB', 0.40, 'Process OLD...', { prefixFlowInStep: true }); } catch (eP5) {}
+      rOld = __processSubAttachment06a_(masterSs, picked.oldAtt, {
+        dbTag: 'OLD',
+        rawSheetName: rawOldName,
+        operationalSheetNames: opSheets
+      });
+      if (!rOld || String(rOld.severity || '').toUpperCase() === 'ERROR') {
+        try { setProgressForFlow_('SUB', 1.0, 'Failed (OLD)', { prefixFlowInStep: true }); } catch (eP6) {}
+        try { logLine_('SUB_FAIL', 'OLD processing failed; leave email queued', '', '', 'ERROR'); } catch (e7) {}
+        return __finishSub06a_({ severity: 'ERROR', message: 'SUB OLD failed', processed: 0, failed: 1, details: rOld });
+      }
+    } else {
+      try { logLine_('SUB_WARN', 'OLD attachment missing; continue NEW-only run', '', '', 'WARN'); } catch (eW1) {}
     }
 
-    try { setProgressForFlow_('SUB', 0.62, 'Process NEW...', { prefixFlowInStep: true }); } catch (eP7) {}
-    const rNew = __processSubAttachment06a_(masterSs, picked.newAtt, {
-      dbTag: 'NEW',
-      rawSheetName: rawNewName,
-      operationalSheetNames: opSheets
-    });
-    if (!rNew || String(rNew.severity || '').toUpperCase() === 'ERROR') {
-      try { setProgressForFlow_('SUB', 1.0, 'Failed (NEW)', { prefixFlowInStep: true }); } catch (eP8) {}
-      try { logLine_('SUB_FAIL', 'NEW processing failed; leave email queued', '', '', 'ERROR'); } catch (e8) {}
-      return __finishSub06a_({ severity: 'ERROR', message: 'SUB NEW failed', processed: 0, failed: 1, details: rNew });
+    if (picked.newAtt) {
+      try { setProgressForFlow_('SUB', 0.62, 'Process NEW...', { prefixFlowInStep: true }); } catch (eP7) {}
+      rNew = __processSubAttachment06a_(masterSs, picked.newAtt, {
+        dbTag: 'NEW',
+        rawSheetName: rawNewName,
+        operationalSheetNames: opSheets
+      });
+      if (!rNew || String(rNew.severity || '').toUpperCase() === 'ERROR') {
+        try { setProgressForFlow_('SUB', 1.0, 'Failed (NEW)', { prefixFlowInStep: true }); } catch (eP8) {}
+        try { logLine_('SUB_FAIL', 'NEW processing failed; leave email queued', '', '', 'ERROR'); } catch (e8) {}
+        return __finishSub06a_({ severity: 'ERROR', message: 'SUB NEW failed', processed: 0, failed: 1, details: rNew });
+      }
+    } else {
+      try { logLine_('SUB_WARN', 'NEW attachment missing; continue OLD-only run', '', '', 'WARN'); } catch (eW2) {}
     }
     // Relocate rows by Last Status mapping (move FULL row, dedupe by Claim Number).
     try { setProgressForFlow_('SUB', 0.80, 'Relocate + sort...', { prefixFlowInStep: true }); } catch (eP9) {}
