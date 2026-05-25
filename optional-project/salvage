@@ -1857,7 +1857,7 @@ function writeTargetRunTimestamp_() {
   }
 
   const timestampText = formatTargetRunTimestamp_(new Date());
-  sheet.getRange('B1').setValue(timestampText);
+  sheet.getRange('D1:F1').setValue(timestampText);
 }
 
 function writeTargetRunFailureNotice_(error) {
@@ -1868,7 +1868,7 @@ function writeTargetRunFailureNotice_(error) {
   }
 
   const failureText = formatTargetRunFailureNotice_(error);
-  sheet.getRange('B1').setValue(failureText);
+  sheet.getRange('D1:F1').setValue(failureText);
 }
 
 function formatTargetRunFailureNotice_(error) {
