@@ -1373,6 +1373,7 @@ function buildSyncDiffPreview_(sourceSnapshot, precheckedTargetSnapshot) {
   const dataStartRow = headerRow + 1;
   const existingRangeRowCount = Math.max(targetSnapshot.lastRow - headerRow, 0);
   const claimCol = targetColumnMap['Claim Number'];
+  const remarksCol = findColumnByHeaderName_(targetSnapshot.headers, 'Remarks');
 
   let values = [];
   let claimNotes = [];
@@ -1562,6 +1563,13 @@ function syncTargetSheet_(sourceSnapshot, precheckedTargetSnapshot) {
     if (targetColumnMap['PIC'] && targetColumnMap['Branch']) {
       const branchValue = values[rowIndex][targetColumnMap['Branch'] - 1];
       values[rowIndex][targetColumnMap['PIC'] - 1] = resolvePicByBranch_(branchValue);
+    }
+
+    if (isInsert && remarksCol) {
+      const existingRemarks = values[rowIndex][remarksCol - 1];
+      if (normalizeKey_(existingRemarks) === '') {
+        values[rowIndex][remarksCol - 1] = 'Unit belum ada';
+      }
     }
 
     const existingNote = String(claimNotes[rowIndex] && claimNotes[rowIndex][0] || '');
@@ -2214,6 +2222,17 @@ function normalizeHeader_(value) {
     .replace(/\s+/g, ' ')
     .trim()
     .toLowerCase();
+}
+
+
+function findColumnByHeaderName_(headers, headerName) {
+  const wanted = normalizeHeader_(headerName);
+  for (let i = 0; i < headers.length; i += 1) {
+    if (normalizeHeader_(headers[i]) === wanted) {
+      return i + 1;
+    }
+  }
+  return 0;
 }
 
 function normalizeKey_(value) {
