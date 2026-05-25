@@ -1459,6 +1459,22 @@ function buildSyncDiffPreview_(sourceSnapshot, precheckedTargetSnapshot) {
 }
 
 
+
+function resolveBranchByServiceCenter_(serviceCenterValue, fallbackBranchValue) {
+  const scKey = normalizeKey_(serviceCenterValue);
+  const branchByServiceCenter = {
+    'appleauthorizedserviceproviderbymecare-phisinipointmall': 'mE Care',
+    'samsungauthorizedservicecentrebyunicom-makassar-servicecenter': 'Samsung Exclusive',
+    'cvkayuawetsejahtera-store': 'KAS',
+  };
+
+  if (branchByServiceCenter[scKey]) {
+    return branchByServiceCenter[scKey];
+  }
+
+  return fallbackBranchValue;
+}
+
 function resolvePicByBranch_(branchValue) {
   const branchKey = normalizeKey_(branchValue);
   if (!branchKey) return '';
@@ -1503,6 +1519,7 @@ function syncTargetSheet_(sourceSnapshot, precheckedTargetSnapshot) {
   const dataStartRow = headerRow + 1;
   const existingRangeRowCount = Math.max(targetSnapshot.lastRow - headerRow, 0);
   const claimCol = targetColumnMap['Claim Number'];
+  const remarksCol = findColumnByHeaderName_(targetSnapshot.headers, 'Remarks');
 
   let values = [];
   let claimBackgrounds = [];
@@ -1552,7 +1569,10 @@ function syncTargetSheet_(sourceSnapshot, precheckedTargetSnapshot) {
 
     Object.keys(SALVAGE_TARGET_TO_SOURCE_ALIASES).forEach(function(targetHeader) {
       const targetCol = targetColumnMap[targetHeader];
-      const sourceValue = record[targetHeader];
+      let sourceValue = record[targetHeader];
+      if (targetHeader === 'Branch') {
+        sourceValue = resolveBranchByServiceCenter_(record['Service Center'], sourceValue);
+      }
       const existingValue = values[rowIndex][targetCol - 1];
       if (shouldPreserveManualTargetValue_(targetHeader, sourceValue, existingValue)) {
         return;
@@ -1616,6 +1636,13 @@ function syncTargetSheet_(sourceSnapshot, precheckedTargetSnapshot) {
         sheet.getRange(dataStartRow, targetCol, finalRowCount, 1).setValues(columnValues);
       }
     });
+
+    if (targetColumnMap['PIC']) {
+      const picValues = values.map(function(row) {
+        return [row[targetColumnMap['PIC'] - 1]];
+      });
+      sheet.getRange(dataStartRow, targetColumnMap['PIC'], finalRowCount, 1).setValues(picValues);
+    }
 
     sheet.getRange(dataStartRow, claimCol, finalRowCount, 1).setBackgrounds(claimBackgrounds);
     sheet.getRange(dataStartRow, claimCol, finalRowCount, 1).setNotes(claimNotes);
