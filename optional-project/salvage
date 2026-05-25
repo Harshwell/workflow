@@ -167,6 +167,7 @@ var SALVAGE_TARGET_HEADER_ALIASES = typeof SALVAGE_TARGET_HEADER_ALIASES !== 'un
   'Branch': ['branch'],
   'Partner Name': ['partner name'],
   'DB Link': ['db link', 'dblink'],
+  'PIC': ['pic'],
 });
 
 const SALVAGE_OPTIONAL_SOURCE_LOGICAL_HEADERS = ['DB Link', 'Submission Month'];
@@ -1456,6 +1457,37 @@ function buildSyncDiffPreview_(sourceSnapshot, precheckedTargetSnapshot) {
   };
 }
 
+
+function resolvePicByBranch_(branchValue) {
+  const branchKey = normalizeKey_(branchValue);
+  if (!branchKey) return '';
+
+  const picByBranch = {
+    gsi: 'Farhan',
+    ibox: 'Farhan',
+    mitracare: 'Farhan',
+    sitcomtara: 'Farhan',
+    andalas: 'Meilani',
+    carlcare: 'Meilani',
+    samsungexclusive: 'Meilani',
+    unicom: 'Meilani',
+    xiaomiauthorized: 'Meilani',
+    bstore: 'Meindar',
+    kas: 'Meindar',
+    deltafone: 'Meindar',
+    ezcare: 'Meindar',
+    ghstore: 'Meindar',
+    jbros: 'Meindar',
+    klikcare: 'Meindar',
+    mea: 'Meindar',
+    mmb: 'Meindar',
+    mdp: 'Meindar',
+    multikom: 'Meindar',
+  };
+
+  return picByBranch[branchKey] || 'Unknown';
+}
+
 function syncTargetSheet_(sourceSnapshot, precheckedTargetSnapshot) {
   const ss = SpreadsheetApp.openById(SALVAGE_CONFIG.target.spreadsheetId);
   const sheet = ss.getSheetByName(SALVAGE_CONFIG.target.sheetName);
@@ -1526,6 +1558,11 @@ function syncTargetSheet_(sourceSnapshot, precheckedTargetSnapshot) {
       }
       values[rowIndex][targetCol - 1] = sourceValue;
     });
+
+    if (targetColumnMap['PIC'] && targetColumnMap['Branch']) {
+      const branchValue = values[rowIndex][targetColumnMap['Branch'] - 1];
+      values[rowIndex][targetColumnMap['PIC'] - 1] = resolvePicByBranch_(branchValue);
+    }
 
     const existingNote = String(claimNotes[rowIndex] && claimNotes[rowIndex][0] || '');
     if (existingNote === SALVAGE_CONFIG.target.claimMissingNote) {
