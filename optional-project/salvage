@@ -2252,7 +2252,7 @@ function buildDbLinkFormulaFromClaim_(claimNumberValue) {
     ? 'https://internal.qoala.app/gadget/claim/'
     : 'https://internal.qoala.app/partnership/claim/';
   const link = baseUrl + claimNumber;
-  return buildHyperlinkFormula_(link, link);
+  return buildHyperlinkFormula_(link, "LINK");
 }
 
 function buildHyperlinkFormula_(urlValue, labelText) {
