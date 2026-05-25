@@ -318,6 +318,16 @@ function runPipeline_(pic, fileIds, opts) {
     }
   } catch (eSnap) {}
 
+  // MAIN->SUB hardening: persist one-shot temp backup (Claim+SC+4 manual columns) before reset.
+  try {
+    if (flowName === 'main' && typeof persistOpsManualTempForSub06c_ === 'function') {
+      const t = persistOpsManualTempForSub06c_(ss, profileName);
+      try { logLine_('MAIN_TEMP_BAK', 'Persisted MAIN temp backup for SUB restore', 'rows=' + (t ? t.rows : 0), '', 'INFO'); } catch (eT1) {}
+    }
+  } catch (eMainTempBak) {
+    try { logLine_('MAIN_TEMP_BAK_WARN', 'MAIN temp backup failed (non-fatal)', String(eMainTempBak), '', 'WARN'); } catch (eT2) {}
+  }
+
   // Extra safety: persist latest manual snapshot into dedicated hidden backup sheet.
   try {
     if (opsManualSnapshot && typeof persistOpsManualBackupSheet06c_ === 'function') {

@@ -385,6 +385,197 @@ function persistOpsManualBackupSheet06c_(ss, pic, snapshot) {
   return Math.max(0, rows.length - 1);
 }
 
+/**
+ * MAIN -> SUB handoff backup (daily one-shot).
+ * Snapshot only 6 columns from operational sheets into hidden temp sheet:
+ * - Claim Number, Service Center, Update Status, Timestamp, Status, Remarks
+ */
+function persistOpsManualTempForSub06c_(ss, pic) {
+  if (!ss) return { rows: 0, sheet: '' };
+  const name = '_OPS_MAIN_SUB_TEMP';
+  let sh = ss.getSheetByName(name);
+  if (!sh) sh = ss.insertSheet(name);
+  try { sh.hideSheet(); } catch (e0) {}
+
+  const sheetNames = (typeof getOperationalSheetsForBackup_ === 'function')
+    ? getOperationalSheetsForBackup_(pic)
+    : (CONFIG && CONFIG.sheetsByPic ? Array.from(new Set([].concat(CONFIG.sheetsByPic.picOperational || [], CONFIG.sheetsByPic.adminOperational || []))) : []);
+
+  const header = ['Backup Timestamp','PIC','Source Sheet','Claim Number','Service Center','Update Status','Timestamp','Status','Remarks'];
+  const rows = [header];
+  const now = new Date();
+  const richJobs = [];
+
+  for (let si = 0; si < sheetNames.length; si++) {
+    const srcName = sheetNames[si];
+    const src = ss.getSheetByName(srcName);
+    if (!src) continue;
+    const lr = src.getLastRow();
+    const lc = src.getLastColumn();
+    if (lr < 2 || lc < 1) continue;
+
+    const hdr = src.getRange(1, 1, 1, lc).getValues()[0].map(__normalizeHeaderText06_);
+    const idxClaim = __findHeaderIndexFlexible06_(hdr, 'Claim Number');
+    if (idxClaim === -1) continue;
+    const idxSc = (function() {
+      const cands = ['Service Center', 'Service Center Name', 'SC Name', 'sc_name'];
+      for (let i = 0; i < cands.length; i++) {
+        const x = __findHeaderIndexFlexible06_(hdr, cands[i]);
+        if (x !== -1) return x;
+      }
+      return -1;
+    })();
+    const idxUpd = __findHeaderIndexFlexible06_(hdr, 'Update Status');
+    const idxTs = __findHeaderIndexFlexible06_(hdr, 'Timestamp');
+    const idxSt = __findHeaderIndexFlexible06_(hdr, 'Status');
+    const idxRem = __findHeaderIndexFlexible06_(hdr, 'Remarks');
+
+    if (idxUpd === -1 && idxTs === -1 && idxSt === -1 && idxRem === -1) continue;
+
+    const vals = src.getRange(2, 1, lr - 1, lc).getValues();
+    for (let r = 0; r < vals.length; r++) {
+      const row = vals[r] || [];
+      const claim = String(row[idxClaim] || '').trim();
+      if (!claim) continue;
+      rows.push([
+        now,
+        String(pic || ''),
+        srcName,
+        claim,
+        idxSc !== -1 ? row[idxSc] : '',
+        idxUpd !== -1 ? row[idxUpd] : '',
+        idxTs !== -1 ? row[idxTs] : '',
+        idxSt !== -1 ? row[idxSt] : '',
+        idxRem !== -1 ? row[idxRem] : ''
+      ]);
+      const tempRowNo = rows.length; // 1-based row index in temp sheet
+      richJobs.push({
+        src: src,
+        srcRowNo: r + 2,
+        idxUpd: idxUpd,
+        idxTs: idxTs,
+        idxSt: idxSt,
+        idxRem: idxRem,
+        tempRowNo: tempRowNo
+      });
+    }
+  }
+
+  sh.clearContents();
+  sh.getRange(1, 1, rows.length, header.length).setValues(rows);
+  try { sh.getRange(1, 1, 1, header.length).setFontWeight('bold'); } catch (e1) {}
+
+  // Preserve per-cell style 1:1 (rich text, colors, number format, wrap, DV) for manual columns.
+  for (let i = 0; i < richJobs.length; i++) {
+    const j = richJobs[i];
+    try { if (j.idxUpd !== -1) j.src.getRange(j.srcRowNo, j.idxUpd + 1).copyTo(sh.getRange(j.tempRowNo, 6), { contentsOnly: false }); } catch (eU) {}
+    try { if (j.idxTs !== -1) j.src.getRange(j.srcRowNo, j.idxTs + 1).copyTo(sh.getRange(j.tempRowNo, 7), { contentsOnly: false }); } catch (eT) {}
+    try { if (j.idxSt !== -1) j.src.getRange(j.srcRowNo, j.idxSt + 1).copyTo(sh.getRange(j.tempRowNo, 8), { contentsOnly: false }); } catch (eS) {}
+    try { if (j.idxRem !== -1) j.src.getRange(j.srcRowNo, j.idxRem + 1).copyTo(sh.getRange(j.tempRowNo, 9), { contentsOnly: false }); } catch (eR) {}
+  }
+
+  return { rows: Math.max(0, rows.length - 1), sheet: name };
+}
+
+/** SUB one-shot restore from MAIN temp backup. Match key: Claim Number + Service Center. */
+function restoreOpsManualFromMainTempForSub06c_(ss, pic, opts) {
+  opts = opts || {};
+  if (DRY_RUN || !ss) return { restored: 0, rows: 0, skipped: true, reason: 'dry_or_no_ss' };
+  const shBak = ss.getSheetByName('_OPS_MAIN_SUB_TEMP');
+  if (!shBak || shBak.getLastRow() < 2) return { restored: 0, rows: 0, skipped: true, reason: 'temp_sheet_not_found' };
+
+  const lc = shBak.getLastColumn();
+  const hdr = shBak.getRange(1, 1, 1, lc).getValues()[0].map(__normalizeHeaderText06_);
+  const idxClaim = __findHeaderIndexFlexible06_(hdr, 'Claim Number');
+  const idxSc = __findHeaderIndexFlexible06_(hdr, 'Service Center');
+  const idxUpd = __findHeaderIndexFlexible06_(hdr, 'Update Status');
+  const idxTs = __findHeaderIndexFlexible06_(hdr, 'Timestamp');
+  const idxSt = __findHeaderIndexFlexible06_(hdr, 'Status');
+  const idxRem = __findHeaderIndexFlexible06_(hdr, 'Remarks');
+  if (idxClaim === -1 || idxSc === -1) return { restored: 0, rows: 0, skipped: true, reason: 'invalid_temp_header' };
+
+  const vals = shBak.getRange(2, 1, shBak.getLastRow() - 1, lc).getValues();
+  const map = Object.create(null);
+  const keyOf = function(claim, sc) { return __claimKey06_(claim) + '|' + String(sc == null ? '' : sc).trim().toUpperCase(); };
+  for (let i = 0; i < vals.length; i++) {
+    const row = vals[i] || [];
+    const claim = row[idxClaim];
+    const sc = row[idxSc];
+    const ck = __claimKey06_(claim);
+    if (!ck) continue;
+    map[keyOf(claim, sc)] = {
+      rowNo: i + 2,
+      u: idxUpd !== -1 ? row[idxUpd] : '',
+      t: idxTs !== -1 ? row[idxTs] : '',
+      s: idxSt !== -1 ? row[idxSt] : '',
+      r: idxRem !== -1 ? row[idxRem] : ''
+    };
+  }
+
+  const sheetNames = (typeof getOperationalSheetsForBackup_ === 'function')
+    ? getOperationalSheetsForBackup_(pic)
+    : (CONFIG && CONFIG.sheetsByPic ? Array.from(new Set([].concat(CONFIG.sheetsByPic.picOperational || [], CONFIG.sheetsByPic.adminOperational || []))) : []);
+
+  let restored = 0;
+  for (let si = 0; si < sheetNames.length; si++) {
+    const sh = ss.getSheetByName(sheetNames[si]);
+    if (!sh) continue;
+    const lr = sh.getLastRow(); const lc2 = sh.getLastColumn();
+    if (lr < 2 || lc2 < 1) continue;
+    const h = sh.getRange(1, 1, 1, lc2).getValues()[0].map(__normalizeHeaderText06_);
+    const iC = __findHeaderIndexFlexible06_(h, 'Claim Number');
+    if (iC === -1) continue;
+    const iSc = (function() {
+      const cands = ['Service Center', 'Service Center Name', 'SC Name', 'sc_name'];
+      for (let i = 0; i < cands.length; i++) {
+        const x = __findHeaderIndexFlexible06_(h, cands[i]);
+        if (x !== -1) return x;
+      }
+      return -1;
+    })();
+    if (iSc === -1) continue;
+    const iU = __findHeaderIndexFlexible06_(h, 'Update Status');
+    const iT = __findHeaderIndexFlexible06_(h, 'Timestamp');
+    const iS = __findHeaderIndexFlexible06_(h, 'Status');
+    const iR = __findHeaderIndexFlexible06_(h, 'Remarks');
+    if (iU === -1 && iT === -1 && iS === -1 && iR === -1) continue;
+
+    const n = lr - 1;
+    const claims = sh.getRange(2, iC + 1, n, 1).getValues();
+    const scs = sh.getRange(2, iSc + 1, n, 1).getValues();
+    const outU = iU !== -1 ? sh.getRange(2, iU + 1, n, 1).getValues() : null;
+    const outT = iT !== -1 ? sh.getRange(2, iT + 1, n, 1).getValues() : null;
+    const outS = iS !== -1 ? sh.getRange(2, iS + 1, n, 1).getValues() : null;
+    const outR = iR !== -1 ? sh.getRange(2, iR + 1, n, 1).getValues() : null;
+
+    for (let r = 0; r < n; r++) {
+      const k = keyOf(claims[r][0], scs[r][0]);
+      const rec = map[k];
+      if (!rec) continue;
+      if (outU && String(outU[r][0] || '').trim() === '' && String(rec.u || '').trim() !== '') { outU[r][0] = rec.u; restored++; }
+      if (outT && String(outT[r][0] || '').trim() === '' && String(rec.t || '').trim() !== '') { outT[r][0] = rec.t; restored++; }
+      if (outS && String(outS[r][0] || '').trim() === '' && String(rec.s || '').trim() !== '') { outS[r][0] = rec.s; restored++; }
+      if (outR && String(outR[r][0] || '').trim() === '' && String(rec.r || '').trim() !== '') { outR[r][0] = rec.r; restored++; }
+
+      // Preserve style 1:1 from temp sheet (rich text, color, wrap, DV) for restored cells.
+      try { if (iU !== -1 && String(outU[r][0] || '').trim() !== '' && rec.rowNo) shBak.getRange(rec.rowNo, 6).copyTo(sh.getRange(r + 2, iU + 1), { contentsOnly: false }); } catch (eCu) {}
+      try { if (iT !== -1 && String(outT[r][0] || '').trim() !== '' && rec.rowNo) shBak.getRange(rec.rowNo, 7).copyTo(sh.getRange(r + 2, iT + 1), { contentsOnly: false }); } catch (eCt) {}
+      try { if (iS !== -1 && String(outS[r][0] || '').trim() !== '' && rec.rowNo) shBak.getRange(rec.rowNo, 8).copyTo(sh.getRange(r + 2, iS + 1), { contentsOnly: false }); } catch (eCs) {}
+      try { if (iR !== -1 && String(outR[r][0] || '').trim() !== '' && rec.rowNo) shBak.getRange(rec.rowNo, 9).copyTo(sh.getRange(r + 2, iR + 1), { contentsOnly: false }); } catch (eCr) {}
+    }
+
+    try { if (outU) sh.getRange(2, iU + 1, n, 1).setValues(outU); } catch (e) {}
+    try { if (outT) sh.getRange(2, iT + 1, n, 1).setValues(outT); } catch (e) {}
+    try { if (outS) sh.getRange(2, iS + 1, n, 1).setValues(outS); } catch (e) {}
+    try { if (outR) sh.getRange(2, iR + 1, n, 1).setValues(outR); } catch (e) {}
+  }
+
+  if (opts.deleteAfterRestore !== false) {
+    try { ss.deleteSheet(shBak); } catch (eDel) {}
+  }
+  return { restored: restored, rows: Object.keys(map).length, skipped: false };
+}
+
 function restoreOpsManualFromBackupSheet06c_(ss, pic) {
   if (DRY_RUN) return { restored: 0, rows: 0 };
   if (!ss) return { restored: 0, rows: 0 };
