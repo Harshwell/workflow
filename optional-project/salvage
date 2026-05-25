@@ -46,7 +46,8 @@ var SALVAGE_CONFIG = typeof SALVAGE_CONFIG !== 'undefined'
   },
   target: {
     spreadsheetId: '1zRlYrSRssv9LVcPKEq90CmmvTRsZoN_TqfIg2pNufbc',
-    sheetName: 'Salvage 2026',
+    sheetName: 'Salvage 25-26',
+    anomalyApprovalYears: [2026],
     fixedHeaderRow: 2,
     headerSearchRows: 10,
     dataStartFallbackHeaderRow: 2,
@@ -112,31 +113,50 @@ var SALVAGE_TARGET_TO_SOURCE_ALIASES = typeof SALVAGE_TARGET_TO_SOURCE_ALIASES !
     'mart_gadget__fact_claim_tracker - claim_number -> ins_approve_datetime',
     'mart_gadget__fact_claim_tracker - claim_number → ins_approve_datetime',
   ],
-  'Service Center': ['sc_name'],
-  'Submission Date': ['claim_submission_date', 'submission_date', 'submission date'],
-  'Submission by Month': ['Submission by Month'],
-  'Sum Insured': ['sum_insured_amount'],
-  'Month - Week': ['Month - Week'],
+  'Service Center': ['repairer_location_store_name'],
+  'Submission Date': ['claim_submitted_datetime'],
+  'Submission Month': ['Submission Month'],
+  'Sum Insured': ['sum_insured_amt'],
+  'Approval Month': ['Approval Month'],
   'Insurance': ['insurance_partner_code'],
-  'Device Brand': ['device_brand'],
-  'Device Type': ['device_type'],
+  'Device Brand': ['insured_item_brand_name'],
+  'Device Type': ['insured_item_model_name'],
   'IMEI/SN': ['imei_number'],
-  'Last Status': ['last_status'],
-  'Last Status Update': ['last_update'],
+  'Last Status': ['claim_last_status_name'],
+  'Last Status Update': ['last_update_datetime'],
   'Branch': ['branch'],
   'Partner Name': ['business_partner_name'],
   'DB Link': ['dashboard_link', 'dashboard link', 'db_link', 'db link', 'dblink', 'database_link', 'database link'],
 });
 
+
+
+// Mapping reference for operator matching (target sheet column -> source column aliases)
+// Claim Number -> claim_number
+// Approval Date -> ins_approve_datetime
+// Service Center -> repairer_location_store_name
+// Submission Date -> claim_submitted_datetime
+// Submission Month -> Submission Month
+// Sum Insured -> sum_insured_amt
+// Approval Month -> Approval Month
+// Insurance -> insurance_partner_code
+// Device Brand -> insured_item_brand_name
+// Device Type -> insured_item_model_name
+// IMEI/SN -> imei_number
+// Last Status -> claim_last_status_name
+// Last Status Update -> last_update_datetime
+// Branch -> branch
+// Partner Name -> business_partner_name
+// DB Link -> dashboard_link | dashboard link | db_link | db link | dblink | database_link | database link
 var SALVAGE_TARGET_HEADER_ALIASES = typeof SALVAGE_TARGET_HEADER_ALIASES !== 'undefined'
   ? SALVAGE_TARGET_HEADER_ALIASES
   : Object.freeze({
   'Claim Number': ['claim number'],
   'Approval Date': ['approval date'],
-  'Month - Week': ['month - week'],
+  'Approval Month': ['approval month'],
   'Service Center': ['service center'],
   'Submission Date': ['submission date'],
-  'Submission by Month': ['submission by month'],
+  'Submission Month': ['submission month', 'submission by month'],
   'Sum Insured': ['sum insured'],
   'Insurance': ['insurance'],
   'Device Brand': ['device brand'],
@@ -149,7 +169,7 @@ var SALVAGE_TARGET_HEADER_ALIASES = typeof SALVAGE_TARGET_HEADER_ALIASES !== 'un
   'DB Link': ['db link', 'dblink'],
 });
 
-const SALVAGE_OPTIONAL_SOURCE_LOGICAL_HEADERS = ['DB Link', 'Submission by Month'];
+const SALVAGE_OPTIONAL_SOURCE_LOGICAL_HEADERS = ['DB Link', 'Submission Month'];
 
 const SALVAGE_RUNTIME = {
   props: PropertiesService.getScriptProperties(),
@@ -1195,8 +1215,7 @@ function readSourceSnapshot_(tempSpreadsheetId) {
     if (!normalizeKey_(record['Sum Insured'])) blankSumInsuredCount += 1;
     if (!normalizeKey_(record['IMEI/SN'])) blankImeiSnCount += 1;
 
-    record['Month - Week'] = deriveMonthWeekFromApproval_(record['Approval Date'], record['Month - Week']);
-    record['Submission by Month'] = deriveSubmissionByMonth_(record['Submission Date'], record['Submission by Month']);
+    record['Submission Month'] = deriveSubmissionByMonth_(record['Submission Date'], record['Submission Month']);
     sourceByClaim[claimNumber] = record;
   });
 
@@ -1258,33 +1277,6 @@ function formatDateOnlyForTarget_(rawValue, displayValue) {
   return textValue;
 }
 
-function deriveMonthWeekFromApproval_(approvalValue, fallbackValue) {
-  const fallbackText = String(fallbackValue || '').trim();
-
-  if (approvalValue instanceof Date && !Number.isNaN(approvalValue.getTime())) {
-    const monthName = Utilities.formatDate(approvalValue, SALVAGE_CONFIG.scriptTimeZone, 'MMMM');
-    const day = Number(Utilities.formatDate(approvalValue, SALVAGE_CONFIG.scriptTimeZone, 'd'));
-    const weekInMonth = Math.ceil(day / 7);
-    return monthName + ' - Week ' + weekInMonth;
-  }
-
-  const approvalText = String(approvalValue || '').trim();
-  const parsed = approvalText.match(/(?:[A-Za-z]{3},\s*)?(\d{1,2})\s+([A-Za-z]{3,9})\s+(\d{2,4})/);
-  if (!parsed) {
-    return fallbackText;
-  }
-
-  const day = Number(parsed[1]);
-  const monthName = parsed[2];
-  if (!(day > 0)) {
-    return fallbackText;
-  }
-
-  const weekInMonth = Math.ceil(day / 7);
-  return monthName + ' - Week ' + weekInMonth;
-}
-
-
 function deriveSubmissionByMonth_(submissionDateValue, fallbackValue) {
   const fallbackText = String(fallbackValue || '').trim();
 
@@ -1314,6 +1306,53 @@ function deriveSubmissionByMonth_(submissionDateValue, fallbackValue) {
   }
 
   return fallbackText;
+}
+
+function parseYearFromApprovalDate_(value) {
+  if (value instanceof Date && !Number.isNaN(value.getTime())) {
+    return Number(Utilities.formatDate(value, SALVAGE_CONFIG.scriptTimeZone, 'yyyy'));
+  }
+
+  const text = String(value || '').trim();
+  if (!text) return null;
+
+  const directDate = new Date(text);
+  if (!Number.isNaN(directDate.getTime())) {
+    return Number(Utilities.formatDate(directDate, SALVAGE_CONFIG.scriptTimeZone, 'yyyy'));
+  }
+
+  const yearMatch = text.match(/\b(20\d{2})\b/);
+  if (yearMatch) return Number(yearMatch[1]);
+
+  const shortYearMatch = text.match(/\b(\d{2})\b/);
+  if (shortYearMatch) return Number('20' + shortYearMatch[1]);
+
+  return null;
+}
+
+function isClaimRowInAnomalyScope_(row, targetColumnMap) {
+  const monitoredYears = SALVAGE_CONFIG.target && SALVAGE_CONFIG.target.anomalyApprovalYears;
+  if (!Array.isArray(monitoredYears) || monitoredYears.length === 0) return true;
+
+  const approvalCol = targetColumnMap['Approval Date'];
+  if (!approvalCol) return true;
+
+  const approvalYear = parseYearFromApprovalDate_(row[approvalCol - 1]);
+  if (!approvalYear) return true;
+
+  return monitoredYears.indexOf(approvalYear) >= 0;
+}
+
+function shouldPreserveManualTargetValue_(targetHeader, sourceValue, existingValue) {
+  const preserveHeaders = {
+    'Branch': true,
+    'Service Center': true,
+  };
+  if (!preserveHeaders[targetHeader]) return false;
+
+  const isSourceBlank = normalizeKey_(sourceValue) === '';
+  const hasExistingValue = normalizeKey_(existingValue) !== '';
+  return isSourceBlank && hasExistingValue;
 }
 
 function buildSyncDiffPreview_(sourceSnapshot, precheckedTargetSnapshot) {
@@ -1385,6 +1424,8 @@ function buildSyncDiffPreview_(sourceSnapshot, precheckedTargetSnapshot) {
   let missingExistingCount = 0;
   Object.keys(claimRowIndex).forEach(function(claim) {
     if (sourceSnapshot.sourceByClaim[claim]) return;
+    const rowIndex = claimRowIndex[claim];
+    if (!isClaimRowInAnomalyScope_(values[rowIndex], targetColumnMap)) return;
     missingExistingCount += 1;
     if (missingSamples.length < SALVAGE_CONFIG.target.sampleSize) {
       missingSamples.push(claim);
@@ -1478,7 +1519,12 @@ function syncTargetSheet_(sourceSnapshot, precheckedTargetSnapshot) {
 
     Object.keys(SALVAGE_TARGET_TO_SOURCE_ALIASES).forEach(function(targetHeader) {
       const targetCol = targetColumnMap[targetHeader];
-      values[rowIndex][targetCol - 1] = record[targetHeader];
+      const sourceValue = record[targetHeader];
+      const existingValue = values[rowIndex][targetCol - 1];
+      if (shouldPreserveManualTargetValue_(targetHeader, sourceValue, existingValue)) {
+        return;
+      }
+      values[rowIndex][targetCol - 1] = sourceValue;
     });
 
     const existingNote = String(claimNotes[rowIndex] && claimNotes[rowIndex][0] || '');
@@ -1493,6 +1539,7 @@ function syncTargetSheet_(sourceSnapshot, precheckedTargetSnapshot) {
   Object.keys(claimRowIndex).forEach(function(claim) {
     if (sourceSnapshot.sourceByClaim[claim]) return;
     const rowIndex = claimRowIndex[claim];
+    if (!isClaimRowInAnomalyScope_(values[rowIndex], targetColumnMap)) return;
     missingExistingCount += 1;
     claimBackgrounds[rowIndex][0] = SALVAGE_CONFIG.target.claimMissingColor;
     claimNotes[rowIndex][0] = SALVAGE_CONFIG.target.claimMissingNote;
@@ -1509,11 +1556,11 @@ function syncTargetSheet_(sourceSnapshot, precheckedTargetSnapshot) {
       });
 
       if (targetHeader === 'DB Link') {
-        const dbLinkFormulas = columnValues.map(function(v) {
-          return [buildHyperlinkFormula_(v[0], 'LINK')];
+        const dbLinkFormulas = values.map(function(row) {
+          return [buildDbLinkFormulaFromClaim_(row[claimCol - 1])];
         });
         sheet.getRange(dataStartRow, targetCol, finalRowCount, 1).setFormulas(dbLinkFormulas);
-      } else if (targetHeader === 'Submission by Month') {
+      } else if (targetHeader === 'Submission Month' || targetHeader === 'Approval Month') {
         const monthRange = sheet.getRange(dataStartRow, targetCol, finalRowCount, 1);
         const monthValues = columnValues.map(function(v) {
           return [parseSubmissionByMonthToDate_(v[0])];
@@ -2166,6 +2213,18 @@ function parseSubmissionByMonthToDate_(value) {
   }
 
   return value;
+}
+
+function buildDbLinkFormulaFromClaim_(claimNumberValue) {
+  const claimNumber = String(claimNumberValue || '').trim();
+  if (!claimNumber) return '';
+
+  const isGadget = /SFP|SFX|SMR|SPP/i.test(claimNumber);
+  const baseUrl = isGadget
+    ? 'https://internal.qoala.app/gadget/claim/'
+    : 'https://internal.qoala.app/partnership/claim/';
+  const link = baseUrl + claimNumber;
+  return buildHyperlinkFormula_(link, "LINK");
 }
 
 function buildHyperlinkFormula_(urlValue, labelText) {
