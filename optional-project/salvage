@@ -113,22 +113,41 @@ var SALVAGE_TARGET_TO_SOURCE_ALIASES = typeof SALVAGE_TARGET_TO_SOURCE_ALIASES !
     'mart_gadget__fact_claim_tracker - claim_number -> ins_approve_datetime',
     'mart_gadget__fact_claim_tracker - claim_number → ins_approve_datetime',
   ],
-  'Service Center': ['sc_name'],
-  'Submission Date': ['claim_submission_date', 'submission_date', 'submission date'],
+  'Service Center': ['repairer_location_store_name'],
+  'Submission Date': ['claim_submitted_datetime'],
   'Submission by Month': ['Submission by Month'],
-  'Sum Insured': ['sum_insured_amount'],
+  'Sum Insured': ['sum_insured_amt'],
   'Month - Week': ['Month - Week'],
   'Insurance': ['insurance_partner_code'],
-  'Device Brand': ['device_brand'],
-  'Device Type': ['device_type'],
+  'Device Brand': ['insured_item_brand_name'],
+  'Device Type': ['insured_item_model_name'],
   'IMEI/SN': ['imei_number'],
-  'Last Status': ['last_status'],
-  'Last Status Update': ['last_update'],
+  'Last Status': ['claim_last_status_name'],
+  'Last Status Update': ['last_update_datetime'],
   'Branch': ['branch'],
   'Partner Name': ['business_partner_name'],
   'DB Link': ['dashboard_link', 'dashboard link', 'db_link', 'db link', 'dblink', 'database_link', 'database link'],
 });
 
+
+
+// Mapping reference for operator matching (target sheet column -> source column aliases)
+// Claim Number -> claim_number
+// Approval Date -> ins_approve_datetime
+// Service Center -> repairer_location_store_name
+// Submission Date -> claim_submitted_datetime
+// Submission by Month -> Submission by Month
+// Sum Insured -> sum_insured_amt
+// Month - Week -> Month - Week
+// Insurance -> insurance_partner_code
+// Device Brand -> insured_item_brand_name
+// Device Type -> insured_item_model_name
+// IMEI/SN -> imei_number
+// Last Status -> claim_last_status_name
+// Last Status Update -> last_update_datetime
+// Branch -> branch
+// Partner Name -> business_partner_name
+// DB Link -> dashboard_link | dashboard link | db_link | db link | dblink | database_link | database link
 var SALVAGE_TARGET_HEADER_ALIASES = typeof SALVAGE_TARGET_HEADER_ALIASES !== 'undefined'
   ? SALVAGE_TARGET_HEADER_ALIASES
   : Object.freeze({
@@ -1565,8 +1584,8 @@ function syncTargetSheet_(sourceSnapshot, precheckedTargetSnapshot) {
       });
 
       if (targetHeader === 'DB Link') {
-        const dbLinkFormulas = columnValues.map(function(v) {
-          return [buildHyperlinkFormula_(v[0], 'LINK')];
+        const dbLinkFormulas = values.map(function(row) {
+          return [buildDbLinkFormulaFromClaim_(row[claimCol - 1])];
         });
         sheet.getRange(dataStartRow, targetCol, finalRowCount, 1).setFormulas(dbLinkFormulas);
       } else if (targetHeader === 'Submission by Month') {
@@ -2222,6 +2241,18 @@ function parseSubmissionByMonthToDate_(value) {
   }
 
   return value;
+}
+
+function buildDbLinkFormulaFromClaim_(claimNumberValue) {
+  const claimNumber = String(claimNumberValue || '').trim();
+  if (!claimNumber) return '';
+
+  const isGadget = /SFP|SFX|SMR|SPP/i.test(claimNumber);
+  const baseUrl = isGadget
+    ? 'https://internal.qoala.app/gadget/claim/'
+    : 'https://internal.qoala.app/partnership/claim/';
+  const link = baseUrl + claimNumber;
+  return buildHyperlinkFormula_(link, link);
 }
 
 function buildHyperlinkFormula_(urlValue, labelText) {
