@@ -1373,6 +1373,7 @@ function buildSyncDiffPreview_(sourceSnapshot, precheckedTargetSnapshot) {
   const dataStartRow = headerRow + 1;
   const existingRangeRowCount = Math.max(targetSnapshot.lastRow - headerRow, 0);
   const claimCol = targetColumnMap['Claim Number'];
+  const remarksCol = findColumnByHeaderName_(targetSnapshot.headers, 'Remarks');
 
   let values = [];
   let claimNotes = [];

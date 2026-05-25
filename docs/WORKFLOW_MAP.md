@@ -258,6 +258,25 @@ Checklist ini fokus ke area yang paling rawan regressions pas perubahan terakhir
 ### 2) B2B fallback dari Submission
 - Scope: claim B2B yang tidak ada di Raw window tetap di-upsert lewat sheet `Submission`.
 - UAT:
+
+---
+
+## FAQ Operasional — SC mapping saat `Service Center` kosong
+
+Kasus ini penting dan sering bikin salah asumsi:
+
+- Untuk status yang masuk universe SC (`SC - Farhan`, `SC - Meilani`, `SC - Meindar`), pemecahan target sheet dilakukan dari kolom source `Service Center Name / sc_name` via keyword match.
+- Kalau `Service Center` di MAIN kosong / tidak match keyword, routing **fail-closed** ke sheet karantina `SC - Unmapped` (bukan dipaksa ke Farhan/Meilani/Meindar).
+- Efeknya: claim belum muncul di SC owner sheet sampai SUB berikutnya membawa nilai `Service Center` yang valid, lalu claim akan pindah via relocate logic SUB.
+
+Untuk 4 kolom manual (`Update Status`, `Timestamp`, `Status`, `Remarks`):
+
+- Kolom tersebut dianggap manual field dan disnapshot sebelum clear.
+- Saat write hasil route, sistem mencoba restore per `Claim Number` dari snapshot kalau nilai baris baru kosong.
+- Artinya:
+  - kalau claim sudah pernah ada sebelumnya di target sheet yang sama, nilai manual akan dipertahankan;
+  - kalau claim baru (belum ada snapshot), default-nya kosong;
+  - jika claim awalnya masuk `SC - Unmapped`, manual field di SC owner sheet tetap kosong sampai claim benar-benar diroute ke sheet owner terkait.
   1. siapkan 1 claim token B2B di `Submission` yang tidak muncul di Raw terkini.
   2. jalankan MAIN atau FORM (MAIN path) sampai optional sheets diproses.
   3. verifikasi claim muncul di sheet `B2B`.
