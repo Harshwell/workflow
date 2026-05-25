@@ -1321,6 +1321,15 @@ try {
       if (typeof refreshReportBaseFromOperational06_ === 'function') refreshReportBaseFromOperational06_(masterSs);
     } catch (eRb) { try { logLine_('SUB_WARN', 'Report Base refresh failed', String(eRb), '', 'WARN'); } catch (eRb2) {} }
 
+    // One-shot restore from MAIN temp backup (if exists), then delete temp sheet.
+    try {
+      if (typeof restoreOpsManualFromMainTempForSub06c_ === 'function') {
+        const rs = restoreOpsManualFromMainTempForSub06c_(masterSs, 'Master', { deleteAfterRestore: true });
+        const msg = rs && rs.skipped ? ('skip=' + (rs.reason || 'unknown')) : ('restored=' + (rs ? rs.restored : 0) + ' rows=' + (rs ? rs.rows : 0));
+        try { logLine_('SUB_TEMP_RESTORE', 'Restore manual columns from MAIN temp backup', msg, '', (rs && rs.skipped) ? 'INFO' : 'INFO'); } catch (eTr2) {}
+      }
+    } catch (eTr) { try { logLine_('SUB_TEMP_RESTORE_WARN', 'MAIN temp restore failed (non-fatal)', String(eTr), '', 'WARN'); } catch (eTr3) {} }
+
 
 
 // WebApp Project (Movement Claim Tracking): take CURR snapshots AFTER SUB, then emit Daily events (dedup by Event ID).
