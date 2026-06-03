@@ -167,7 +167,14 @@ var SALVAGE_TARGET_HEADER_ALIASES = typeof SALVAGE_TARGET_HEADER_ALIASES !== 'un
   'Branch': ['branch'],
   'Partner Name': ['partner name'],
   'DB Link': ['db link', 'dblink'],
+  'YoS': ['yos', 'yo s'],
+  'YoA': ['yoa', 'yo a'],
   'PIC': ['pic'],
+});
+
+const SALVAGE_DERIVED_YEAR_TARGET_HEADERS = Object.freeze({
+  YoS: 'Submission Date',
+  YoA: 'Approval Date',
 });
 
 const SALVAGE_OPTIONAL_SOURCE_LOGICAL_HEADERS = ['DB Link', 'Submission Month'];
@@ -1217,6 +1224,9 @@ function readSourceSnapshot_(tempSpreadsheetId) {
     if (!normalizeKey_(record['IMEI/SN'])) blankImeiSnCount += 1;
 
     record['Submission Month'] = deriveSubmissionByMonth_(record['Submission Date'], record['Submission Month']);
+    Object.keys(SALVAGE_DERIVED_YEAR_TARGET_HEADERS).forEach(function(targetHeader) {
+      record[targetHeader] = deriveYearDateFromValue_(record[SALVAGE_DERIVED_YEAR_TARGET_HEADERS[targetHeader]]);
+    });
     sourceByClaim[claimNumber] = record;
   });
 
@@ -1309,7 +1319,12 @@ function deriveSubmissionByMonth_(submissionDateValue, fallbackValue) {
   return fallbackText;
 }
 
-function parseYearFromApprovalDate_(value) {
+function deriveYearDateFromValue_(value) {
+  const year = parseYearFromDateValue_(value);
+  return year ? new Date(year, 0, 1) : '';
+}
+
+function parseYearFromDateValue_(value) {
   if (value instanceof Date && !Number.isNaN(value.getTime())) {
     return Number(Utilities.formatDate(value, SALVAGE_CONFIG.scriptTimeZone, 'yyyy'));
   }
@@ -1325,10 +1340,14 @@ function parseYearFromApprovalDate_(value) {
   const yearMatch = text.match(/\b(20\d{2})\b/);
   if (yearMatch) return Number(yearMatch[1]);
 
-  const shortYearMatch = text.match(/\b(\d{2})\b/);
-  if (shortYearMatch) return Number('20' + shortYearMatch[1]);
+  const shortYearDateMatch = text.match(/(?:\b\d{1,2}[\/\-.]\d{1,2}[\/\-.]|\b\d{1,2}\s+[A-Za-z]{3,9}\s+|\b[A-Za-z]{3,9}\s+\d{1,2},?\s+)(\d{2})\s*$/);
+  if (shortYearDateMatch) return Number('20' + shortYearDateMatch[1]);
 
   return null;
+}
+
+function parseYearFromApprovalDate_(value) {
+  return parseYearFromDateValue_(value);
 }
 
 function isClaimRowInAnomalyScope_(row, targetColumnMap) {
@@ -1461,11 +1480,11 @@ function buildSyncDiffPreview_(sourceSnapshot, precheckedTargetSnapshot) {
 
 
 function resolveBranchByServiceCenter_(serviceCenterValue, fallbackBranchValue) {
-  const scKey = normalizeKey_(serviceCenterValue);
+  const scKey = normalizeServiceCenterKey_(serviceCenterValue);
   const branchByServiceCenter = {
-    'appleauthorizedserviceproviderbymecare-phisinipointmall': 'mE Care',
-    'samsungauthorizedservicecentrebyunicom-makassar-servicecenter': 'Samsung Exclusive',
-    'cvkayuawetsejahtera-store': 'KAS',
+    appleauthorizedserviceproviderbymecarephinisipointmall: 'mE Care',
+    samsungauthorizedservicecentrebyunicommakassarservicecenter: 'Samsung Exclusive',
+    cvkayuawetsejahterastore: 'KAS',
   };
 
   if (branchByServiceCenter[scKey]) {
@@ -1473,6 +1492,10 @@ function resolveBranchByServiceCenter_(serviceCenterValue, fallbackBranchValue) 
   }
 
   return fallbackBranchValue;
+}
+
+function normalizeServiceCenterKey_(value) {
+  return normalizeKey_(value).replace(/[^a-z0-9]/g, '');
 }
 
 function resolvePicByBranch_(branchValue) {
@@ -1571,13 +1594,23 @@ function syncTargetSheet_(sourceSnapshot, precheckedTargetSnapshot) {
       const targetCol = targetColumnMap[targetHeader];
       let sourceValue = record[targetHeader];
       if (targetHeader === 'Branch') {
-        sourceValue = resolveBranchByServiceCenter_(record['Service Center'], sourceValue);
+        const serviceCenterCol = targetColumnMap['Service Center'];
+        const effectiveServiceCenter = serviceCenterCol
+          ? values[rowIndex][serviceCenterCol - 1]
+          : record['Service Center'];
+        sourceValue = resolveBranchByServiceCenter_(effectiveServiceCenter, sourceValue);
       }
       const existingValue = values[rowIndex][targetCol - 1];
       if (shouldPreserveManualTargetValue_(targetHeader, sourceValue, existingValue)) {
         return;
       }
       values[rowIndex][targetCol - 1] = sourceValue;
+    });
+
+    Object.keys(SALVAGE_DERIVED_YEAR_TARGET_HEADERS).forEach(function(targetHeader) {
+      const targetCol = targetColumnMap[targetHeader];
+      if (!targetCol) return;
+      values[rowIndex][targetCol - 1] = record[targetHeader];
     });
 
     if (targetColumnMap['PIC'] && targetColumnMap['Branch']) {
@@ -1599,6 +1632,19 @@ function syncTargetSheet_(sourceSnapshot, precheckedTargetSnapshot) {
     claimBackgrounds[rowIndex][0] = SALVAGE_CONFIG.target.defaultCellColor;
     claimNotes[rowIndex][0] = '';
   });
+
+  if (targetColumnMap['Service Center'] && targetColumnMap['Branch']) {
+    values.forEach(function(row) {
+      const branchCol = targetColumnMap['Branch'];
+      const resolvedBranch = resolveBranchByServiceCenter_(row[targetColumnMap['Service Center'] - 1], row[branchCol - 1]);
+      if (normalizeKey_(resolvedBranch) === normalizeKey_(row[branchCol - 1])) return;
+
+      row[branchCol - 1] = resolvedBranch;
+      if (targetColumnMap['PIC']) {
+        row[targetColumnMap['PIC'] - 1] = resolvePicByBranch_(resolvedBranch);
+      }
+    });
+  }
 
   let missingExistingCount = 0;
   Object.keys(claimRowIndex).forEach(function(claim) {
@@ -1635,6 +1681,18 @@ function syncTargetSheet_(sourceSnapshot, precheckedTargetSnapshot) {
       } else {
         sheet.getRange(dataStartRow, targetCol, finalRowCount, 1).setValues(columnValues);
       }
+    });
+
+    Object.keys(SALVAGE_DERIVED_YEAR_TARGET_HEADERS).forEach(function(targetHeader) {
+      const targetCol = targetColumnMap[targetHeader];
+      if (!targetCol) return;
+
+      const yearRange = sheet.getRange(dataStartRow, targetCol, finalRowCount, 1);
+      const yearValues = values.map(function(row) {
+        return [row[targetCol - 1]];
+      });
+      yearRange.setValues(yearValues);
+      yearRange.setNumberFormat('yyyy');
     });
 
     if (targetColumnMap['PIC']) {
@@ -1724,6 +1782,22 @@ function throwDuplicateTargetError_(targetSnapshot) {
   throw new Error(message);
 }
 
+function ensureTargetDerivedYearHeaders_(sheet, headerRow) {
+  const headerMap = buildHeaderMap_(sheet, headerRow);
+  const missingHeaders = Object.keys(SALVAGE_DERIVED_YEAR_TARGET_HEADERS).filter(function(headerName) {
+    return !headerMap[normalizeHeader_(headerName)];
+  });
+  if (!missingHeaders.length) return;
+
+  let nextCol = Math.max(sheet.getLastColumn(), 1) + 1;
+  ensureSheetHasColumns_(sheet, nextCol + missingHeaders.length - 1);
+  missingHeaders.forEach(function(headerName) {
+    sheet.getRange(headerRow, nextCol).setValue(headerName).setFontWeight('bold');
+    nextCol += 1;
+  });
+  SpreadsheetApp.flush();
+}
+
 function inspectTargetSnapshot_() {
   const ss = SpreadsheetApp.openById(SALVAGE_CONFIG.target.spreadsheetId);
   const sheet = ss.getSheetByName(SALVAGE_CONFIG.target.sheetName);
@@ -1732,6 +1806,7 @@ function inspectTargetSnapshot_() {
   }
 
   const headerRow = resolveTargetHeaderRow_(sheet);
+  ensureTargetDerivedYearHeaders_(sheet, headerRow);
   const targetHeaderMap = buildHeaderMap_(sheet, headerRow);
   const targetColumnMap = resolveAliasMap_(targetHeaderMap, SALVAGE_TARGET_HEADER_ALIASES, 'target');
   const lastCol = Math.max(sheet.getLastColumn(), Math.max.apply(null, Object.keys(targetColumnMap).map(function(k) {
