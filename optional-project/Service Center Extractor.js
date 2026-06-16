@@ -34,6 +34,8 @@ const CONFIG = {
   ]),
 
   OVERVIEW_SHEET: "Overview",
+  PULLING_TIME_CELL_A1: "D1:E1",
+  PULLING_TIME_RAW_CELL_A1: "F1",
   PROGRESS_CELL_A1: "F3",
   DURATION_CELL_A1: "F4",
   CONTROL_RANGE_PIC: "G2:G4",
@@ -313,6 +315,12 @@ function runServiceCenterTransfer() {
 
     var overview = srcSS.getSheetByName(CONFIG.OVERVIEW_SHEET);
     ctx.overviewSheet = overview;
+
+    if (overview) {
+      var pullTs = Utilities.formatDate(new Date(), ctx.tz, "yyyy-MM-dd HH:mm:ss");
+      overview.getRange(CONFIG.PULLING_TIME_CELL_A1).setValue("Pulling Time: " + pullTs);
+      overview.getRange(CONFIG.PULLING_TIME_RAW_CELL_A1).clearContent();
+    }
 
     _setProgress_(ctx, "Running: opening destination workbook...");
     var openStep = _timeStage_(function () {
