@@ -454,6 +454,7 @@ const FORMATS = Object.freeze({
   DATETIME_LONG: 'MMMM d, yyyy, h:mm AM/PM', // February 16, 2026, 5:49 PM
   TIMESTAMP: 'd mmm, HH:mm',   // 15 Dec, 15:17
   INT: '0',
+  DECIMAL1: '#,##0.0',         // Format desimal (1 angka di belakang koma)
   MONEY0: '#,##0',
   PERCENT0: '0%'
 });
@@ -750,7 +751,7 @@ const EXCLUSION_TAT_POLICY = Object.freeze({
   // Days since submission until the last status date (calendar-day diff).
   DIRECTION: 'LAST_STATUS_MINUS_SUBMISSION', // 'LAST_STATUS_MINUS_SUBMISSION' | 'SUBMISSION_MINUS_LAST_STATUS'
 
-  ROUNDING: 'FLOOR', // floor of day difference (integer days)
+  ROUNDING: 'NONE', // Nonaktifkan pembulatan agar desimal tetap muncul
   CLAMP_MIN_ZERO: true
 });
 
@@ -1745,6 +1746,14 @@ const COLUMN_TYPES = Object.freeze({
     'Nett Claim Amount': 'MONEY0',
     'Q-L (Months)': 'INT'
   }),
+
+  /**
+   * New: Per-sheet destination typing (enables "Special Case only" columns)
+   */
+  DEST_BY_SHEET: Object.freeze({
+    'Submission': Object.freeze({
+      'TAT': 'DECIMAL1'
+    }),
 
   /**
    * New: Per-sheet destination typing (enables "Special Case only" columns)
