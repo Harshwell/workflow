@@ -364,7 +364,8 @@ const SUB_FLOW_SPEC = Object.freeze({
     PARTNER_NAME: 'Partner Name',
     INSURANCE: 'Insurance',
     DEVICE_TYPE: 'Device Type',
-    IMEI_SN: 'IMEI/SN'
+    IMEI_SN: 'IMEI/SN',
+    TAT: 'TAT'
   }),
 
   // Standard raw headers (source) used by SUB flow
@@ -380,7 +381,8 @@ const SUB_FLOW_SPEC = Object.freeze({
     LAST_STATUS: 'last_status',
     LAST_STATUS_AGING: 'last_status_aging',
     ACTIVITY_LOG_AGING: 'activity_log_aging',
-    SERVICE_CENTER: 'sc_name'
+    SERVICE_CENTER: 'sc_name',
+    TAT: 'days_aging_from_submission'
   }),
 
   // Submission append rules
@@ -1119,7 +1121,7 @@ const POSITION_BY_LAST_STATUS = Object.freeze({
   'QOALA_ASK_DETAIL': 'Front',
   'CUSTOMER_RESUBMIT_DOCUMENT': 'Front',
   'QOALA_CLAIM_RESUBMIT_DOCUMENT_REQ_QOALA': 'Front',
-  'CLAIM_EXPIRE': 'Front',
+  'CLAIM_EXPIRE': 'Exclusion',
   'QOALA_CLAIM_REOPEN': 'Front',
   'QOALA_CLAIM_APPROVE_WALKIN': 'Front',
   'CLAIM_EXPIRE_WALKIN': 'Exclusion',
@@ -1419,7 +1421,6 @@ const OPS_ROUTING_POLICY = Object.freeze({
       'QOALA_ASK_DETAIL',
       'CUSTOMER_RESUBMIT_DOCUMENT',
       'QOALA_CLAIM_RESUBMIT_DOCUMENT_REQ_QOALA',
-      'CLAIM_EXPIRE',
       'QOALA_CLAIM_REOPEN'
     ]),
 
