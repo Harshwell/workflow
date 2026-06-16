@@ -1752,14 +1752,7 @@ const COLUMN_TYPES = Object.freeze({
    * New: Per-sheet destination typing (enables "Special Case only" columns)
    */
   DEST_BY_SHEET: Object.freeze({
-    'Submission': Object.freeze({
-      'TAT': 'DECIMAL1'
-    }),
-
-  /**
-   * New: Per-sheet destination typing (enables "Special Case only" columns)
-   */
-  DEST_BY_SHEET: Object.freeze({
+    'Submission': Object.freeze({ 'TAT': 'DECIMAL1' }),
     'Special Case': Object.freeze({
       'Submission Date': 'DATE',
       'Start Date': 'DATE',
