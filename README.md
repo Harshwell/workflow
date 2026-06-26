@@ -116,6 +116,7 @@ Struktur dokumentasi yang dipakai:
 
 - `README.md` → entrypoint utama, repo map, aturan maintenance, review temuan penting
 - `docs/WORKFLOW_MAP.md` → flow map, diagram, dan change impact map
+- `docs/COLUMN_REFERENCE.md` → referensi debug untuk kontrak kolom; source of truth tetap di file `.gs`
 
 ---
 
@@ -133,8 +134,25 @@ Struktur dokumentasi yang dipakai:
 | `06a_EntryPoints.gs` | trigger entrypoints dan flow orchestration MAIN / SUB / FORM | ubah trigger, orchestration flow, queue consumer, attachment process orchestration |
 | `06b_PipelineAndEnrichment.gs` | enrichment / main pipeline logic | ubah enrichment atau tahap pipeline utama |
 | `06c_PostProcessAndUtils.gs` | post-process, status type, movement/webapp helpers, final utilities | ubah finalization, movement tracking, atau util pasca pipeline |
+| `docs/COLUMN_REFERENCE.md` | indeks referensi kolom untuk debugging dan revisi lintas flow | ada perubahan kolom source/destination, alias, routing, atau optional output |
+| `optional-project/*` | script Apps Script terkait operasional tapi bukan bagian deploy root workflow | butuh maintenance pada automation terpisah seperti salvage, outstanding, atau SC extractor |
 
 ---
+
+## Related standalone scripts
+
+`optional-project/` sengaja tetap di repo ini walaupun tidak ikut load order root Apps Script. Isinya adalah project Apps Script terpisah yang masih terkait workflow operasional, jadi jangan dihapus hanya karena tidak di-import oleh modul `00` sampai `06c`.
+
+Aturan praktisnya sederhana:
+- perubahan pipeline utama tetap di file root `.gs`
+- perubahan automation terpisah tetap di `optional-project/`
+- kalau script optional mulai punya lifecycle/deploy yang benar-benar independen, baru pindahkan ke repo sendiri
+
+## Column reference policy
+
+`docs/COLUMN_REFERENCE.md` dipertahankan sebagai peta baca cepat saat debug sheet dan revisi kontrak kolom. File itu bukan source of truth; source of truth tetap `00_Config.gs`, `03_SheetsAndValidation.gs`, dan writer terkait.
+
+Update `docs/COLUMN_REFERENCE.md` hanya saat kontrak kolom berubah. Jangan isi dengan histori perubahan atau penjelasan flow umum; itu tugas `CHANGELOG.md` dan `docs/WORKFLOW_MAP.md`.
 
 ## Arsitektur singkat
 
