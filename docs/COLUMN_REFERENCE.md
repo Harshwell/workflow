@@ -2,6 +2,8 @@
 
 This document is the working contract for sheet columns used by the MAIN and SUB flows. It explains which sheets provide data, which sheets receive data, and which columns drive routing, enrichment, validation, and optional flags.
 
+Use this as a debugging and revision index, not as a second configuration layer. The canonical runtime contract still lives in `00_Config.gs`, `03_SheetsAndValidation.gs`, and the writer modules listed below.
+
 ## Contract Ownership
 
 | Area | Owner file | Purpose |
@@ -12,7 +14,7 @@ This document is the working contract for sheet columns used by the MAIN and SUB
 | Optional sheet writers | `05c_Pipeline_OptionalSheets.gs` | Builds B2B, Special Case, EV-Bike, and related optional outputs. |
 | SUB ingestion and operational updates | `06a_EntryPoints.gs`, `06c_PostProcessAndUtils.gs` | Reads Raw OLD / Raw NEW and updates Submission plus operational sheets. |
 
-When a column is renamed, added, or removed, update `00_Config.gs`, `03_SheetsAndValidation.gs`, and this file together.
+When a column is renamed, added, or removed, update `00_Config.gs`, `03_SheetsAndValidation.gs`, the affected writer, and this file together.
 
 ## Flow Map
 
