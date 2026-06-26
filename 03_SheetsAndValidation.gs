@@ -119,6 +119,11 @@ const SV03_DROPDOWN_SYNC = Object.freeze({
  * - Special Case columns are user-managed (fixed schema); script must NOT auto-add columns
  * - "OR" ONLY in Special Case + PO
  * - Admin: no Device Type / LSA / ALA / TAT / OR / OR Amount
+ *
+ * Column contract note:
+ * - Destination sheet layouts live here.
+ * - Canonical source headers, aliases, types, and routing policies live in 00_Config.gs.
+ * - Keep docs/COLUMN_REFERENCE.md synchronized when templates or source contracts change.
  */
 const SV03_TEMPLATES = Object.freeze({
   OPS_PIC_DEFAULT: Object.freeze([
@@ -339,7 +344,7 @@ const SV03_TEMPLATES = Object.freeze({
   ]),
 
   EV_BIKE: Object.freeze([
-    'Submission Date','Claim Number','DB Link','Owner Name','Policy Number','Partner Name','Insurance','Sum Insured','Start Date','End Date','Details','Status'
+    'Submission Date','Claim Number','DB Link','Owner Name','Policy Number','Partner Name','Insurance','Sum Insured','Status'
   ])
 });
 
