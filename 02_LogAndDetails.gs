@@ -406,9 +406,15 @@ function flushLogIfNeeded_(severity) {
 /** =========================
  * Log sheet
  * ========================= */
+function getLogSpreadsheet_() {
+  if (CACHE.log.ss) return CACHE.log.ss;
+  const ss = SpreadsheetApp.openById(String(CONFIG.logSpreadsheetId));
+  CACHE.log.ss = ss;
+  return ss;
+}
 function getLogSheet_() {
   if (CACHE.log.sh) return CACHE.log.sh;
-  const ss = SpreadsheetApp.openById(CONFIG.logSpreadsheetId);
+  const ss = getLogSpreadsheet_();
   const sh = ss.getSheetByName(CONFIG.logSheetName) || ss.getSheets()[0];
   CACHE.log.ss = ss;
   CACHE.log.sh = sh;
@@ -577,7 +583,7 @@ function clearLogSheet_() {
 }
 function setProgress_(ratio01, stepLabel) {
 const sh = getLogSheet_();
-const ss = CACHE.log.ss || SpreadsheetApp.openById(CONFIG.logSpreadsheetId);
+const ss = getLogSpreadsheet_();
 const r = Math.max(0, Math.min(1, ratio01 || 0));
 const pct = Math.round(r * 100);
 const spark = buildSparklineFormula_(ss, r);
@@ -711,7 +717,7 @@ function logLine_(id, name, metrics, notes, severity) {
  * ========================= */
 function getDetailsSheet_() {
   if (CACHE.details.sh) return CACHE.details.sh;
-  const ss = SpreadsheetApp.openById(CONFIG.logSpreadsheetId);
+  const ss = getLogSpreadsheet_();
   const sh = ss.getSheetByName(CONFIG.detailsSheetName) || ss.insertSheet(CONFIG.detailsSheetName);
   CACHE.details.ss = ss;
   CACHE.details.sh = sh;
@@ -1045,7 +1051,7 @@ function ensureRunMetricsSheet_() {
   const enabled = !!(CONFIG && CONFIG.features && CONFIG.features.enableRunMetrics);
   if (!enabled) return null;
   if (DRY_RUN) return null;
-  const ss = SpreadsheetApp.openById(String(CONFIG.logSpreadsheetId));
+  const ss = getLogSpreadsheet_();
   let sh = ss.getSheetByName(RUN_METRICS_SHEET_NAME);
   if (!sh) sh = ss.insertSheet(RUN_METRICS_SHEET_NAME);
   if (sh.getLastRow() < 1) {
