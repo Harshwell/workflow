@@ -406,24 +406,15 @@ function buildHeaderIndexCi_(headerRowValues) {
 function findHeaderIndexAny_(headerRowValues, candidates, opts) {
   const o = opts || {};
   const hdr = headerRowValues || [];
-  const exact = buildHeaderIndex_(hdr);
-  const ci = buildHeaderIndexCi_(hdr);
+  const exact = o.headerIndex || buildHeaderIndex_(hdr);
+  let ci = o.headerIndexCi || null;
 
   // Optional snake-case map
-  let snake = null;
+  let snake = o.headerIndexSnake || null;
   // Backward compatibility:
   // - prefer enableSnakeCase
   // - still honor legacy typo/alias enableSnake used by older callers
   const useSnakeCase = !!(o.enableSnakeCase || o.enableSnake);
-  if (useSnakeCase) {
-    snake = Object.create(null);
-    (hdr || []).forEach((h, idx) => {
-      const k = canonicalizeHeaderSnake_(h);
-      if (!k) return;
-      if (snake[k] == null) snake[k] = idx;
-    });
-  }
-
   for (let i = 0; i < (candidates || []).length; i++) {
     const raw = candidates[i];
     const c = String(raw == null ? '' : raw).trim();
@@ -431,10 +422,18 @@ function findHeaderIndexAny_(headerRowValues, candidates, opts) {
 
     if (exact[c] != null) return exact[c];
 
+    if (!ci) ci = buildHeaderIndexCi_(hdr);
     const k = normalizeHeaderKey_(c);
     if (k && ci[k] != null) return ci[k];
 
-    if (snake) {
+    if (useSnakeCase) {
+      if (!snake) {
+        snake = Object.create(null);
+        (hdr || []).forEach((h, idx) => {
+          const sk0 = canonicalizeHeaderSnake_(h);
+          if (sk0 && snake[sk0] == null) snake[sk0] = idx;
+        });
+      }
       const sk = canonicalizeHeaderSnake_(c);
       if (sk && snake[sk] != null) return snake[sk];
     }
