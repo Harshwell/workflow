@@ -46,8 +46,8 @@ Operational manual fields are user-managed state. They are not ordinary raw-sour
 | `Timestamp` | Manual/restored | User or workflow timestamp in operational sheets; backed up/restored by claim. | Number format is preserved by rich snapshot/temp backup paths. |
 | `Status` | Manual/restored / template | User dropdown in operational sheets and optional sheets. | Writers intentionally avoid writing this column directly in some flush paths to avoid dropdown validation traps. |
 | `Remarks` | Manual/restored | User notes in operational sheets; persisted into `Raw Data.Remarks`; restored by claim after route. | Rich text and wrap are restored where possible. |
-| `Update Status Asso`, `Timestamp Asso`, `Update Status Admin`, `Timestamp Admin` | Manual/restored | Raw Data tail columns and admin/associate workflow state. | Written back as derived/raw tail columns when present. |
-| `Start Date`, `End Date`, `Details` | Manual/restored or derived by sheet | Operational/B2B tracking fields; Special Case can fill policy dates/details when present. | EV-Bike removes these legacy columns if they still exist. |
+| `Update Status Asso` `Timestamp Asso` `Update Status Admin` `Timestamp Admin` | Manual/restored | Raw Data tail columns and admin/associate workflow state. | Written back as derived/raw tail columns when present. |
+| `Start Date` `End Date` `Details` | Manual/restored or derived by sheet | Operational/B2B tracking fields; Special Case can fill policy dates/details when present. | EV-Bike removes these legacy columns if they still exist. |
 | `OR` | Manual/restored / template | Checkbox/manual field in PO and Special Case layouts; can also be derived from raw own-risk markers. | Do not treat it as a universal raw field. |
 
 Manual restore pipeline:
