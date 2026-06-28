@@ -37,6 +37,28 @@ The pipeline normalizes headers before lookup. Prefer canonical headers, but the
 | `service_center`, `Service Center Name` | `sc_name` / `Service Center` |
 | `db_link`, `DB Link` | `dashboard_link` |
 
+## MAIN Raw Data 2026 Rename Map
+
+Runtime keeps backward-compatible aliases, but MAIN should prefer these Raw Data source headers.
+
+| Legacy source | Current source |
+| --- | --- |
+| `policy_start_date` | `policy_start_datetime` |
+| `policy_end_date` | `policy_end_datetime` |
+| `activation_datetime` | `policy_issued_datetime` |
+| `claim_submission_date` | `claim_submitted_datetime` |
+| `claim_submission_months` | `claim_submitted_month` |
+| `sc_name` | `repairer_location_store_name` |
+| `sc_city` | `repairer_location_city_name` |
+| `last_status` | `claim_last_status_name` |
+| `last_status_aging` | `days_aging_from_last_activity` |
+| `repair_replace_done_date` | `repair_done_datetime` / `replace_done_datetime` |
+| `device_checkout_date` | `device_checkout_datetime` |
+| `last_update` | `last_update_datetime` |
+| `last_activity_log_date` | `last_activity_log_datetime` |
+| `last_activity_log` | `last_activity_log_name` |
+| `qoala_pic_name` | `pic_name` |
+
 ## Source Sheets
 
 ### Raw Data
@@ -53,21 +75,21 @@ Core identity and policy columns:
 | `insurance_partner_code`, `insurance_code` | Insurance fallback and SUB submission fields. |
 | `product_name` | Destination `Product`, Flex product detection, Special Case context. |
 | `source_system_name` | Duplicate source comparison and DB/source classification. |
-| `dashboard_link` | Destination `DB Link`. |
+| `dashboard_link` | Destination `DB Link`; when blank, runtime derives the internal claim URL from `claim_number`. |
 | `DB` | Destination DB value when already available. |
 
 Claim date and aging columns:
 
 | Column | Used for |
 | --- | --- |
-| `claim_submission_date` | Primary `Submission Date`, B2B/Special Case/EV-Bike output date, first-month and policy-age comparisons. |
-| `claim_submitted_datetime` | SUB submission date fallback and datetime output. |
-| `claim_last_updated_datetime`, `last_update` | Destination `Last Status Date` / status recency fields. |
-| `last_activity_log_date`, `activity_log_datetime`, `last_activity_log_datetime` | Activity log recency and destination datetime fields. |
+| `claim_submitted_datetime` | Primary `Submission Date`, B2B/Special Case/EV-Bike output date, first-month and policy-age comparisons. Legacy `claim_submission_date` remains an alias. |
+| `claim_submitted_month` | Destination `Submission by Month` when present; otherwise derived from `claim_submitted_datetime`. |
+| `claim_last_updated_datetime`, `last_update_datetime` | Destination `Last Status Date` / status recency fields. Legacy `last_update` remains an alias. |
+| `last_activity_log_datetime`, `activity_log_datetime` | Activity log recency and destination datetime fields. |
 | `month_policy_aging` | Second-Year (Market Value) flag. Threshold is configured as `12`. |
 | `days_to_end_policies` | Policy remaining calculation and Special Case flagging. |
 | `days_aging_from_submission` | Destination `TAT`, Exclusion TAT fallback, aging output. |
-| `last_status_aging` / `LSA` | Destination `Last Status Aging`; sort and operational monitoring. |
+| `days_aging_from_last_activity` / `LSA` | Destination `Last Status Aging`; sort and operational monitoring. Legacy `last_status_aging` remains an alias. |
 | `activity_log_aging` / `ALA` | Destination `Activity Log Aging`. |
 | `Q-L (Months)` | Special Case and optional output context. |
 | `M-L (Months)` | Managed Raw Data tail metric. |
@@ -77,9 +99,15 @@ Status and routing columns:
 
 | Column | Used for |
 | --- | --- |
-| `last_status` | Operational routing, `Status Type`, `Position`, `Submission` trigger, destination `Last Status`. |
-| `activity_log`, `last_activity_log` | Destination `Activity Log`. |
-| `sc_name` | Destination `Service Center`, SC sheet routing, Branch derivation, Service Center flagging. |
+| `claim_last_status_name` | Operational routing, `Status Type`, `Position`, `Submission` trigger, destination `Last Status`. Legacy `last_status` remains an alias. |
+| `activity_log`, `last_activity_log_name` | Destination `Activity Log`. |
+| `repairer_location_store_name` | Destination `Service Center`, SC sheet routing, Branch derivation, Service Center flagging. Legacy `sc_name` remains an alias. |
+| `repairer_location_city_name` | Service-center city reference/debug field. Legacy `sc_city` remains an alias. |
+| `id_business_partner_category_name` | Destination `Buss. Category`. |
+| `pm_name` | Destination `PM Name`. |
+| `apm_name` | Destination `APM Name`. |
+| `device_checkin_option_name` | Destination `Service Type` on `Start`. |
+| `device_checkout_option_name` | Destination `Service Type` on `Finish`. |
 | `Associate` | Admin/operator assignment when the destination profile supports it. |
 | `Update Status`, `Timestamp`, `Status`, `Remarks` | Manual or workflow status tracking. Preserved where possible. |
 

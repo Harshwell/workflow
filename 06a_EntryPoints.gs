@@ -1711,15 +1711,15 @@ function __buildSubRawIndex06a_(values) {
 
   const idxClaim = idxOfAny(['claim_number', 'claim number', 'claim no', 'claim_no']);
 
-  const idxLSA = idxOfAny(['last_status_aging', 'last status aging', 'lsa']);
+  const idxLSA = idxOfAny(['days_aging_from_last_activity', 'last_status_aging', 'last status aging', 'lsa']);
   const idxALA = idxOfAny(['activity_log_aging', 'activity log aging', 'ala']);
-  const idxLastStatus = idxOfAny(['last_status', 'last status']);
-  const idxSc = idxOfAny(['sc_name', 'service center', 'service_center']);
+  const idxLastStatus = idxOfAny(['claim_last_status_name', 'last_status', 'last status']);
+  const idxSc = idxOfAny(['repairer_location_store_name', 'sc_name', 'service center', 'service_center']);
 
   // NEW: fields requested for SUB enrichment
   const idxClaimLastUpd = idxOfAny(['claim_last_updated_datetime', 'claim last updated datetime', 'last_status_date', 'last status date']);
   const idxActLog = idxOfAny(['activity_log', 'activity log']);
-  const idxLastActLog = idxOfAny(['last_activity_log', 'last activity log']);
+  const idxLastActLog = idxOfAny(['last_activity_log_name', 'last_activity_log', 'last activity log']);
   const idxActLogDt = idxOfAny([
     'activity_log_datetime', 'activity log datetime', 'activity_log_date_time', 'activity log date time',
     'last_activity_log_datetime', 'last activity log datetime'
@@ -1740,7 +1740,7 @@ function __buildSubRawIndex06a_(values) {
   const idxInsurance = idxOfAny(['insurance_partner_code', 'insurance', 'insurance_code', 'insurance partner code']);
   const idxDeviceType = idxOfAny(['device_type', 'device type']);
   const idxImei = idxOfAny(['device_imei', 'imei/sn', 'imei', 'sn', 'imei/sn']);
-  const idxStoreName = idxOfAny(['3. all transaction - qoala_policy_number → outlet_name', 'outlet_name', 'outlet name', 'store_name', 'store name']);
+  const idxStoreName = idxOfAny(['business_partner_name', '3. all transaction - qoala_policy_number → outlet_name', 'outlet_name', 'outlet name', 'store_name', 'store name']);
   const idxPaName = idxOfAny(['3. all transaction - qoala_policy_number → pa_name', 'pa_name', 'pa name']);
   const idxSpaName = idxOfAny(['3. all transaction - qoala_policy_number → spa_name', 'spa_name', 'spa name']);
 
@@ -1767,7 +1767,7 @@ function __buildSubRawIndex06a_(values) {
       activity_log: act,
       activity_log_datetime: idxActLogDt >= 0 ? row[idxActLogDt] : '',
       claim_submitted_datetime: idxSubmitted >= 0 ? row[idxSubmitted] : '',
-      dashboard_link: idxLink >= 0 ? row[idxLink] : '',
+      dashboard_link: (idxLink >= 0 && row[idxLink]) ? row[idxLink] : ((typeof buildDashboardLinkFromClaimNumber_ === 'function') ? buildDashboardLinkFromClaimNumber_(cn) : ''),
       partner_name: idxPartnerName >= 0 ? row[idxPartnerName] : '',
       insurance: idxInsurance >= 0 ? row[idxInsurance] : '',
       device_type: idxDeviceType >= 0 ? row[idxDeviceType] : '',
@@ -1926,15 +1926,15 @@ function __updateOperationalSheetsFromRaw06a_(ss, sheetNames, rawMap, ctx) {
     }
 
     const idxClaim = idxOfAny(['claim number', 'claim_number', 'claim no', 'claim_no']);
-    const idxLSA = idxOfAny(['last status aging', 'last_status_aging', 'lsa']);
+    const idxLSA = idxOfAny(['last status aging', 'days_aging_from_last_activity', 'last_status_aging', 'lsa']);
     const idxALA = idxOfAny(['activity log aging', 'activity_log_aging', 'ala']);
-    const idxLast = idxOfAny(['last status', 'last_status']);
-    const idxSc = idxOfAny(['service center', 'sc_name', 'service_center']);
+    const idxLast = idxOfAny(['last status', 'claim_last_status_name', 'last_status']);
+    const idxSc = idxOfAny(['service center', 'repairer_location_store_name', 'sc_name', 'service_center']);
     const idxActLog = idxOfAny(['activity log', 'activity_log', 'last activity log', 'last_activity_log']);
     const idxLastStatusDate = idxOfAny(['last status date', 'last_status_date', 'claim_last_updated_datetime', 'claim last updated datetime']);
     const idxStatusType = idxOfAny(['status type']);
     const idxType = isScSheet ? idxOfAny(['type']) : -1;
-    const idxSubmissionDate = idxOfAny(['submission date', 'claim_submission_date', 'claim submitted datetime', 'submission_date']);
+    const idxSubmissionDate = idxOfAny(['submission date', 'claim_submitted_datetime', 'claim_submission_date', 'claim submitted datetime', 'submission_date']);
     const idxSubmissionMonth = idxOfAny(['submission by month', 'submission_month']);
     const idxStoreName = idxOfAny(['store name', 'outlet_name', 'outlet name', 'store_name']);
     const idxPaName = idxOfAny(['pa name', 'pa_name']);
@@ -2374,8 +2374,8 @@ function __relocateOperationalRowsByLastStatusSub06a_(ss, sheetNames) {
     const norm = d.norm;
 
     const idxClaim = idxOfAny(norm, ['claim number', 'claim_number', 'claim no', 'claim_no']);
-    const idxStatus = idxOfAny(norm, ['last status', 'last_status']);
-    const idxSc = idxOfAny(norm, ['service center', 'sc_name', 'service_center']);
+    const idxStatus = idxOfAny(norm, ['last status', 'claim_last_status_name', 'last_status']);
+    const idxSc = idxOfAny(norm, ['service center', 'repairer_location_store_name', 'sc_name', 'service_center']);
     const idxLsd = idxOfAny(norm, ['last status date', 'claim_last_updated_datetime', 'claim last updated datetime']);
 
     if (idxClaim < 0 || idxStatus < 0) {

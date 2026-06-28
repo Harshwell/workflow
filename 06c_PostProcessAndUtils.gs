@@ -3351,11 +3351,11 @@ function __buildSnapshotRowsFromRaw06c_(rawSheet) {
   }
 
   const idxClaim = idxAny(['claim_number', 'Claim Number', 'claim number']);
-  const idxStatus = idxAny(['last_status', 'Last Status', 'Status']);
-  const idxLastUpd = idxAny(['claim_last_updated_datetime', 'Claim Last Updated Datetime', 'claim_last_updated', 'last_update', 'Last Update']);
-  const idxAct = idxAny(['activity_log', 'Activity Log', 'last_activity_log', 'Last Activity Log']);
-  const idxActDt = idxAny(['activity_log_timestamp', 'Activity Log Datetime', 'last_activity_log_date', 'Last Activity Log Date', 'last_activity_log_timestamp']);
-  const idxSc = idxAny(['sc_name', 'Service Center Name', 'SC Name', 'Service Center']);
+  const idxStatus = idxAny(['claim_last_status_name', 'last_status', 'Last Status', 'Status']);
+  const idxLastUpd = idxAny(['last_update_datetime', 'claim_last_updated_datetime', 'Claim Last Updated Datetime', 'claim_last_updated', 'last_update', 'Last Update']);
+  const idxAct = idxAny(['last_activity_log_name', 'activity_log', 'Activity Log', 'last_activity_log', 'Last Activity Log']);
+  const idxActDt = idxAny(['last_activity_log_datetime', 'activity_log_timestamp', 'Activity Log Datetime', 'last_activity_log_date', 'Last Activity Log Date', 'last_activity_log_timestamp']);
+  const idxSc = idxAny(['repairer_location_store_name', 'sc_name', 'Service Center Name', 'SC Name', 'Service Center']);
 
   if (idxClaim === -1) return [];
 
@@ -4054,7 +4054,7 @@ function __appendSubmissionFromRawIfMissing06e_(ss, rawMap, rawHdrIdx, dbTag) {
 
     if (idxDbLink >= 0) {
       row[idxDbLink] = 'LINK';
-      const url = String(rec.dashboard_link || '').trim();
+      const url = String(rec.dashboard_link || '').trim() || ((typeof buildDashboardLinkFromClaimNumber_ === 'function') ? buildDashboardLinkFromClaimNumber_(cn) : '');
       if (url) richLinks.push({ rowOffset: rowsToAppend.length, url: url });
     }
     if (idxDb >= 0) row[idxDb] = dbValue;

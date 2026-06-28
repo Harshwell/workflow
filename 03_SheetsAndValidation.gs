@@ -132,6 +132,9 @@ const SV03_TEMPLATES = Object.freeze({
     'DB Link',
     'DB',
     'Partner Name',
+    'Buss. Category',
+    'PM Name',
+    'APM Name',
     'Insurance',
     'Device Type',
     'Product',
@@ -164,6 +167,9 @@ const SV03_TEMPLATES = Object.freeze({
     'DB Link',
     'DB',
     'Partner Name',
+    'Buss. Category',
+    'PM Name',
+    'APM Name',
     'Insurance',
     'Device Type',
     'Product',
@@ -196,6 +202,9 @@ const SV03_TEMPLATES = Object.freeze({
     'DB Link',
     'DB',
     'Partner Name',
+    'Buss. Category',
+    'PM Name',
+    'APM Name',
     'Insurance',
     'Device Type',
     'Product',
@@ -226,6 +235,9 @@ const SV03_TEMPLATES = Object.freeze({
     'DB Link',
     'DB',
     'Partner Name',
+    'Buss. Category',
+    'PM Name',
+    'APM Name',
     'Insurance',
     'Device Type',
     'Product',
@@ -257,6 +269,9 @@ const SV03_TEMPLATES = Object.freeze({
     'DB Link',
     'DB',
     'Partner Name',
+    'Buss. Category',
+    'PM Name',
+    'APM Name',
     'Insurance',
     'Device Type',
     'Product',
@@ -285,6 +300,9 @@ const SV03_TEMPLATES = Object.freeze({
     'DB Link',
     'DB',
     'Partner Name',
+    'Buss. Category',
+    'PM Name',
+    'APM Name',
     'Insurance',
     'Device Type',
     'Product',
@@ -787,7 +805,7 @@ function ensureRawHeaders_(rawSheet, mainHeaderArr) {
 
   // Header index may change after tail healing.
   try { idx = buildHeaderIndex_(getRawHeader_(rawSheet)); } catch (e2) {}
-  return idx;
+  return (typeof applyRawHeaderAliases_ === 'function') ? applyRawHeaderAliases_(idx) : idx;
 }
 
 /** Clear Raw contents (values only) */

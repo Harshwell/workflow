@@ -460,7 +460,7 @@ function mutateRawInMemory_(rawValues, headerIndexRaw, agingStdMap, agingMap, as
 
     const hA = mapObj.headerIndex;
     const idxInsCodeA = idxAny_(hA, [h.partnerCodeAging, h.insuranceCode, 'Insurance Code', 'insurance_code', 'Partner Code']);
-    const idxLSA = idxAny_(hA, ['Last Status Aging', h.lastStatusAging, 'LSA', 'TAT']);
+    const idxLSA = idxAny_(hA, [h.lastStatusAging, 'days_aging_from_last_activity', 'Last Status Aging', 'LSA', 'TAT']);
     const idxALA = idxAny_(hA, ['Activity Log Aging', h.activityLogAging, 'ALA']);
     const idxSubDtA = (hA['claim_submitted_datetime'] != null) ? hA['claim_submitted_datetime'] : null;
 

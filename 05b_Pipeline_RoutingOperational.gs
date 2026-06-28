@@ -394,6 +394,7 @@ function applyDbLinkRichTextFromWriter_(w, startRow) {
 /** Build claim highlight sets from the full Raw Data (independent of routing). */
 function buildOperationalClaimHighlightSetsFromRaw_(rawValues, headerIndexRaw) {
   const h = CONFIG.headers;
+  if (typeof applyRawHeaderAliases_ === 'function') headerIndexRaw = applyRawHeaderAliases_(headerIndexRaw);
   const ixClaim = headerIndexRaw[h.claimNumber];
   const ixPartner = headerIndexRaw[h.businessPartner];
   const ixProduct = headerIndexRaw[h.productName];
@@ -1003,6 +1004,7 @@ const __setNotes05b__ = (range, matrix, sheetName) => {
 /** Build per-sheet writer (fast, typed) */
 function buildSheetWriters_(ss, routingMap, headerIndexRaw, pic) {
   const h = CONFIG.headers;
+  if (typeof applyRawHeaderAliases_ === 'function') headerIndexRaw = applyRawHeaderAliases_(headerIndexRaw);
   const writers = {};
 
   const flowName = __getRuntimeFlow05b_();
@@ -1146,6 +1148,25 @@ function buildSheetWriters_(ss, routingMap, headerIndexRaw, pic) {
         set('SPA Name', getRawAny(rawRow, ['3. All Transaction - qoala_policy_number → spa_name', 'spa_name', 'SPA Name']));
         set('Service Center', getRawAny(rawRow, [h.serviceCenter, h.serviceCenterName, h.scName, 'service_center', 'service_center_name', 'sc_name']));
         set('Service Center Name', getRawAny(rawRow, [h.serviceCenterName, h.serviceCenter, h.scName, 'service_center_name', 'service_center', 'sc_name']));
+        set('Buss. Category', getRawAny(rawRow, [h.businessPartnerCategoryName, 'id_business_partner_category_name', 'business_partner_category_name']));
+        set('PM Name', getRawAny(rawRow, [h.pmName, 'pm_name']));
+        set('APM Name', getRawAny(rawRow, [h.apmName, 'apm_name']));
+        if (idxH['Aging Post.'] != null) {
+          const agingPostRaw = sheetName === 'Start'
+            ? getRawAny(rawRow, ['Aging Start', 'aging_start'])
+            : (isScSheet
+              ? getRawAny(rawRow, ['Aging SC Receive', 'aging_sc_receive'])
+              : (sheetName === 'PO'
+                ? getRawAny(rawRow, ['Aging Ins Approve', 'aging_ins_approve'])
+                : (sheetName === 'Finish' ? getRawAny(rawRow, ['Aging Finish', 'aging_finish']) : '')));
+          set('Aging Post.', agingPostRaw);
+        }
+        if (idxH['Service Type'] != null) {
+          const serviceTypeRaw = sheetName === 'Start'
+            ? getRawAny(rawRow, [h.deviceCheckinOptionName, 'device_checkin_option_name'])
+            : (sheetName === 'Finish' ? getRawAny(rawRow, [h.deviceCheckoutOptionName, 'device_checkout_option_name']) : '');
+          set('Service Type', serviceTypeRaw);
+        }
         // - Device Brand / IMEI
         set('Device Brand', getRawAny(rawRow, [h.deviceBrand, 'device_brand', 'brand']));
         set('IMEI/SN', getRawAny(rawRow, [h.imeiNumber, h.imei, 'imei_number', 'imei', 'serial_number', 'sn']));
@@ -1172,6 +1193,7 @@ function buildSheetWriters_(ss, routingMap, headerIndexRaw, pic) {
         if (idxH['Submission Date'] != null) {
           // Source can come from datetime (SUB) or date-only (MAIN/form) exports.
           const rawSubmissionVal = getRawAny(rawRow, [
+            'claim_submitted_datetime',
             'claim_submission_date'
           ]);
           let d = coerceDate_(rawSubmissionVal);
@@ -1220,6 +1242,8 @@ function buildSheetWriters_(ss, routingMap, headerIndexRaw, pic) {
         // Last Status Aging (LSA) - keep both headers for backward compatibility
         const lastStatusAgingVal = normalizeInt_(getRawAny(rawRow, [
           h.lastStatusAging,
+          h.daysAgingFromLastActivity,
+          'days_aging_from_last_activity',
           'Last Status Aging',
           'LSA',
           'last_status_aging',
@@ -1291,7 +1315,8 @@ function buildSheetWriters_(ss, routingMap, headerIndexRaw, pic) {
 
         // Links
         if (idxH['DB Link'] != null) {
-          const url = String(getRaw(rawRow, h.dashboardLink) || '').trim();
+          const rawUrl = String(getRaw(rawRow, h.dashboardLink) || '').trim();
+          const url = rawUrl || ((typeof buildDashboardLinkFromClaimNumber_ === 'function') ? buildDashboardLinkFromClaimNumber_(claimNumberVal) : '');
           set('DB Link', url ? url : '');
           if (url) dbLinkUrls.push(url);
         }
@@ -1415,6 +1440,7 @@ if (!__isDryRun05b__()) {
 
 function routeRawToOperationalSheetsInMemory_(ss, rawValues, headerIndexRaw, pic) {
   const h = CONFIG.headers;
+  if (typeof applyRawHeaderAliases_ === 'function') headerIndexRaw = applyRawHeaderAliases_(headerIndexRaw);
   if (!rawValues || !rawValues.length) return { total: 0, perSheet: {}, unknown: [], missingStatus: [] };
 
   // Single-master default: treat missing pic as Admin semantics.
