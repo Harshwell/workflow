@@ -626,11 +626,11 @@ function backupOpsToRawInMemory_(ss, rawValues, headerIndexRaw, pic) {
   const idxRawStatus = headerIndexRaw[h.status];
   const idxRawRemarks = idxAny_(headerIndexRaw, ['Remarks', 'Remark', 'remarks', 'remark']);
 
-  // Additional manual/operational tail fields (snapshot per Claim Number)
-  const idxRawUpdateAsso = headerIndexRaw['Update Status Asso'];
-  const idxRawTsAsso = headerIndexRaw['Timestamp Asso'];
-  const idxRawUpdateAdmin = headerIndexRaw['Update Status Admin'];
-  const idxRawTsAdmin = headerIndexRaw['Timestamp Admin'];
+  // Deprecated Asso/Admin tail fields are no longer backed up.
+  const idxRawUpdateAsso = null;
+  const idxRawTsAsso = null;
+  const idxRawUpdateAdmin = null;
+  const idxRawTsAdmin = null;
 
   if (idxRawClaim == null) return { updated: 0, notes: 'Raw claim_number not found' };
   if (!rawValues || !rawValues.length) return { updated: 0, notes: 'Raw has no rows' };
@@ -665,10 +665,10 @@ function backupOpsToRawInMemory_(ss, rawValues, headerIndexRaw, pic) {
     const idxTs = __findHeaderIndex05a_(header, 'Timestamp');
     const idxStatus = __findHeaderIndex05a_(header, 'Status');
 
-    const idxUpdateAsso = __findHeaderIndex05a_(header, 'Update Status Asso');
-    const idxTsAsso = __findHeaderIndex05a_(header, 'Timestamp Asso');
-    const idxUpdateAdmin = __findHeaderIndex05a_(header, 'Update Status Admin');
-    const idxTsAdmin = __findHeaderIndex05a_(header, 'Timestamp Admin');
+    const idxUpdateAsso = -1;
+    const idxTsAsso = -1;
+    const idxUpdateAdmin = -1;
+    const idxTsAdmin = -1;
 
     const idxRemarksTmp = __findHeaderIndex05a_(header, 'Remarks');
     const idxRemarks = (idxRemarksTmp !== -1) ? idxRemarksTmp : __findHeaderIndex05a_(header, 'Remark');
@@ -791,11 +791,11 @@ function backupOpsToRawFull_(ss, rawSheet, rawValues, headerIndexRaw, pic) {
   const idxRawStatus = headerIndexRaw[h.status];
   const idxRawRemarks = idxAny_(headerIndexRaw, ['Remarks', 'Remark', 'remarks', 'remark']);
 
-  // Additional manual/operational tail fields (snapshot per Claim Number)
-  const idxRawUpdateAsso = headerIndexRaw['Update Status Asso'];
-  const idxRawTsAsso = headerIndexRaw['Timestamp Asso'];
-  const idxRawUpdateAdmin = headerIndexRaw['Update Status Admin'];
-  const idxRawTsAdmin = headerIndexRaw['Timestamp Admin'];
+  // Deprecated Asso/Admin tail fields are no longer backed up.
+  const idxRawUpdateAsso = null;
+  const idxRawTsAsso = null;
+  const idxRawUpdateAdmin = null;
+  const idxRawTsAdmin = null;
 
 
   if (idxRawClaim == null) return { updated: 0, notes: 'Raw claim_number not found' };
@@ -840,10 +840,10 @@ function backupOpsToRawFull_(ss, rawSheet, rawValues, headerIndexRaw, pic) {
     const idxTs = __findHeaderIndex05a_(header, 'Timestamp');
     const idxStatus = __findHeaderIndex05a_(header, 'Status');
 
-    const idxUpdateAsso = __findHeaderIndex05a_(header, 'Update Status Asso');
-    const idxTsAsso = __findHeaderIndex05a_(header, 'Timestamp Asso');
-    const idxUpdateAdmin = __findHeaderIndex05a_(header, 'Update Status Admin');
-    const idxTsAdmin = __findHeaderIndex05a_(header, 'Timestamp Admin');
+    const idxUpdateAsso = -1;
+    const idxTsAsso = -1;
+    const idxUpdateAdmin = -1;
+    const idxTsAdmin = -1;
 
     const idxRemarksTmp = __findHeaderIndex05a_(header, 'Remarks');
     const idxRemarks = (idxRemarksTmp !== -1) ? idxRemarksTmp : __findHeaderIndex05a_(header, 'Remark');
@@ -1056,7 +1056,7 @@ function backupOpsToRawFull_(ss, rawSheet, rawValues, headerIndexRaw, pic) {
         try { srcR.copyTo(dstR, SpreadsheetApp.CopyPasteType.PASTE_DATA_VALIDATION, false); } catch (e2) {}
       }
 
-      // Update Status Asso/Admin: column format (rich text is written below)
+      // Deprecated Asso/Admin columns are intentionally skipped.
       if (idxRawUpdateAsso != null && formatSource.idxUpdateAsso !== -1) {
         const srcA = formatSource.sh.getRange(2, formatSource.idxUpdateAsso + 1, 1, 1);
         const dstA = rawSheet.getRange(2, idxRawUpdateAsso + 1, workingRawValues.length, 1);

@@ -399,11 +399,15 @@ function buildOperationalClaimHighlightSetsFromRaw_(rawValues, headerIndexRaw) {
   const ixPartner = headerIndexRaw[h.businessPartner];
   const ixProduct = headerIndexRaw[h.productName];
   const ixDaysToEnd = headerIndexRaw[h.daysToEndPolicy];
+  const ixPolicyNumberRaw = headerIndexRaw['qoala_policy_number'] != null
+    ? headerIndexRaw['qoala_policy_number']
+    : headerIndexRaw['policy_number'];
 
   const expired = new Set();
   const flex = new Set();
   const b2b = new Set();
   const duplicate = new Map(); // claimKey -> dynamic note
+  const policyByClaim = new Map();
 
   // New highlight sets
   const secondYear = new Set();
@@ -493,7 +497,9 @@ function buildOperationalClaimHighlightSetsFromRaw_(rawValues, headerIndexRaw) {
     return (typeof coerceDateOnly_ === 'function') ? coerceDateOnly_(v) : (v instanceof Date ? v : null);
   };
   const formatShortDate_ = (v) => {
-    const d = toDateOnly_(v);
+    const parsed = (typeof normalizeDate_ === 'function') ? normalizeDate_(v) : null;
+    const d0 = parsed || toDateOnly_(v);
+    const d = d0 ? new Date(d0.getFullYear(), d0.getMonth(), d0.getDate()) : null;
     if (!d) return '';
     try { return Utilities.formatDate(d, Session.getScriptTimeZone(), 'dd MMM yy'); } catch (e) {}
     return '';
@@ -515,6 +521,10 @@ function buildOperationalClaimHighlightSetsFromRaw_(rawValues, headerIndexRaw) {
     if (!claim) continue;
 
     const claimKey = claim.toUpperCase();
+    if (ixPolicyNumberRaw != null) {
+      const policyNoForClaim = String(r[ixPolicyNumberRaw] || '').trim();
+      if (policyNoForClaim) policyByClaim.set(claimKey, policyNoForClaim);
+    }
 
     const partner = (ixPartner != null) ? String(r[ixPartner] || '').trim() : '';
     const product = (ixProduct != null) ? String(r[ixProduct] || '').trim() : '';
@@ -652,8 +662,65 @@ function buildOperationalClaimHighlightSetsFromRaw_(rawValues, headerIndexRaw) {
 
   return {
     expired, flex, b2b, duplicate, secondYear, firstMonthPolicy, remaining1Month,
+    policyByClaim,
     secondYearDetail, firstMonthPolicyDetail
   };
+}
+
+function __loadClaimedActivePolicyMap05b_(ss) {
+  const out = new Map();
+  try {
+    const sh = ss && ss.getSheetByName ? ss.getSheetByName('Claimed Active Policies') : null;
+    if (!sh || sh.getLastRow() < 2 || sh.getLastColumn() < 1) return out;
+    const header = sh.getRange(1, 1, 1, sh.getLastColumn()).getValues()[0].map(v => String(v || '').trim());
+    const idx = buildHeaderIndex_(header);
+    const cPolicy = idx['policy_number'];
+    const cExpired = idx['policy_expired_at'];
+    const cNumber = idx['number'];
+    const cLastStatus = idx['last_status'];
+    if (cPolicy == null) return out;
+    const vals = sh.getRange(2, 1, sh.getLastRow() - 1, header.length).getValues();
+    for (let i = 0; i < vals.length; i++) {
+      const r = vals[i] || [];
+      const policy = String(r[cPolicy] || '').trim();
+      if (!policy) continue;
+      const key = policy.toUpperCase();
+      const arr = out.get(key) || [];
+      arr.push({
+        policy: policy,
+        expired: cExpired != null ? r[cExpired] : '',
+        number: cNumber != null ? r[cNumber] : '',
+        lastStatus: cLastStatus != null ? r[cLastStatus] : ''
+      });
+      out.set(key, arr);
+    }
+  } catch (e) {}
+  return out;
+}
+
+function __buildMigrationPolicyNote05b_(policyNo, rows) {
+  const list = rows || [];
+  if (!policyNo || !list.length) return '';
+  const firstExpired = list[0] ? list[0].expired : '';
+  const expiredDate = (typeof formatShortDate2y_ === 'function') ? formatShortDate2y_(firstExpired) : String(firstExpired || '');
+  const aging = (typeof diffDays_ === 'function') ? diffDays_(firstExpired, new Date()) : null;
+  const lines = [
+    'WARNING: Migration Policy',
+    '',
+    'This policy has previous claim history.',
+    '* Policy: ' + policyNo,
+    '* Expired: ' + (expiredDate || '-'),
+    '* Aging: ' + (aging != null ? aging + ' days' : '-'),
+    '',
+    'Previous Claims:'
+  ];
+  for (let i = 0; i < list.length; i++) {
+    const item = list[i] || {};
+    lines.push('• ' + (item.number || '-'));
+    lines.push('* Last Status: ' + (item.lastStatus || '-'));
+    if (i < list.length - 1) lines.push('');
+  }
+  return lines.join('\n');
 }
 
 
@@ -686,6 +753,7 @@ function getOperationalClaimHighlightPolicy_() {
     secondYear: pick('secondYear', 'SECOND_YEAR', 'SECOND_YEAR', '#d9ead3', 'Second-Year (Market Value).'),
     firstMonthPolicy: pick('firstMonthPolicy', 'FIRST_MONTH_POLICY', 'FIRST_MONTH_POLICY', '#d9d2e9', 'First-Month Policy.'),
     remaining1Month: pick('remaining1Month', 'REMAINING_1_MONTH', 'REMAINING_1_MONTH', '#fce5cd', 'Policy Remaining <= 1 Month.'),
+    migrationPolicy: pick('migrationPolicy', 'MIGRATION_POLICY', 'MIGRATION_POLICY', '#ff00ff', 'Migration Policy.'),
 
     duplicate: {
       bg: dup.bg || colors.DUPLICATE || '#dd7e6b',
@@ -853,6 +921,7 @@ function applyOperationalClaimHighlightsByRaw_(ss, rawValues, headerIndexRaw, pi
   const cSecondYear = normalizeColor_(policy.secondYear.bg);
   const cFirstMonth = normalizeColor_(policy.firstMonthPolicy.bg);
   const cRemaining1Month = normalizeColor_(policy.remaining1Month.bg);
+  const cMigration = normalizeColor_(policy.migrationPolicy.bg);
 
   const expiredNote = String(policy.expired.note || 'Policy already expired.');
   const flexNote = String(policy.flex.note || 'Flex claim.');
@@ -860,6 +929,7 @@ function applyOperationalClaimHighlightsByRaw_(ss, rawValues, headerIndexRaw, pi
   const secondYearNote = String(policy.secondYear.note || 'Second-Year (Market Value).');
   const firstMonthPolicyNote = String(policy.firstMonthPolicy.note || 'First-Month Policy.');
   const remaining1MonthNote = String(policy.remaining1Month.note || 'Policy Remaining <= 1 Month.');
+  const migrationNote = String(policy.migrationPolicy.note || 'Migration Policy.');
 
   // Accept legacy Flex note variants.
   const flexNoteAlt = new Set([flexNote, 'FLEX claim.', 'Flex claim.']);
@@ -879,6 +949,7 @@ function applyOperationalClaimHighlightsByRaw_(ss, rawValues, headerIndexRaw, pi
     const n = String(note || '').trim();
     if (!n) return null;
     if (n.indexOf(dupPrefix) === 0) return 'duplicate';
+    if (__matchNoteLabel05b_(n, migrationNote) || __matchNoteLabel05b_(n, 'WARNING: Migration Policy') || __matchNoteLabel05b_(n, 'Migration Policy')) return 'migrationPolicy';
     if (n === expiredNote) return 'expired';
     if (n === b2bNote) return 'b2b';
     if (__matchNoteLabel05b_(n, secondYearNote) || __matchNoteLabel05b_(n, 'Second-Year (Market Value)')) return 'secondYear';
@@ -896,13 +967,16 @@ function applyOperationalClaimHighlightsByRaw_(ss, rawValues, headerIndexRaw, pi
     if (marker === 'secondYear') return policy.secondYear.bg;
     if (marker === 'firstMonthPolicy') return policy.firstMonthPolicy.bg;
     if (marker === 'remaining1Month') return policy.remaining1Month.bg;
+    if (marker === 'migrationPolicy') return policy.migrationPolicy.bg;
     return '';
   };
 
   const isMarkerBg_ = (bg) => {
     const c = normalizeColor_(bg);
-    return c && (c === cExpired || c === cFlex || c === cB2b || c === cDup || c === cSecondYear || c === cFirstMonth || c === cRemaining1Month);
+    return c && (c === cExpired || c === cFlex || c === cB2b || c === cDup || c === cSecondYear || c === cFirstMonth || c === cRemaining1Month || c === cMigration);
   };
+
+  const claimedPolicies = __loadClaimedActivePolicyMap05b_(ss);
 
   
 const __setBgs05b__ = (range, matrix, sheetName) => {
@@ -956,17 +1030,27 @@ const __setNotes05b__ = (range, matrix, sheetName) => {
       const claim = String((vals[i] && vals[i][0]) || '').trim();
       const claimKey = claim ? claim.toUpperCase() : '';
 
-      // 1) Compute desired note from RAW (keep existing behavior).
+      // 1) Compute desired note from RAW and policy-history sheet.
       let desiredNote = null;
+      let desiredMarker = null;
       if (claimKey) {
+        const noteParts = [];
+        const policyNo = (sets.policyByClaim && typeof sets.policyByClaim.get === 'function') ? sets.policyByClaim.get(claimKey) : '';
+        const policyRows = policyNo ? claimedPolicies.get(String(policyNo).toUpperCase()) : null;
+        if (policyNo && policyRows && policyRows.length) {
+          noteParts.push(__buildMigrationPolicyNote05b_(policyNo, policyRows));
+          desiredMarker = 'migrationPolicy';
+        }
+
         const dupNote = (sets.duplicate && typeof sets.duplicate.get === 'function') ? sets.duplicate.get(claimKey) : null;
-        if (dupNote) desiredNote = dupNote;
-        else if (sets.expired.has(claimKey)) desiredNote = expiredNote;
-        else if (sets.flex.has(claimKey)) desiredNote = flexNote;
-        else if (sets.b2b.has(claimKey)) desiredNote = b2bNote;
-        else if (sets.secondYear && sets.secondYear.has(claimKey)) desiredNote = (sets.secondYearDetail && sets.secondYearDetail.get(claimKey)) || secondYearNote;
-        else if (sets.firstMonthPolicy && sets.firstMonthPolicy.has(claimKey)) desiredNote = (sets.firstMonthPolicyDetail && sets.firstMonthPolicyDetail.get(claimKey)) || firstMonthPolicyNote;
-        else if (sets.remaining1Month && sets.remaining1Month.has(claimKey)) desiredNote = remaining1MonthNote;
+        if (dupNote) { noteParts.push(dupNote); if (!desiredMarker) desiredMarker = 'duplicate'; }
+        if (sets.expired.has(claimKey)) { noteParts.push(expiredNote); if (!desiredMarker) desiredMarker = 'expired'; }
+        if (sets.flex.has(claimKey)) { noteParts.push(flexNote); if (!desiredMarker) desiredMarker = 'flex'; }
+        if (sets.b2b.has(claimKey)) { noteParts.push(b2bNote); if (!desiredMarker) desiredMarker = 'b2b'; }
+        if (sets.secondYear && sets.secondYear.has(claimKey)) { noteParts.push((sets.secondYearDetail && sets.secondYearDetail.get(claimKey)) || secondYearNote); if (!desiredMarker) desiredMarker = 'secondYear'; }
+        if (sets.firstMonthPolicy && sets.firstMonthPolicy.has(claimKey)) { noteParts.push((sets.firstMonthPolicyDetail && sets.firstMonthPolicyDetail.get(claimKey)) || firstMonthPolicyNote); if (!desiredMarker) desiredMarker = 'firstMonthPolicy'; }
+        if (sets.remaining1Month && sets.remaining1Month.has(claimKey)) { noteParts.push(remaining1MonthNote); if (!desiredMarker) desiredMarker = 'remaining1Month'; }
+        desiredNote = noteParts.length ? noteParts.join('\n\n') : null;
       }
 
       // Apply/clear our marker note only.
@@ -981,7 +1065,7 @@ const __setNotes05b__ = (range, matrix, sheetName) => {
 
       // 2) Background is derived from the final note state (robust + cleanup).
       const effNote = (desiredNote != null) ? desiredNote : String(notes[i][0] || '');
-      const marker = markerFromNote_(effNote);
+      const marker = desiredMarker || markerFromNote_(effNote);
       const desiredBg = desiredBgFromMarker_(marker);
 
       if (desiredBg) {
@@ -1053,9 +1137,6 @@ function buildSheetWriters_(ss, routingMap, headerIndexRaw, pic) {
   Object.keys(routingMap).forEach(sheetName => {
     const sh = ss.getSheetByName(sheetName);
     if (!sh) return;
-
-    // Mandatory column for operational sheets (append if missing)
-    __ensureAppendHeader05b_(sh, 'Status Type');
 
     const lc = sh.getLastColumn() || 20;
     const header = sh.getRange(1, 1, 1, lc).getValues()[0].map(v => String(v || '').trim());
@@ -1132,10 +1213,6 @@ function buildSheetWriters_(ss, routingMap, headerIndexRaw, pic) {
           set('Activity Log Datetime', dt ? dt : '');
         }
 
-        // Status Type (mandatory)
-        if (idxH['Status Type'] != null) {
-          set('Status Type', __getStatusType05b_(lastStatusVal));
-        }
         set('Product', getRaw(rawRow, h.productName));
 
         // Extended operational columns (best-effort; only applies when those headers exist)
@@ -1151,7 +1228,7 @@ function buildSheetWriters_(ss, routingMap, headerIndexRaw, pic) {
         set('Buss. Category', getRawAny(rawRow, [h.businessPartnerCategoryName, 'id_business_partner_category_name', 'business_partner_category_name']));
         set('PM Name', getRawAny(rawRow, [h.pmName, 'pm_name']));
         set('APM Name', getRawAny(rawRow, [h.apmName, 'apm_name']));
-        if (idxH['Aging Post.'] != null) {
+        if (idxH['Stage Aging'] != null || idxH['Aging Position'] != null || idxH['Aging Post.'] != null) {
           const agingPostRaw = sheetName === 'Start'
             ? getRawAny(rawRow, ['Aging Start', 'aging_start'])
             : (isScSheet
@@ -1159,22 +1236,19 @@ function buildSheetWriters_(ss, routingMap, headerIndexRaw, pic) {
               : (sheetName === 'PO'
                 ? getRawAny(rawRow, ['Aging Ins Approve', 'aging_ins_approve'])
                 : (sheetName === 'Finish' ? getRawAny(rawRow, ['Aging Finish', 'aging_finish']) : '')));
+          set('Stage Aging', agingPostRaw);
+          set('Aging Position', agingPostRaw);
           set('Aging Post.', agingPostRaw);
         }
         if (idxH['Service Type'] != null) {
-          const serviceTypeRaw = sheetName === 'Start'
+          const serviceTypeRaw = (sheetName === 'Start' || sheetName === 'Finish' || sheetName === 'Claim Expired')
             ? getRawAny(rawRow, [h.deviceCheckinOptionName, 'device_checkin_option_name'])
-            : (sheetName === 'Finish' ? getRawAny(rawRow, [h.deviceCheckoutOptionName, 'device_checkout_option_name']) : '');
-          set('Service Type', serviceTypeRaw);
+            : '';
+          set('Service Type', (typeof resolveServiceTypeFromStatus_ === 'function') ? resolveServiceTypeFromStatus_(sheetName, serviceTypeRaw, lastStatusVal) : serviceTypeRaw);
         }
         // - Device Brand / IMEI
         set('Device Brand', getRawAny(rawRow, [h.deviceBrand, 'device_brand', 'brand']));
         set('IMEI/SN', getRawAny(rawRow, [h.imeiNumber, h.imei, 'imei_number', 'imei', 'serial_number', 'sn']));
-
-        // - DB OLD/NEW (computed from Claim Number codes; fallback to raw when not matched)
-        const dbComputed = computeDbValueFromClaimNumber05b_(claimNumberVal);
-        const dbRaw = getRawAny(rawRow, [h.dbClass, 'DB', 'db', 'db_class', 'old_new']);
-        set('DB', dbComputed || dbRaw);
 
         // - Activity Log Aging (ALA) & TAT (best-effort)
         const activityLogAgingVal = normalizeInt_(getRawAny(rawRow, [
@@ -1187,7 +1261,11 @@ function buildSheetWriters_(ss, routingMap, headerIndexRaw, pic) {
         ]));
         set('Activity Log Aging', activityLogAgingVal);
         set('ALA', activityLogAgingVal);
-        set('TAT', normalizeInt_(getRawAny(rawRow, [h.tat, 'TAT', 'tat'])));
+        if (sheetName === 'Submission') {
+          set('TAT', (typeof diffDaysDecimalFromNow_ === 'function') ? diffDaysDecimalFromNow_(getRawAny(rawRow, ['claim_submitted_datetime', 'claim_submission_date'])) : normalizeInt_(getRawAny(rawRow, [h.tat, 'TAT', 'tat'])));
+        } else {
+          set('TAT', normalizeInt_(getRawAny(rawRow, [h.tat, 'TAT', 'tat'])));
+        }
 
         // Dates (submission)
         if (idxH['Submission Date'] != null) {

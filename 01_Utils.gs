@@ -852,6 +852,65 @@ function diffDays_(d1, d2) {
   return Math.floor((t2 - t1) / 86400000);
 }
 
+function diffDaysDecimalFromNow_(startValue, nowValue) {
+  const start = normalizeDate_(startValue);
+  const end = nowValue ? normalizeDate_(nowValue) : new Date();
+  if (!start || !end) return '';
+  const diff = (end.getTime() - start.getTime()) / 86400000;
+  if (!isFinite(diff) || diff < 0) return '';
+  return Math.round(diff * 10) / 10;
+}
+
+function formatSubmissionMonthShort_(value) {
+  const d = normalizeDate_(value);
+  if (!d) return '';
+  try { return Utilities.formatDate(d, getTzSafe_(), 'MMM'); } catch (e) {}
+  return '';
+}
+
+function resolveServiceTypeFromStatus_(sheetName, rawValue, lastStatus) {
+  const direct = String(rawValue == null ? '' : rawValue).trim();
+  if (direct) return direct;
+
+  const sheet = String(sheetName || '').trim().toLowerCase();
+  const status = String(lastStatus || '').trim().toUpperCase();
+  if (!status) return '';
+
+  const startWalkin = new Set([
+    'QOALA_CLAIM_APPROVE_WALKIN',
+    'WAITING_WALKIN_START',
+    'CLAIM_EXPIRE_WALKIN',
+    'QOALA_CLAIM_REOPEN_WALKIN'
+  ]);
+  const startPickup = new Set([
+    'QOALA_CLAIM_APPROVE_PICKUP',
+    'WAITING_PICKUP_START',
+    'COURIER_PICKUP_START',
+    'COURIER_PICKUP_START_DONE'
+  ]);
+  const finishWalkin = new Set([
+    'SERVICE_CENTER_CLAIM_DONE_REPAIR_WALKIN',
+    'SERVICE_CENTER_CLAIM_WAITING_WALKIN_FINISH',
+    'SERVICE_CENTER_CLAIM_DONE',
+    'SERVICE_CENTER_CLAIM_DONE_REPAIR_PICKUP'
+  ]);
+  const finishPickup = new Set([
+    'SERVICE_CENTER_CLAIM_WAITING_PICKUP_FINISH',
+    'COURIER_CLAIM_PICKUP_FINISH',
+    'COURIER_CLAIM_PICKUP_FINISH_DONE'
+  ]);
+
+  if (sheet === 'start' || sheet === 'claim expired') {
+    if (startWalkin.has(status)) return 'WALKIN';
+    if (startPickup.has(status)) return 'PICKUP';
+  }
+  if (sheet === 'finish') {
+    if (finishWalkin.has(status)) return 'WALKIN';
+    if (finishPickup.has(status)) return 'PICKUP';
+  }
+  return '';
+}
+
 function monthDiff_(d1, d2) {
   if (!d1 || !d2) return null;
   const yearDiff = d2.getFullYear() - d1.getFullYear();

@@ -353,8 +353,10 @@ const SUB_FLOW_SPEC = Object.freeze({
     'Finish',
     'PO',
     'Exclusion',
+    'Claim Expired',
     'B2B',
     'EV-Bike',
+    'Doss',
     'Special Case'
   ]),
 
@@ -366,7 +368,6 @@ const SUB_FLOW_SPEC = Object.freeze({
     LAST_STATUS: 'Last Status',
     SERVICE_CENTER: 'Service Center',
     SUBMISSION_DATE: 'Submission Date',
-    DB: 'DB',
     DB_LINK: 'DB Link',
     PARTNER_NAME: 'Partner Name',
     INSURANCE: 'Insurance',
@@ -407,8 +408,7 @@ const SUB_FLOW_SPEC = Object.freeze({
   // Sorting spec for operational sheets after SUB finishes
   SORT_SPECS: Object.freeze([
     Object.freeze({ header: 'Last Status Aging', ascending: false }),
-    Object.freeze({ header: 'Last Status', ascending: true }),
-    Object.freeze({ header: 'DB', ascending: true })
+    Object.freeze({ header: 'Last Status', ascending: true })
   ])
 });
 
@@ -606,7 +606,7 @@ const SPECIAL_CASE_WRITER_POLICY = Object.freeze({
 /** Optional sheet skip rules */
 const OPTIONAL_SHEETS_FLAGS = Object.freeze({
   B2B_SKIP_EXCLUDED_LAST_STATUSES: true,
-  EVBIKE_SKIP_EXCLUDED_LAST_STATUSES: true,
+  EVBIKE_SKIP_EXCLUDED_LAST_STATUSES: false,
   SPECIAL_CASE_SKIP_EXCLUDED_LAST_STATUSES: true // aligned with Special Case spec
 });
 
@@ -731,6 +731,15 @@ const EVBIKE_POLICY = Object.freeze({
 
   // Runtime behavior
   UPSERT_ON_EVERY_RUN: true,
+  DO_NOT_RESET_FILTER: true
+});
+
+const DOSS_POLICY = Object.freeze({
+  ENABLE: true,
+  SHEET_NAME: 'Doss',
+  SUBMISSION_SHEET_NAME: 'Submission',
+  CLAIM_NUMBER_TOKEN: 'DOSS',
+  MANUAL_HEADERS: Object.freeze(['Status']),
   DO_NOT_RESET_FILTER: true
 });
 
@@ -1128,10 +1137,10 @@ const POSITION_BY_LAST_STATUS = Object.freeze({
   'QOALA_ASK_DETAIL': 'Front',
   'CUSTOMER_RESUBMIT_DOCUMENT': 'Front',
   'QOALA_CLAIM_RESUBMIT_DOCUMENT_REQ_QOALA': 'Front',
-  'CLAIM_EXPIRE': 'Exclusion',
+  'CLAIM_EXPIRE': 'Claim Expired',
   'QOALA_CLAIM_REOPEN': 'Front',
   'QOALA_CLAIM_APPROVE_WALKIN': 'Front',
-  'CLAIM_EXPIRE_WALKIN': 'Exclusion',
+  'CLAIM_EXPIRE_WALKIN': 'Claim Expired',
   'QOALA_CLAIM_REOPEN_WALKIN': 'Front',
   'QOALA_CLAIM_APPROVE_PICKUP': 'Expedition',
   'WAITING_PICKUP_START': 'Expedition',
@@ -1391,11 +1400,7 @@ const RAW_DATA_CUSTOM_TAIL_HEADERS = Object.freeze([
   'Remarks',
   'Q-L (Months)',
   'M-L (Months)',
-  'M-Q (Months)',
-  'Update Status Asso',
-  'Timestamp Asso',
-  'Update Status Admin',
-  'Timestamp Admin'
+  'M-Q (Months)'
 ]);
 
 /** =========================
@@ -1412,6 +1417,7 @@ const OPS_ROUTING_POLICY = Object.freeze({
     OR_OLD: 'OR - OLD',
     START: 'Start',
     FINISH: 'Finish',
+    CLAIM_EXPIRED: 'Claim Expired',
     SC_FARHAN: 'SC - Farhan',
     SC_MEILANI: 'SC - Meilani',
     SC_IVAN: 'SC - Meindar',
@@ -1457,6 +1463,11 @@ const OPS_ROUTING_POLICY = Object.freeze({
       'SERVICE_CENTER_CLAIM_WAITING_PICKUP_FINISH',
       'COURIER_CLAIM_PICKUP_FINISH',
       'COURIER_CLAIM_PICKUP_FINISH_DONE'
+    ]),
+
+    'Claim Expired': Object.freeze([
+      'CLAIM_EXPIRE',
+      'CLAIM_EXPIRE_WALKIN'
     ]),
 
     // SC universe (shared by Farhan/Meilani; split via sc_name keyword)
@@ -1550,8 +1561,7 @@ const OPS_ROUTING_POLICY = Object.freeze({
       'INSURANCE_CLAIM_PAID_REPAIR',
       'INSURANCE_CLAIM_WAITING_PAID_REPLACE',
       'INSURANCE_CLAIM_PAID_REPLACE',
-      'CLAIM_CANCELLED',
-      'CLAIM_EXPIRE_WALKIN'
+      'CLAIM_CANCELLED'
     ])
   }),
 
@@ -1925,7 +1935,6 @@ const RAW_DATA_REORDER_POLICY = Object.freeze({
     'device_checkin_option_name',
     'device_checkout_option_name',
     'device_checkout_datetime',
-    'DB',
     'device_brand',
     'imei_number',
     'sum_insured_amount',
@@ -2049,13 +2058,14 @@ const CONFIG = Object.freeze({
         OPS_ROUTING_POLICY.SHEETS.OR_OLD,
         OPS_ROUTING_POLICY.SHEETS.START,
         OPS_ROUTING_POLICY.SHEETS.FINISH,
+        OPS_ROUTING_POLICY.SHEETS.CLAIM_EXPIRED,
         OPS_ROUTING_POLICY.SHEETS.SC_FARHAN,
         OPS_ROUTING_POLICY.SHEETS.SC_MEILANI,
         OPS_ROUTING_POLICY.SHEETS.SC_IVAN,
         OPS_ROUTING_POLICY.SHEETS.PO,
         OPS_ROUTING_POLICY.SHEETS.EXCLUSION
       ]),
-      optional: Object.freeze([]) // deprecated in new master flow
+      optional: Object.freeze(['B2B', 'EV-Bike', 'Doss', 'Special Case'])
     }),
     [WORKBOOK_PROFILES.ADMIN]: Object.freeze({
       core: Object.freeze([MASTER_RAW_SHEET_NAME]),
@@ -2065,6 +2075,7 @@ const CONFIG = Object.freeze({
         OPS_ROUTING_POLICY.SHEETS.OR_OLD,
         OPS_ROUTING_POLICY.SHEETS.START,
         OPS_ROUTING_POLICY.SHEETS.FINISH,
+        OPS_ROUTING_POLICY.SHEETS.CLAIM_EXPIRED,
         OPS_ROUTING_POLICY.SHEETS.SC_FARHAN,
         OPS_ROUTING_POLICY.SHEETS.SC_MEILANI,
         OPS_ROUTING_POLICY.SHEETS.SC_IVAN,
@@ -2088,6 +2099,7 @@ const CONFIG = Object.freeze({
       OPS_ROUTING_POLICY.SHEETS.OR_OLD,
       OPS_ROUTING_POLICY.SHEETS.START,
       OPS_ROUTING_POLICY.SHEETS.FINISH,
+      OPS_ROUTING_POLICY.SHEETS.CLAIM_EXPIRED,
       OPS_ROUTING_POLICY.SHEETS.SC_FARHAN,
       OPS_ROUTING_POLICY.SHEETS.SC_MEILANI,
       OPS_ROUTING_POLICY.SHEETS.SC_IVAN,
@@ -2100,6 +2112,7 @@ const CONFIG = Object.freeze({
       OPS_ROUTING_POLICY.SHEETS.OR_OLD,
       OPS_ROUTING_POLICY.SHEETS.START,
       OPS_ROUTING_POLICY.SHEETS.FINISH,
+      OPS_ROUTING_POLICY.SHEETS.CLAIM_EXPIRED,
       OPS_ROUTING_POLICY.SHEETS.SC_FARHAN,
       OPS_ROUTING_POLICY.SHEETS.SC_MEILANI,
       OPS_ROUTING_POLICY.SHEETS.SC_IVAN,
@@ -2137,6 +2150,7 @@ const CONFIG = Object.freeze({
     [OPS_ROUTING_POLICY.SHEETS.OR_OLD]: OPS_ROUTING_POLICY.LAST_STATUS_BY_SHEET['OR - OLD'],
     [OPS_ROUTING_POLICY.SHEETS.START]: OPS_ROUTING_POLICY.LAST_STATUS_BY_SHEET['Start'],
     [OPS_ROUTING_POLICY.SHEETS.FINISH]: OPS_ROUTING_POLICY.LAST_STATUS_BY_SHEET['Finish'],
+    [OPS_ROUTING_POLICY.SHEETS.CLAIM_EXPIRED]: OPS_ROUTING_POLICY.LAST_STATUS_BY_SHEET['Claim Expired'],
     [OPS_ROUTING_POLICY.SHEETS.SC_FARHAN]: OPS_ROUTING_POLICY.LAST_STATUS_BY_SHEET['__SC_SHARED__'],
     [OPS_ROUTING_POLICY.SHEETS.SC_MEILANI]: OPS_ROUTING_POLICY.LAST_STATUS_BY_SHEET['__SC_SHARED__'],
     [OPS_ROUTING_POLICY.SHEETS.SC_IVAN]: OPS_ROUTING_POLICY.LAST_STATUS_BY_SHEET['__SC_SHARED__'],
@@ -2151,6 +2165,7 @@ const CONFIG = Object.freeze({
     [OPS_ROUTING_POLICY.SHEETS.OR_OLD]: OPS_ROUTING_POLICY.LAST_STATUS_BY_SHEET['OR - OLD'],
     [OPS_ROUTING_POLICY.SHEETS.START]: OPS_ROUTING_POLICY.LAST_STATUS_BY_SHEET['Start'],
     [OPS_ROUTING_POLICY.SHEETS.FINISH]: OPS_ROUTING_POLICY.LAST_STATUS_BY_SHEET['Finish'],
+    [OPS_ROUTING_POLICY.SHEETS.CLAIM_EXPIRED]: OPS_ROUTING_POLICY.LAST_STATUS_BY_SHEET['Claim Expired'],
     [OPS_ROUTING_POLICY.SHEETS.SC_FARHAN]: OPS_ROUTING_POLICY.LAST_STATUS_BY_SHEET['__SC_SHARED__'],
     [OPS_ROUTING_POLICY.SHEETS.SC_MEILANI]: OPS_ROUTING_POLICY.LAST_STATUS_BY_SHEET['__SC_SHARED__'],
     [OPS_ROUTING_POLICY.SHEETS.SC_IVAN]: OPS_ROUTING_POLICY.LAST_STATUS_BY_SHEET['__SC_SHARED__'],

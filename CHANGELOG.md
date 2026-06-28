@@ -5,6 +5,22 @@ Formatnya sengaja sederhana: **Added / Changed / Fixed**. Tidak perlu sok formal
 
 ---
 
+## 2026-06-29
+
+### Changed
+- MAIN/SUB/FORM tidak lagi membuat atau mengisi `DB`, `Status Type`, `Update Status Asso`, `Timestamp Asso`, `Update Status Admin`, dan `Timestamp Admin` pada operational/optional sheets.
+- `Aging Position` / `Aging Post.` dinormalisasi menjadi `Stage Aging`.
+- `Submission.TAT` sekarang dihitung decimal-day dari `claim_submitted_datetime` sampai runtime.
+- `CLAIM_EXPIRE` dan `CLAIM_EXPIRE_WALKIN` dipindahkan ke sheet `Claim Expired`.
+- `EV-Bike` sekarang menerima klaim token `VVMAR` tanpa pengecualian status; sheet baru `Doss` menerima klaim token `DOSS`.
+- Flag `Migration Policy` dari `Claimed Active Policies` menjadi prioritas highlight tertinggi dan digabung dengan note flag lain.
+
+### Fixed
+- SUB refresh ikut meng-upsert `EV-Bike` dan `Doss` dari `Raw OLD` / `Raw NEW`.
+- `Service Type` untuk `Start`, `Finish`, dan `Claim Expired` memakai `device_checkin_option_name` dengan fallback status ke `WALKIN` / `PICKUP`.
+
+---
+
 ## 2026-05-11
 
 ### Fixed

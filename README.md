@@ -8,6 +8,19 @@ Dokumen ini sengaja dibuat tetap ramping. Untuk self-project, dokumentasi yang e
 
 ---
 
+## Update implementasi terbaru (2026-06-29)
+
+Update kontrak MAIN/SUB/FORM:
+
+- kolom `DB`, `Status Type`, `Update Status Asso`, `Timestamp Asso`, `Update Status Admin`, dan `Timestamp Admin` dihentikan dari writer/backup/restore operational.
+- `Aging Position` / `Aging Post.` diganti menjadi `Stage Aging`.
+- `Submission.TAT` dihitung decimal-day dari `claim_submitted_datetime`.
+- status `CLAIM_EXPIRE` dan `CLAIM_EXPIRE_WALKIN` masuk sheet `Claim Expired`.
+- `EV-Bike` menerima klaim `VVMAR` tanpa pengecualian status; `Doss` menerima klaim `DOSS`.
+- flag `Migration Policy` dari `Claimed Active Policies` menjadi prioritas warna tertinggi dan note-nya digabung dengan flag lain.
+
+---
+
 ## Update implementasi terbaru (2026-05-11)
 
 Tambahan fix untuk konsistensi relocasi flow SUB:

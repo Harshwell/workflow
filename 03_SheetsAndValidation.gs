@@ -130,7 +130,6 @@ const SV03_TEMPLATES = Object.freeze({
     'Submission Date',
     'Claim Number',
     'DB Link',
-    'DB',
     'Partner Name',
     'Buss. Category',
     'PM Name',
@@ -147,6 +146,7 @@ const SV03_TEMPLATES = Object.freeze({
     'Activity Log',
     'Activity Log Aging',
     'TAT',
+    'Stage Aging',
     'Start Date',
     'End Date',
     'Details',
@@ -158,14 +158,12 @@ const SV03_TEMPLATES = Object.freeze({
     'Update Status',
     'Timestamp',
     'Status',
-    'Status Type',
   ]),
 
   OPS_PIC_SC: Object.freeze([
     'Submission Date',
     'Claim Number',
     'DB Link',
-    'DB',
     'Partner Name',
     'Buss. Category',
     'PM Name',
@@ -184,6 +182,7 @@ const SV03_TEMPLATES = Object.freeze({
     'Activity Log',
     'Activity Log Aging',
     'TAT',
+    'Stage Aging',
     'Sum Insured Amount',
     'Claim Amount',
     'Claim Own Risk Amount',
@@ -192,7 +191,6 @@ const SV03_TEMPLATES = Object.freeze({
     'Update Status',
     'Timestamp',
     'Status',
-    'Status Type',
   ]),
 
 
@@ -200,7 +198,6 @@ const SV03_TEMPLATES = Object.freeze({
     'Submission Date',
     'Claim Number',
     'DB Link',
-    'DB',
     'Partner Name',
     'Buss. Category',
     'PM Name',
@@ -217,6 +214,7 @@ const SV03_TEMPLATES = Object.freeze({
     'Activity Log',
     'Activity Log Aging',
     'TAT',
+    'Stage Aging',
     'Sum Insured Amount',
     'Claim Amount',
     'Claim Own Risk Amount',
@@ -226,14 +224,12 @@ const SV03_TEMPLATES = Object.freeze({
     'Update Status',
     'Timestamp',
     'Status',
-    'Status Type',
   ]),
 
   OPS_PIC_WORKFLOW: Object.freeze([
     'Submission Date',
     'Claim Number',
     'DB Link',
-    'DB',
     'Partner Name',
     'Buss. Category',
     'PM Name',
@@ -250,24 +246,15 @@ const SV03_TEMPLATES = Object.freeze({
     'Activity Log',
     'Activity Log Aging',
     'TAT',
+    'Stage Aging',
     'Sum Insured Amount',
-    'Claim Amount',
-    'Claim Own Risk Amount',
-    'Nett Claim Amount',
-    '% Approval',
-    'Update Status Asso',
-    'Timestamp Asso',
-    'Update Status Admin',
-    'Timestamp Admin',
     'Status',
-    'Status Type',
   ]),
 
   OPS_ADMIN_WORKFLOW: Object.freeze([
     'Submission Date',
     'Claim Number',
     'DB Link',
-    'DB',
     'Partner Name',
     'Buss. Category',
     'PM Name',
@@ -282,23 +269,13 @@ const SV03_TEMPLATES = Object.freeze({
     'Service Center',
     'Activity Log',
     'Sum Insured Amount',
-    'Claim Amount',
-    'Claim Own Risk Amount',
-    'Nett Claim Amount',
-    '% Approval',
-    'Update Status Asso',
-    'Timestamp Asso',
-    'Update Status Admin',
-    'Timestamp Admin',
     'Status',
-    'Status Type',
   ]),
 
   OPS_ADMIN_DEFAULT: Object.freeze([
     'Submission Date',
     'Claim Number',
     'DB Link',
-    'DB',
     'Partner Name',
     'Buss. Category',
     'PM Name',
@@ -320,14 +297,12 @@ const SV03_TEMPLATES = Object.freeze({
     'Update Status',
     'Timestamp',
     'Status',
-    'Status Type',
   ]),
 
   B2B: Object.freeze([
     'Submission Date',
     'Claim Number',
     'DB Link',
-    'DB',
     'Partner Name',
     'Insurance',
     'Device Type',
@@ -339,9 +314,6 @@ const SV03_TEMPLATES = Object.freeze({
     'Last Status Aging',
     'Activity Log Aging',
     'TAT',
-    'Start Date',
-    'End Date',
-    'Details',
     'Sum Insured Amount',
     'Claim Amount',
     'Claim Own Risk Amount',
@@ -350,7 +322,7 @@ const SV03_TEMPLATES = Object.freeze({
   ]),
 
   SPECIAL_CASE: Object.freeze([
-    'Submission Date','Claim Number','DB Link','DB','Partner Name','Insurance','Device Type',
+    'Submission Date','Claim Number','DB Link','Partner Name','Insurance','Device Type',
     'Last Status','Service Center','Last Status Aging','Activity Log Aging','TAT',
     'Last Status Date',
     'Q-L (Months)',
@@ -367,7 +339,7 @@ const SV03_TEMPLATES = Object.freeze({
 });
 
 // Optional sheets used in the single-master workbook (always enabled)
-const SV03_OPTIONAL_SHEETS_DEFAULT = Object.freeze(['B2B', 'EV-Bike', 'Special Case']);
+const SV03_OPTIONAL_SHEETS_DEFAULT = Object.freeze(['B2B', 'EV-Bike', 'Doss', 'Special Case']);
 
 
 /** ---------- Fixed schema guard ---------- */
@@ -375,7 +347,7 @@ const SV03_OPTIONAL_SHEETS_DEFAULT = Object.freeze(['B2B', 'EV-Bike', 'Special C
 // If headers change, user will adjust them manually.
 const SV03_FIXED_SCHEMA_SHEETS = new Set(['Special Case', 'Exclusion']);
 // Sheets that have specific Update Status/Timestamp columns (Asso/Admin) and must NOT receive generic ones.
-const SV03_WORKFLOW_SHEETS = new Set(['Ask Detail', 'Start', 'Finish']);
+const SV03_WORKFLOW_SHEETS = new Set(['Ask Detail', 'Start', 'Finish', 'Claim Expired']);
 
 
 function sv03_isFixedSchemaSheet_(name) {
@@ -618,6 +590,11 @@ function ensurePicSheets_(ss, pic) {
         return;
       }
 
+      if (name === 'Doss') {
+        sv03_ensureSheetWithHeader_(ss, 'Doss', SV03_TEMPLATES.EV_BIKE, pic);
+        return;
+      }
+
       if (name === 'Special Case') {
         // Fixed schema: do not auto-heal columns; only ensure sheet exists
         sv03_ensureSheetWithHeader_(ss, 'Special Case', SV03_TEMPLATES.SPECIAL_CASE, pic);
@@ -655,8 +632,9 @@ function sv03_removeAllFiltersForPic_(ss, rawSheet, pic) {
   }
 
   targets.forEach(name => {
-    // Requirement: never reset/unfilter EV-Bike sheet.
-    if (String(name || '').trim() === 'EV-Bike') return;
+    // Requirement: never reset/unfilter EV-Bike/Doss sheets.
+    const optionalTokenSheet = String(name || '').trim();
+    if (optionalTokenSheet === 'EV-Bike' || optionalTokenSheet === 'Doss') return;
     const sh = ss.getSheetByName(name);
     if (sh) sv03_removeSheetFilter_(sh);
   });
@@ -794,11 +772,7 @@ function ensureRawHeaders_(rawSheet, mainHeaderArr) {
       'Status',
       'Q-L (Months)',
       'M-L (Months)',
-      'M-Q (Months)',
-      'Update Status Asso',
-      'Timestamp Asso',
-      'Update Status Admin',
-      'Timestamp Admin'
+      'M-Q (Months)'
     ];
   const tailFiltered = (tail || []).filter(x => String(x || '').trim().toLowerCase() !== 'associate');
   try { sv03_ensureHeadersNonDestructive_(rawSheet, tailFiltered); } catch (e) {}
