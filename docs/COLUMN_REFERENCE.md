@@ -33,9 +33,11 @@ These rules supersede older rows in this reference where legacy columns are stil
 | Deprecated derived columns | `DB` and operational `Status Type` are no longer written by MAIN/SUB/FORM sheet writers. `DB Link` remains active. |
 | Stage aging rename | Operational `Aging Position` / `Aging Post.` is renamed to `Stage Aging`; `Submission` excludes this field. |
 | Stage aging sources | `Ask Detail` <- `Aging Ask Detail`; `Start` <- `Aging Start`; SC owner sheets <- `Aging SC Receive`; `PO` <- `Aging Ins Approve`; `Finish` <- `Aging Finish`; `Expired Claim` <- `Aging Expired`. |
+| SUB Stage Aging movement | When SUB relocates a claim across operational sheets because status mapping changed, destination `Stage Aging` is reset to `0`. MAIN is responsible for filling sheet-specific aging detail again. |
 | Detailed Submission TAT | Only sheet `Submission` uses decimal-day `TAT`, calculated from `claim_submitted_datetime` to the runtime timestamp. Other sheets keep raw `days_aging_from_submission` behavior. |
 | SUB new rows | New rows appended from SUB use `claim_submitted_datetime` for `Submission Date`, month derived from that datetime, decimal `TAT`, `last_status_aging`, and `activity_log_aging`. |
 | Expired Claim routing | `CLAIM_EXPIRE` and `CLAIM_EXPIRE_WALKIN` route to sheet `Expired Claim`. |
+| Expired Claim movement | `Expired Claim` stays inside SUB relocation scope, so claims can move out of it when `Last Status` changes to another mapped sheet. |
 | Finance exclusions | `Claim Amount`, `Claim Own Risk Amount`, `Nett Claim Amount`, and `% Approval` are ignored/removed on `Submission`, `Ask Detail`, `Start`, `Finish`, and `Expired Claim`. |
 | Service Type | `Start`, `Finish`, and `Expired Claim` read `device_checkin_option_name`; if missing, configured status fallbacks produce `WALKIN` or `PICKUP`. |
 | EV-Bike | Claim numbers containing `VVMAR` are included in `EV-Bike` regardless of last status. SUB also refreshes EV-Bike from `Raw OLD` / `Raw NEW`. |
@@ -44,6 +46,7 @@ These rules supersede older rows in this reference where legacy columns are stil
 | B2B/EV-Bike/Doss cleanup | `Status Type`, `Start Date`, `End Date`, and `Details` are removed from `B2B`, `EV-Bike`, and `Doss`. |
 | Special Case | `Special Case` is written only by MAIN. SUB/FORM do not process or strict-sync this sheet. `Start Date`, `End Date`, and `Details` remain active for Special Case flag notes. |
 | Migration Policy flag | `Claimed Active Policies.policy_number` is matched to `Raw Data.qoala_policy_number` or SUB `policy_number` sources when available. Migration Policy has highest highlight priority and its note is placed before other flag notes. |
+| Active filters | MAIN/SUB expand active sheet filters to the full used range before write/sort, preserving criteria where possible, so rows outside the current filter range are still processed. |
 
 ## How To Read Column Sources
 

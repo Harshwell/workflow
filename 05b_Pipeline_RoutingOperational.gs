@@ -1761,6 +1761,7 @@ function sortOperationalSheets_(ss, pic) {
     if (!criteriaAbs.length || __isDryRun05b__()) return;
 
     try {
+      if (typeof __expandSheetFilterToUsedRange06_ === 'function') __expandSheetFilterToUsedRange06_(sh);
       const f = (typeof sh.getFilter === 'function') ? sh.getFilter() : null;
       if (f && typeof f.getRange === 'function') {
         const fr = f.getRange();

@@ -694,7 +694,7 @@ const OPTIONAL_SHEETS_RULES = Object.freeze({
  * - Only processed when PIC = Farhan (else skip create/update/delete).
  * - Include all EV-Bike claims (sources include sheet 'Submission').
  * - Upsert by Claim Number; overwrite only managed columns; never touch manual Status.
- * - If EV-Bike sheet is filtered, do not reset/unfilter while writing.
+ * - Filter criteria may stay active; runtime expands filter range before writes.
  */
 const EVBIKE_POLICY = Object.freeze({
   ENABLE: true,

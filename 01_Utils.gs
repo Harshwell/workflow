@@ -2040,6 +2040,7 @@ function sortSheetDataByHeaderSpecsPreserveFilter_(sheet, specs, headerRowIndex)
 
   // Prefer filter range when filter exists.
   let filter = null;
+  try { if (typeof __expandSheetFilterToUsedRange06_ === 'function') __expandSheetFilterToUsedRange06_(sheet); } catch (e0) {}
   try { filter = sheet.getFilter ? sheet.getFilter() : null; } catch (e) { filter = null; }
   if (!filter) return sortSheetDataByHeaderSpecs_(sheet, specs, headerRowIndex);
 

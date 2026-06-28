@@ -557,9 +557,10 @@ function runSubFromFormDrive06a_(req, runId) {
     'EV-Bike',
     'Doss'
   ];
-  const opSheets = (Array.isArray(subFlow.OPERATIONAL_SHEETS) && subFlow.OPERATIONAL_SHEETS.length)
+  let opSheets = (Array.isArray(subFlow.OPERATIONAL_SHEETS) && subFlow.OPERATIONAL_SHEETS.length)
     ? subFlow.OPERATIONAL_SHEETS.map(s => String(s || '').trim()).filter(Boolean)
     : defaultOpSheets.slice();
+  opSheets = __normalizeSubOperationalSheetNames06a_(opSheets);
 
   // Ensure SC fallback/quarantine sheet participates in relocate + sort.
   try {
@@ -567,6 +568,12 @@ function runSubFromFormDrive06a_(req, runId) {
     if (fb && opSheets.indexOf(fb) < 0) opSheets.push(fb);
     __ensureSubScFallbackSheetExists06a_(masterSs, fb);
   } catch (eFb) {}
+
+  try {
+    if (typeof __expandWorkbookFiltersToUsedRange06_ === 'function') {
+      __expandWorkbookFiltersToUsedRange06_(masterSs);
+    }
+  } catch (eFlt0) { try { logLine_('SUB_WARN', 'Pre-write filter range sync failed', String(eFlt0), '', 'WARN'); } catch (eFltLog) {} }
 
   const sortSpecs = (Array.isArray(subFlow.SORT_SPECS) && subFlow.SORT_SPECS.length) ? subFlow.SORT_SPECS : null;
 
@@ -701,6 +708,22 @@ function __getSubRelocationSheetNames06a_(sheetNames) {
     const key = String(name || '').trim().toLowerCase();
     return key && !blocked.has(key);
   });
+}
+
+function __normalizeSubOperationalSheetNames06a_(sheetNames) {
+  const out = [];
+  const seen = Object.create(null);
+  (Array.isArray(sheetNames) ? sheetNames : []).forEach(function(name) {
+    let n = String(name || '').trim();
+    if (!n) return;
+    if (n === 'Claim Expired') n = 'Expired Claim';
+    const key = n.toLowerCase();
+    if (seen[key]) return;
+    seen[key] = true;
+    out.push(n);
+  });
+  if (!seen['expired claim']) out.push('Expired Claim');
+  return out;
 }
 
 function __ensureSubScFallbackSheetExists06a_(ss, fallbackSheetName) {
@@ -1229,11 +1252,12 @@ function runSubEmailIngest(maxThreads) {
       'EV-Bike',
       'Doss'
     ];
-    const opSheets = (Array.isArray(subFlow.OPERATIONAL_SHEETS) && subFlow.OPERATIONAL_SHEETS.length)
+    let opSheets = (Array.isArray(subFlow.OPERATIONAL_SHEETS) && subFlow.OPERATIONAL_SHEETS.length)
       ? subFlow.OPERATIONAL_SHEETS.map(s => String(s || '').trim()).filter(Boolean)
       : (Array.isArray(pMerged.OPERATIONAL_SHEETS) && pMerged.OPERATIONAL_SHEETS.length
         ? pMerged.OPERATIONAL_SHEETS.map(s => String(s || '').trim()).filter(Boolean)
         : defaultOpSheets);
+    opSheets = __normalizeSubOperationalSheetNames06a_(opSheets);
 
     // Align required operational column layout for SUB updates too.
     try { if (typeof enforceOperationalLayout06_ === 'function') enforceOperationalLayout06_(masterSs); } catch (eLay) {}
@@ -1244,6 +1268,12 @@ function runSubEmailIngest(maxThreads) {
       if (fb && opSheets.indexOf(fb) < 0) opSheets.push(fb);
       __ensureSubScFallbackSheetExists06a_(masterSs, fb);
     } catch (eFb) {}
+
+    try {
+      if (typeof __expandWorkbookFiltersToUsedRange06_ === 'function') {
+        __expandWorkbookFiltersToUsedRange06_(masterSs);
+      }
+    } catch (eFlt0) { try { logLine_('SUB_WARN', 'Pre-write filter range sync failed', String(eFlt0), '', 'WARN'); } catch (eFltLog) {} }
 
 
     // Sorting spec (multi-key) after SUB completes.
@@ -2609,7 +2639,8 @@ function __relocateOperationalRowsByLastStatusSub06a_(ss, sheetNames) {
       updateStatus: idxOfAnyLocal(['update status']),
       timestamp: idxOfAnyLocal(['timestamp']),
       status: idxOfAnyLocal(['status']),
-      remarks: idxOfAnyLocal(['remarks', 'remark'])
+      remarks: idxOfAnyLocal(['remarks', 'remark']),
+      stageAging: idxOfAnyLocal(['stage aging', 'aging position', 'aging post.', 'aging post'])
     };
   }
 
@@ -2621,6 +2652,8 @@ function __relocateOperationalRowsByLastStatusSub06a_(ss, sheetNames) {
       const ix = resetIdx[keys[i]];
       if (ix != null && ix >= 0 && ix < out.length) out[ix] = '';
     }
+    const idxStageAging = resetIdx.stageAging;
+    if (idxStageAging != null && idxStageAging >= 0 && idxStageAging < out.length) out[idxStageAging] = 0;
     return out;
   }
 
@@ -2745,7 +2778,7 @@ function __relocateOperationalRowsByLastStatusSub06a_(ss, sheetNames) {
           for (let c = 0; c < tgt.lc; c++) {
             if (alignedAfterReset[c] !== '' && alignedAfterReset[c] != null) merged[c] = alignedAfterReset[c];
           }
-          // Always reset the 4 manual columns after cross-sheet movement.
+          // Always reset manual workflow columns and Stage Aging after cross-sheet movement.
           const mergedAfterReset = resetMovedRowFieldsByHeader(merged, resetIdx);
           tgt.sh.getRange(keepRow, 1, 1, tgt.lc).setValues([mergedAfterReset]);
           applyRichTextLinksToTarget(srcName, mv.row1Based, mv.srcHdr, tgt.sh, tgt.hdr, keepRow, tgt.lc);

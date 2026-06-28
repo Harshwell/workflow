@@ -633,7 +633,7 @@ function sv03_removeAllFiltersForPic_(ss, rawSheet, pic) {
   }
 
   targets.forEach(name => {
-    // Requirement: never reset/unfilter EV-Bike/Doss sheets.
+    // Keep EV-Bike/Doss filter criteria; runtime expands their filter ranges before writes.
     const optionalTokenSheet = String(name || '').trim();
     if (optionalTokenSheet === 'EV-Bike' || optionalTokenSheet === 'Doss') return;
     const sh = ss.getSheetByName(name);

@@ -15,9 +15,12 @@ Formatnya sengaja sederhana: **Added / Changed / Fixed**. Tidak perlu sok formal
 - `CLAIM_EXPIRE` dan `CLAIM_EXPIRE_WALKIN` dipindahkan ke sheet `Expired Claim`.
 - `EV-Bike` sekarang menerima klaim token `VVMAR` tanpa pengecualian status; sheet baru `Doss` menerima klaim token `DOSS`.
 - `Special Case` kembali fokus MAIN-only; SUB/FORM tidak lagi memproses atau strict-sync sheet tersebut.
+- SUB cross-sheet relocation mereset `Stage Aging` menjadi `0`; nilai detail aging berikutnya hanya diisi ulang oleh MAIN.
+- Filter range aktif diexpand ke full used range sebelum MAIN/SUB write/sort agar hidden/out-of-filter rows tetap ikut update.
 - Flag `Migration Policy` dari `Claimed Active Policies` menjadi prioritas highlight tertinggi dan digabung dengan note flag lain.
 
 ### Fixed
+- `Expired Claim` ikut scope operational movement SUB, termasuk saat status berubah keluar dari expired menuju sheet mapping lain.
 - SUB refresh ikut meng-upsert `EV-Bike` dan `Doss` dari `Raw OLD` / `Raw NEW`.
 - `Service Type` untuk `Start`, `Finish`, dan `Expired Claim` memakai `device_checkin_option_name` dengan fallback status ke `WALKIN` / `PICKUP`.
 - `SC - Unmapped` tidak lagi menerima/menahan klaim token `VVMAR` atau `DOSS`.

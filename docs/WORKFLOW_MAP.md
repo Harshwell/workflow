@@ -161,12 +161,15 @@ Perubahan kontrak terbaru:
 - `DB`, `Status Type`, `Update Status Asso`, `Timestamp Asso`, `Update Status Admin`, dan `Timestamp Admin` tidak lagi dibuat/diisi oleh writer operational.
 - `Aging Position` / `Aging Post.` dinormalisasi menjadi `Stage Aging`.
 - `Stage Aging` diisi dari source aging per sheet dan tidak berlaku untuk `Submission`.
+- SUB relocation mereset `Stage Aging` menjadi `0` ketika klaim pindah operational sheet; MAIN mengisi ulang value detail dari Raw Data.
 - `Submission.TAT` dihitung lebih detail dari `claim_submitted_datetime` sampai runtime, sehingga nilai seperti `14,2` bisa muncul sesuai locale sheet.
 - `CLAIM_EXPIRE` dan `CLAIM_EXPIRE_WALKIN` masuk ke sheet `Expired Claim`.
+- `Expired Claim` ikut relocation SUB, sehingga klaim bisa bergerak keluar dari expired saat last status berubah.
 - `EV-Bike` menerima klaim token `VVMAR` tanpa pengecualian status; `Doss` menerima klaim token `DOSS` dengan pola writer yang sama.
 - `SC - Unmapped` mengecualikan klaim token `VVMAR` / `DOSS`.
 - `Special Case` diproses MAIN-only; SUB/FORM tidak menjalankan writer atau strict sync terhadap sheet ini.
 - SUB refresh ikut meng-upsert `EV-Bike` dan `Doss` dari `Raw OLD` / `Raw NEW`.
+- MAIN/SUB expand active filters ke full used range sebelum write/sort supaya row yang sedang hidden/out-of-filter tetap ikut update.
 - `Claimed Active Policies` menjadi flag prioritas tertinggi untuk highlight/note claim number.
 
 ### Jika menambah status baru

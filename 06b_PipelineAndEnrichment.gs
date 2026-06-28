@@ -44,6 +44,11 @@ function runPipeline_(pic, fileIds, opts) {
   try { ensureMasterSheets_(ss); } catch (e) {}
   try { if (typeof ensurePicSheets_ === 'function') ensurePicSheets_(ss, profileName); } catch (e) {} // best-effort for legacy templates
   try { validateWorkbook_(ss, profileName); } catch (e) {}
+  try {
+    if (typeof __expandWorkbookFiltersToUsedRange06_ === 'function') {
+      __expandWorkbookFiltersToUsedRange06_(ss);
+    }
+  } catch (eFlt0) { try { logLine_('WARN', 'Pre-write filter range sync failed', '', String(eFlt0), 'WARN'); } catch (e2) {} }
   endSegment_(segEnsure, 'ok', 'profile=MASTER', 'INFO');
 
   // Best-effort: Tag current run flow in Overview sheet (non-destructive).
@@ -1617,6 +1622,7 @@ function sortOperationalSheetsPreserveFilter06b_(ss, pic) {
     if (idxDate === -1 || idxStatus === -1) continue;
 
     try {
+      if (typeof __expandSheetFilterToUsedRange06_ === 'function') __expandSheetFilterToUsedRange06_(sh);
       const f = sh.getFilter ? sh.getFilter() : null;
       if (f && f.getRange) {
         const fr = f.getRange();

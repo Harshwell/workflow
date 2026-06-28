@@ -2081,6 +2081,37 @@ function __expandSheetFilterToUsedRange06_(sh) {
   return true;
 }
 
+function __expandWorkbookFiltersToUsedRange06_(ss, sheetNames) {
+  if (!ss) return { touched: 0, checked: 0 };
+  const names = [];
+  const seen = Object.create(null);
+  if (Array.isArray(sheetNames) && sheetNames.length) {
+    sheetNames.forEach(function(name) {
+      const n = String(name || '').trim();
+      if (!n || seen[n]) return;
+      seen[n] = true;
+      names.push(n);
+    });
+  } else if (typeof ss.getSheets === 'function') {
+    ss.getSheets().forEach(function(sh) {
+      const n = sh && sh.getName ? sh.getName() : '';
+      if (!n || seen[n]) return;
+      seen[n] = true;
+      names.push(n);
+    });
+  }
+
+  let touched = 0;
+  for (let i = 0; i < names.length; i++) {
+    const sh = ss.getSheetByName(names[i]);
+    if (!sh) continue;
+    try {
+      if (__expandSheetFilterToUsedRange06_(sh)) touched++;
+    } catch (e) {}
+  }
+  return { touched: touched, checked: names.length };
+}
+
 function __getPositionOrderWeekly06_(position) {
   const p = String(position || '').trim().toLowerCase();
   if (p === 'front') return 1;
@@ -2907,6 +2938,7 @@ function sortOperationalSheetPreserveFilter06c_(sheet) {
   if (idxDate === -1 || idxStatus === -1) return;
 
   try {
+    try { __expandSheetFilterToUsedRange06_(sheet); } catch (eF) {}
     const filter = sheet.getFilter ? sheet.getFilter() : null;
     if (filter && filter.getRange) {
       const fr = filter.getRange();
@@ -3864,6 +3896,8 @@ function runSelfCheck_() {
     'processSpecialCase_',
     'processEVBike_',
     'processDoss_',
+    '__expandSheetFilterToUsedRange06_',
+    '__expandWorkbookFiltersToUsedRange06_',
     'sortOperationalSheetsPreserveFilter06b_',
     'sortOperationalSheetPreserveFilter06c_'
   ];
@@ -4217,7 +4251,8 @@ function __sortOperationalSheetsSub06e_(ss, sheetNames, sortSpecs) {
         continue;
       }
 
-      // Preserve filter: sort only the data body, not the header.
+      // Preserve filter criteria, but first expand the range so hidden/out-of-range rows are included.
+      try { __expandSheetFilterToUsedRange06_(sh); } catch (eF) {}
       const filter = sh.getFilter ? sh.getFilter() : null;
       if (filter && filter.getRange) {
         const fr = filter.getRange();
