@@ -552,11 +552,10 @@ function runSubFromFormDrive06a_(req, runId) {
     'Finish',
     'PO',
     'Exclusion',
-    'Claim Expired',
+    'Expired Claim',
     'B2B',
     'EV-Bike',
-    'Doss',
-    'Special Case'
+    'Doss'
   ];
   const opSheets = (Array.isArray(subFlow.OPERATIONAL_SHEETS) && subFlow.OPERATIONAL_SHEETS.length)
     ? subFlow.OPERATIONAL_SHEETS.map(s => String(s || '').trim()).filter(Boolean)
@@ -779,6 +778,12 @@ function ensureMasterSheets_(ss) {
 
   const rawName = (CONFIG && CONFIG.masterRawSheetName) ? CONFIG.masterRawSheetName : 'Raw Data';
 
+  try {
+    const oldExpired = ss.getSheetByName('Claim Expired');
+    const newExpired = ss.getSheetByName('Expired Claim');
+    if (oldExpired && !newExpired) oldExpired.setName('Expired Claim');
+  } catch (eRenameExpired) {}
+
   // Ensure Raw Data exists
   let raw = ss.getSheetByName(rawName);
   if (!raw) {
@@ -790,7 +795,7 @@ function ensureMasterSheets_(ss) {
 
   const mustHave = [
     // Operational
-    'Submission', 'Ask Detail', 'OR - OLD', 'Start', 'Finish', 'Claim Expired', 'SC - Farhan', 'SC - Meilani', 'SC - Meindar', 'SC - Unmapped', 'PO', 'Exclusion',
+    'Submission', 'Ask Detail', 'OR - OLD', 'Start', 'Finish', 'Expired Claim', 'SC - Farhan', 'SC - Meilani', 'SC - Meindar', 'SC - Unmapped', 'PO', 'Exclusion',
     // Optional
     'B2B', 'EV-Bike', 'Doss', 'Special Case'
   ];
@@ -1219,11 +1224,10 @@ function runSubEmailIngest(maxThreads) {
       'Finish',
       'PO',
       'Exclusion',
-      'Claim Expired',
+      'Expired Claim',
       'B2B',
       'EV-Bike',
-      'Doss',
-      'Special Case'
+      'Doss'
     ];
     const opSheets = (Array.isArray(subFlow.OPERATIONAL_SHEETS) && subFlow.OPERATIONAL_SHEETS.length)
       ? subFlow.OPERATIONAL_SHEETS.map(s => String(s || '').trim()).filter(Boolean)
@@ -2494,6 +2498,13 @@ function __relocateOperationalRowsByLastStatusSub06a_(ss, sheetNames) {
       const row = d.vals[r];
       const claim = String(row[idxClaim] || '').trim();
       if (!claim) continue;
+      const exclusiveTokenClaim = (typeof isExclusiveTokenClaim_ === 'function') ? isExclusiveTokenClaim_(claim) : false;
+      const scFallbackSheet = __getScFallbackSheet06a_();
+      if (exclusiveTokenClaim && sheetName === scFallbackSheet) {
+        deletesBySheet[sheetName] = deletesBySheet[sheetName] || new Set();
+        deletesBySheet[sheetName].add(r + 1);
+        continue;
+      }
 
       // Skip rows that will be deleted as duplicates
       if (toDelete.has(r + 1)) continue;
@@ -2510,6 +2521,7 @@ function __relocateOperationalRowsByLastStatusSub06a_(ss, sheetNames) {
 
       const scName = (idxSc >= 0) ? row[idxSc] : '';
       let dest = pickDest(status, scName, candidates);
+      if (exclusiveTokenClaim && dest === scFallbackSheet) continue;
 
       // [Inference] If a row is already in SC - Farhan but Service Center is outside allowlist, push it to SC - Meilani as a safe default.
       // Override by ensuring CONFIG.statusRoutingSub (or CONFIG.statusRoutingAdmin) maps SC-stage statuses to all SC sheets, and/or configure CONFIG.SC_SHEET_ALLOWLISTS.

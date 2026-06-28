@@ -21,7 +21,7 @@ When a column is renamed, added, or removed, update `00_Config.gs`, `03_SheetsAn
 | Flow | Source sheet | Main destination sheets | Notes |
 | --- | --- | --- | --- |
 | MAIN | `Raw Data` | Operational sheets, optional sheets, logs/details, overview outputs | Uses canonical raw headers from `CONFIG.headers` and destination templates from `SV03_TEMPLATES`. |
-| SUB | `Raw OLD`, `Raw NEW` | `Submission`, `Ask Detail`, `OR - OLD`, `SC - Farhan`, `SC - Meilani`, `SC - Meindar`, `Start`, `Finish`, `PO`, `Exclusion`, `B2B`, `EV-Bike`, `Special Case` | Uses `SUB_FLOW_SPEC` and raw row builders in `06a_EntryPoints.gs`. |
+| SUB | `Raw OLD`, `Raw NEW` | `Submission`, `Ask Detail`, `OR - OLD`, `SC - Farhan`, `SC - Meilani`, `SC - Meindar`, `Start`, `Finish`, `PO`, `Exclusion`, `B2B`, `EV-Bike`, `Doss` | Uses `SUB_FLOW_SPEC` and raw row builders in `06a_EntryPoints.gs`. `Special Case` is MAIN-only. |
 
 ## Current Contract Updates
 
@@ -31,15 +31,18 @@ These rules supersede older rows in this reference where legacy columns are stil
 | --- | --- |
 | Deprecated workflow columns | `Update Status Asso`, `Timestamp Asso`, `Update Status Admin`, and `Timestamp Admin` are no longer created, backed up, restored, or written. Existing columns are removed during layout enforcement. |
 | Deprecated derived columns | `DB` and operational `Status Type` are no longer written by MAIN/SUB/FORM sheet writers. `DB Link` remains active. |
-| Stage aging rename | Operational `Aging Position` / `Aging Post.` is renamed to `Stage Aging`; writers fill `Stage Aging` when present. |
+| Stage aging rename | Operational `Aging Position` / `Aging Post.` is renamed to `Stage Aging`; `Submission` excludes this field. |
+| Stage aging sources | `Ask Detail` <- `Aging Ask Detail`; `Start` <- `Aging Start`; SC owner sheets <- `Aging SC Receive`; `PO` <- `Aging Ins Approve`; `Finish` <- `Aging Finish`; `Expired Claim` <- `Aging Expired`. |
 | Detailed Submission TAT | Only sheet `Submission` uses decimal-day `TAT`, calculated from `claim_submitted_datetime` to the runtime timestamp. Other sheets keep raw `days_aging_from_submission` behavior. |
 | SUB new rows | New rows appended from SUB use `claim_submitted_datetime` for `Submission Date`, month derived from that datetime, decimal `TAT`, `last_status_aging`, and `activity_log_aging`. |
-| Claim Expired routing | `CLAIM_EXPIRE` and `CLAIM_EXPIRE_WALKIN` route to sheet `Claim Expired`. |
-| Finance exclusions | `Claim Amount`, `Claim Own Risk Amount`, `Nett Claim Amount`, and `% Approval` are ignored/removed on `Submission`, `Ask Detail`, `Start`, `Finish`, and `Claim Expired`. |
-| Service Type | `Start`, `Finish`, and `Claim Expired` read `device_checkin_option_name`; if missing, configured status fallbacks produce `WALKIN` or `PICKUP`. |
+| Expired Claim routing | `CLAIM_EXPIRE` and `CLAIM_EXPIRE_WALKIN` route to sheet `Expired Claim`. |
+| Finance exclusions | `Claim Amount`, `Claim Own Risk Amount`, `Nett Claim Amount`, and `% Approval` are ignored/removed on `Submission`, `Ask Detail`, `Start`, `Finish`, and `Expired Claim`. |
+| Service Type | `Start`, `Finish`, and `Expired Claim` read `device_checkin_option_name`; if missing, configured status fallbacks produce `WALKIN` or `PICKUP`. |
 | EV-Bike | Claim numbers containing `VVMAR` are included in `EV-Bike` regardless of last status. SUB also refreshes EV-Bike from `Raw OLD` / `Raw NEW`. |
 | Doss | Sheet `Doss` follows the EV-Bike writer shape but only includes claim numbers containing `DOSS`. |
+| SC - Unmapped exclusion | Claim numbers containing `VVMAR` or `DOSS` are excluded from `SC - Unmapped`; those claims belong to `EV-Bike` / `Doss`. |
 | B2B/EV-Bike/Doss cleanup | `Status Type`, `Start Date`, `End Date`, and `Details` are removed from `B2B`, `EV-Bike`, and `Doss`. |
+| Special Case | `Special Case` is written only by MAIN. SUB/FORM do not process or strict-sync this sheet. `Start Date`, `End Date`, and `Details` remain active for Special Case flag notes. |
 | Migration Policy flag | `Claimed Active Policies.policy_number` is matched to `Raw Data.qoala_policy_number` or SUB `policy_number` sources when available. Migration Policy has highest highlight priority and its note is placed before other flag notes. |
 
 ## How To Read Column Sources
@@ -311,12 +314,12 @@ Common PIC destination columns:
 | `Selisih` | Derived | `Sum Insured Amount - Claim Amount`. |
 | `% Approval` | Derived | `Claim Amount / Sum Insured Amount` when both numeric and sum insured is not zero. |
 | `Update Status`, `Timestamp`, `Status`, `Remarks` | Manual/restored | Preserved through the manual restore pipeline above. |
-| `Status Type` | Derived | Derived from `Last Status` via status type maps. |
+| `Status Type` | Deprecated | No longer created or written by MAIN/SUB/FORM operational writers. |
 | `Buss. Category` | Raw-driven | `id_business_partner_category_name`. |
 | `PM Name` | Raw-driven | `pm_name`. |
 | `APM Name` | Raw-driven | `apm_name`. |
-| `Aging Post.` | Raw-driven by sheet | `Aging Start` on `Start`, `Aging SC Receive` on SC sheets, `Aging Ins Approve` on `PO`, `Aging Finish` on `Finish`. |
-| `Service Type` | Raw-driven by sheet | `device_checkin_option_name` on `Start`; `device_checkout_option_name` on `Finish`. |
+| `Stage Aging` | Raw-driven by sheet | `Aging Ask Detail` on `Ask Detail`, `Aging Start` on `Start`, `Aging SC Receive` on SC owner sheets, `Aging Ins Approve` on `PO`, `Aging Finish` on `Finish`, `Aging Expired` on `Expired Claim`; excluded from `Submission`. |
+| `Service Type` | Raw-driven by sheet | `device_checkin_option_name` on `Start`, `Finish`, and `Expired Claim`; if blank/missing, status fallback maps to `WALKIN` / `PICKUP`. |
 
 SC destination sheets also include:
 

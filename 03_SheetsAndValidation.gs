@@ -330,6 +330,7 @@ const SV03_TEMPLATES = Object.freeze({
     'Claim Amount','OR','Claim Own Risk Amount',
     'Nett Claim Amount',
     'Selisih',
+    'Start Date','End Date','Details',
     'Reason'
   ]),
 
@@ -347,7 +348,7 @@ const SV03_OPTIONAL_SHEETS_DEFAULT = Object.freeze(['B2B', 'EV-Bike', 'Doss', 'S
 // If headers change, user will adjust them manually.
 const SV03_FIXED_SCHEMA_SHEETS = new Set(['Special Case', 'Exclusion']);
 // Sheets that have specific Update Status/Timestamp columns (Asso/Admin) and must NOT receive generic ones.
-const SV03_WORKFLOW_SHEETS = new Set(['Ask Detail', 'Start', 'Finish', 'Claim Expired']);
+const SV03_WORKFLOW_SHEETS = new Set(['Ask Detail', 'Start', 'Finish', 'Expired Claim']);
 
 
 function sv03_isFixedSchemaSheet_(name) {

@@ -608,22 +608,20 @@ function processSpecialCase_(ss, rawValues, headerIndexRaw, pic) { // `pic` kept
   let header = __getHeaderRow05c_(sh);
   let idxH = buildHeaderIndex_(header);
 
-  // EV-Bike cleanup: remove deprecated columns if present.
+  // Special Case keeps policy detail columns; restore them if a previous cleanup removed them.
   try {
-    const dropCols = new Set(['Start Date', 'End Date', 'Details'].map(__normalizeHeaderText05c_));
-    const toDelete = [];
-    for (let i = 0; i < header.length; i++) {
-      const hk = __normalizeHeaderText05c_(header[i]);
-      if (dropCols.has(hk)) toDelete.push(i + 1);
+    const restoreCols = ['Start Date', 'End Date', 'Details'];
+    let restored = false;
+    for (let i = 0; i < restoreCols.length; i++) {
+      if (idxH[restoreCols[i]] != null) continue;
+      sh.getRange(1, sh.getLastColumn() + 1).setValue(restoreCols[i]);
+      restored = true;
     }
-    for (let i = toDelete.length - 1; i >= 0; i--) {
-      sh.deleteColumn(toDelete[i]);
-    }
-    if (toDelete.length) {
+    if (restored) {
       header = __getHeaderRow05c_(sh);
       idxH = buildHeaderIndex_(header);
     }
-  } catch (eDrop) {}
+  } catch (eRestore) {}
 
   // Schema guard (minimal). Legacy columns (Start Date/End Date/Details) are optional.
   try {

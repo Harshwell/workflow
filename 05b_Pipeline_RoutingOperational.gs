@@ -1228,20 +1228,16 @@ function buildSheetWriters_(ss, routingMap, headerIndexRaw, pic) {
         set('Buss. Category', getRawAny(rawRow, [h.businessPartnerCategoryName, 'id_business_partner_category_name', 'business_partner_category_name']));
         set('PM Name', getRawAny(rawRow, [h.pmName, 'pm_name']));
         set('APM Name', getRawAny(rawRow, [h.apmName, 'apm_name']));
-        if (idxH['Stage Aging'] != null || idxH['Aging Position'] != null || idxH['Aging Post.'] != null) {
-          const agingPostRaw = sheetName === 'Start'
-            ? getRawAny(rawRow, ['Aging Start', 'aging_start'])
-            : (isScSheet
-              ? getRawAny(rawRow, ['Aging SC Receive', 'aging_sc_receive'])
-              : (sheetName === 'PO'
-                ? getRawAny(rawRow, ['Aging Ins Approve', 'aging_ins_approve'])
-                : (sheetName === 'Finish' ? getRawAny(rawRow, ['Aging Finish', 'aging_finish']) : '')));
+        if (sheetName !== 'Submission' && (idxH['Stage Aging'] != null || idxH['Aging Position'] != null || idxH['Aging Post.'] != null)) {
+          const agingPostRaw = (typeof resolveStageAgingFromRaw_ === 'function')
+            ? resolveStageAgingFromRaw_(sheetName, function(keys) { return getRawAny(rawRow, keys); })
+            : '';
           set('Stage Aging', agingPostRaw);
           set('Aging Position', agingPostRaw);
           set('Aging Post.', agingPostRaw);
         }
         if (idxH['Service Type'] != null) {
-          const serviceTypeRaw = (sheetName === 'Start' || sheetName === 'Finish' || sheetName === 'Claim Expired')
+          const serviceTypeRaw = (sheetName === 'Start' || sheetName === 'Finish' || sheetName === 'Expired Claim')
             ? getRawAny(rawRow, [h.deviceCheckinOptionName, 'device_checkin_option_name'])
             : '';
           set('Service Type', (typeof resolveServiceTypeFromStatus_ === 'function') ? resolveServiceTypeFromStatus_(sheetName, serviceTypeRaw, lastStatusVal) : serviceTypeRaw);
@@ -1573,6 +1569,7 @@ function routeRawToOperationalSheetsInMemory_(ss, rawValues, headerIndexRaw, pic
     const statusVal = (idxLastStatus != null) ? String(rawRow[idxLastStatus] || '').trim() : '';
     const partnerVal = (idxPartnerName != null) ? String(rawRow[idxPartnerName] || '').trim() : '';
     const daysAging = (idxDaysAging != null) ? normalizeInt_(rawRow[idxDaysAging]) : null;
+    const exclusiveTokenClaim = (typeof isExclusiveTokenClaim_ === 'function') ? isExclusiveTokenClaim_(claimVal) : false;
 
     if (!statusVal) {
       missingStatus.push({ rowNumber, claim: claimVal, partner: partnerVal });
@@ -1592,10 +1589,15 @@ function routeRawToOperationalSheetsInMemory_(ss, rawValues, headerIndexRaw, pic
       targets = filterScTargets05b_(targets, scNameVal, scFarhanName, scMeilaniName, scIvanName, kwFarhan, kwMeilani, kwIvan, scFallbackName);
     }
 
+    if (exclusiveTokenClaim && targets.length) {
+      targets = targets.filter(function(name) { return name !== scFallbackName; });
+    }
+
     // NOTE: previously there were EV-Bike / PIC suppressions. Those are intentionally removed.
     // We always route all incoming data in the single master workflow.
 
     if (!targets.length) {
+      if (exclusiveTokenClaim) continue;
       targets = [scFallbackName];
       unknownStatuses.push({
         rowNumber,

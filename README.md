@@ -14,9 +14,12 @@ Update kontrak MAIN/SUB/FORM:
 
 - kolom `DB`, `Status Type`, `Update Status Asso`, `Timestamp Asso`, `Update Status Admin`, dan `Timestamp Admin` dihentikan dari writer/backup/restore operational.
 - `Aging Position` / `Aging Post.` diganti menjadi `Stage Aging`.
+- `Stage Aging` diisi dari source aging per sheet (`Aging Ask Detail`, `Aging Start`, `Aging SC Receive`, `Aging Ins Approve`, `Aging Finish`, `Aging Expired`) dan tidak dipakai di `Submission`.
 - `Submission.TAT` dihitung decimal-day dari `claim_submitted_datetime`.
-- status `CLAIM_EXPIRE` dan `CLAIM_EXPIRE_WALKIN` masuk sheet `Claim Expired`.
+- status `CLAIM_EXPIRE` dan `CLAIM_EXPIRE_WALKIN` masuk sheet `Expired Claim`.
 - `EV-Bike` menerima klaim `VVMAR` tanpa pengecualian status; `Doss` menerima klaim `DOSS`.
+- `SC - Unmapped` mengecualikan claim `VVMAR` / `DOSS`; claim tersebut masuk sheet eksklusifnya.
+- `Special Case` diproses hanya di MAIN; kolom `Start Date`, `End Date`, dan `Details` dipulihkan untuk note flagging.
 - flag `Migration Policy` dari `Claimed Active Policies` menjadi prioritas warna tertinggi dan note-nya digabung dengan flag lain.
 
 ---

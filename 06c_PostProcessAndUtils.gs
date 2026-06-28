@@ -1640,7 +1640,12 @@ function __normalizeSubmissionByMonthColumn06_(sh) {
 
 function enforceOperationalLayout06_(ss) {
   if (!ss || DRY_RUN) return { touched: 0 };
-  const monthSheets = ['Submission', 'Ask Detail', 'Start', 'SC - Farhan', 'SC - Meilani', 'SC - Meindar', 'Finish', 'Claim Expired', 'PO', 'Exclusion'];
+  try {
+    const oldExpired = ss.getSheetByName('Claim Expired');
+    const newExpired = ss.getSheetByName('Expired Claim');
+    if (oldExpired && !newExpired) oldExpired.setName('Expired Claim');
+  } catch (eRenameExpired) {}
+  const monthSheets = ['Submission', 'Ask Detail', 'Start', 'SC - Farhan', 'SC - Meilani', 'SC - Meindar', 'Finish', 'Expired Claim', 'PO', 'Exclusion'];
   let touched = 0;
   for (let i = 0; i < monthSheets.length; i++) {
     const sh = ss.getSheetByName(monthSheets[i]);
@@ -1648,7 +1653,7 @@ function enforceOperationalLayout06_(ss) {
     if (__ensureHeaderAtColumn06_(sh, 'Submission by Month', 2)) touched++;
     touched += __normalizeSubmissionByMonthColumn06_(sh);
   }
-  ['Start', 'Finish', 'Claim Expired'].forEach(name => {
+  ['Start', 'Finish', 'Expired Claim'].forEach(name => {
     const sh = ss.getSheetByName(name);
     if (!sh) return;
     if (__ensureHeaderAtColumn06_(sh, 'Service Center PIC', 14)) touched++;
@@ -1663,7 +1668,7 @@ function enforceOperationalLayout06_(ss) {
     'Aging Post': 'Stage Aging'
   };
 
-  const allCleanupSheets = ['Submission', 'Ask Detail', 'OR - OLD', 'Start', 'Finish', 'Claim Expired', 'SC - Farhan', 'SC - Meilani', 'SC - Meindar', 'SC - Unmapped', 'PO', 'Exclusion', 'B2B', 'EV-Bike', 'Doss', 'Special Case'];
+  const allCleanupSheets = ['Submission', 'Ask Detail', 'OR - OLD', 'Start', 'Finish', 'Expired Claim', 'SC - Farhan', 'SC - Meilani', 'SC - Meindar', 'SC - Unmapped', 'PO', 'Exclusion', 'B2B', 'EV-Bike', 'Doss', 'Special Case'];
   allCleanupSheets.forEach(function(name) {
     const sh = ss.getSheetByName(name);
     if (!sh) return;
@@ -1671,11 +1676,11 @@ function enforceOperationalLayout06_(ss) {
     touched += __renameHeaderColumns06_(sh, stageRename);
   });
 
-  ['Submission', 'Ask Detail', 'Start', 'Finish', 'Claim Expired'].forEach(function(name) {
+  ['Submission', 'Ask Detail', 'Start', 'Finish', 'Expired Claim'].forEach(function(name) {
     const sh = ss.getSheetByName(name);
     if (!sh) return;
     touched += __removeHeaderColumns06_(sh, financeExcluded, {});
-    if (name === 'Submission') touched += __removeHeaderColumns06_(sh, ['Start Date', 'End Date', 'Details', 'Submission Date'], { 'Submission Date': true });
+    if (name === 'Submission') touched += __removeHeaderColumns06_(sh, ['Start Date', 'End Date', 'Details', 'Submission Date', 'Stage Aging', 'Aging Position', 'Aging Post.', 'Aging Post'], { 'Submission Date': true });
   });
 
   ['EV-Bike', 'Doss', 'B2B'].forEach(function(name) {

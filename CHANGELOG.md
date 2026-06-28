@@ -10,14 +10,18 @@ Formatnya sengaja sederhana: **Added / Changed / Fixed**. Tidak perlu sok formal
 ### Changed
 - MAIN/SUB/FORM tidak lagi membuat atau mengisi `DB`, `Status Type`, `Update Status Asso`, `Timestamp Asso`, `Update Status Admin`, dan `Timestamp Admin` pada operational/optional sheets.
 - `Aging Position` / `Aging Post.` dinormalisasi menjadi `Stage Aging`.
+- `Stage Aging` kini mengambil source per sheet: `Aging Ask Detail`, `Aging Start`, `Aging SC Receive`, `Aging Ins Approve`, `Aging Finish`, dan `Aging Expired`; `Submission` dikecualikan.
 - `Submission.TAT` sekarang dihitung decimal-day dari `claim_submitted_datetime` sampai runtime.
-- `CLAIM_EXPIRE` dan `CLAIM_EXPIRE_WALKIN` dipindahkan ke sheet `Claim Expired`.
+- `CLAIM_EXPIRE` dan `CLAIM_EXPIRE_WALKIN` dipindahkan ke sheet `Expired Claim`.
 - `EV-Bike` sekarang menerima klaim token `VVMAR` tanpa pengecualian status; sheet baru `Doss` menerima klaim token `DOSS`.
+- `Special Case` kembali fokus MAIN-only; SUB/FORM tidak lagi memproses atau strict-sync sheet tersebut.
 - Flag `Migration Policy` dari `Claimed Active Policies` menjadi prioritas highlight tertinggi dan digabung dengan note flag lain.
 
 ### Fixed
 - SUB refresh ikut meng-upsert `EV-Bike` dan `Doss` dari `Raw OLD` / `Raw NEW`.
-- `Service Type` untuk `Start`, `Finish`, dan `Claim Expired` memakai `device_checkin_option_name` dengan fallback status ke `WALKIN` / `PICKUP`.
+- `Service Type` untuk `Start`, `Finish`, dan `Expired Claim` memakai `device_checkin_option_name` dengan fallback status ke `WALKIN` / `PICKUP`.
+- `SC - Unmapped` tidak lagi menerima/menahan klaim token `VVMAR` atau `DOSS`.
+- Kolom detail `Start Date`, `End Date`, dan `Details` dipulihkan untuk writer `Special Case`.
 
 ---
 
