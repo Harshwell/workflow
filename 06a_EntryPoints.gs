@@ -551,7 +551,11 @@ function runSubFromFormDrive06a_(req, runId) {
     'Start',
     'Finish',
     'PO',
+    'Exclusion',
+    'Claim Expired',
     'B2B',
+    'EV-Bike',
+    'Doss',
     'Special Case'
   ];
   const opSheets = (Array.isArray(subFlow.OPERATIONAL_SHEETS) && subFlow.OPERATIONAL_SHEETS.length)
@@ -691,9 +695,9 @@ function __runSubCore06a_(masterSs, oldBlob, newBlob, opt) {
 
 function __getSubRelocationSheetNames06a_(sheetNames) {
   const names = Array.isArray(sheetNames) ? sheetNames : [];
-  // EV-Bike is user-managed optional bucket; SUB relocation must not move/delete its rows.
+  // EV-Bike/Doss are user-managed optional buckets; SUB relocation must not move/delete their rows.
   // Exclusion MUST stay in relocation scope so status transitions like DONE_REPAIR -> DONE can move there.
-  const blocked = new Set(['ev-bike']);
+  const blocked = new Set(['ev-bike', 'doss']);
   return names.filter(function (name) {
     const key = String(name || '').trim().toLowerCase();
     return key && !blocked.has(key);
@@ -786,9 +790,9 @@ function ensureMasterSheets_(ss) {
 
   const mustHave = [
     // Operational
-    'Submission', 'Ask Detail', 'OR - OLD', 'Start', 'Finish', 'SC - Farhan', 'SC - Meilani', 'SC - Meindar', 'SC - Unmapped', 'PO', 'Exclusion',
+    'Submission', 'Ask Detail', 'OR - OLD', 'Start', 'Finish', 'Claim Expired', 'SC - Farhan', 'SC - Meilani', 'SC - Meindar', 'SC - Unmapped', 'PO', 'Exclusion',
     // Optional
-    'B2B', 'EV-Bike', 'Special Case'
+    'B2B', 'EV-Bike', 'Doss', 'Special Case'
   ];
 
   // Prefer 03 templates if available; otherwise create minimal sheets.
@@ -805,6 +809,8 @@ function ensureMasterSheets_(ss) {
         sv03_ensureSheetWithHeader_(ss, 'B2B', SV03_TEMPLATES.B2B, 'Master');
       } else if (name === 'EV-Bike' && SV03_TEMPLATES.EV_BIKE) {
         sv03_ensureSheetWithHeader_(ss, 'EV-Bike', SV03_TEMPLATES.EV_BIKE, 'Master');
+      } else if (name === 'Doss' && SV03_TEMPLATES.EV_BIKE) {
+        sv03_ensureSheetWithHeader_(ss, 'Doss', SV03_TEMPLATES.EV_BIKE, 'Master');
       } else if (name === 'Special Case' && SV03_TEMPLATES.SPECIAL_CASE) {
         sv03_ensureSheetWithHeader_(ss, 'Special Case', SV03_TEMPLATES.SPECIAL_CASE, 'Master');
       } else if (SV03_TEMPLATES.OPS_PIC_DEFAULT) {
@@ -825,7 +831,7 @@ function ensureRawTailColumns06_(rawSheet) {
     ? CONFIG.rawDataCustomTailHeaders
     : ((typeof RAW_DATA_CUSTOM_TAIL_HEADERS !== 'undefined' && Array.isArray(RAW_DATA_CUSTOM_TAIL_HEADERS) && RAW_DATA_CUSTOM_TAIL_HEADERS.length)
         ? RAW_DATA_CUSTOM_TAIL_HEADERS
-        : ['Update Status','Timestamp','Status','Q-L (Months)','M-L (Months)','M-Q (Months)','Update Status Asso','Timestamp Asso','Update Status Admin','Timestamp Admin']);
+        : ['Update Status','Timestamp','Status','Q-L (Months)','M-L (Months)','M-Q (Months)']);
 
   // Spec: do NOT add Associate column in Raw Data.
   const tailSafe = (Array.isArray(tail) ? tail : [])
@@ -1213,8 +1219,10 @@ function runSubEmailIngest(maxThreads) {
       'Finish',
       'PO',
       'Exclusion',
+      'Claim Expired',
       'B2B',
       'EV-Bike',
+      'Doss',
       'Special Case'
     ];
     const opSheets = (Array.isArray(subFlow.OPERATIONAL_SHEETS) && subFlow.OPERATIONAL_SHEETS.length)
@@ -1300,6 +1308,14 @@ try {
     } else {
       try { logLine_('SUB_WARN', 'NEW attachment missing; continue OLD-only run', '', '', 'WARN'); } catch (eW2) {}
     }
+
+    try {
+      const optRefresh = __refreshTokenOptionalSheetsFromSubRaw06a_(masterSs, [rawOldName, rawNewName]);
+      try { logLine_('SUB_OPTIONAL', 'Refreshed EV-Bike/Doss from SUB raw sheets', JSON.stringify(optRefresh || {}), '', 'INFO'); } catch (eOptLog) {}
+    } catch (eOpt) {
+      try { logLine_('SUB_OPTIONAL_WARN', 'EV-Bike/Doss SUB refresh failed', String(eOpt), '', 'WARN'); } catch (eOpt2) {}
+    }
+
     // Relocate rows by Last Status mapping (move FULL row, dedupe by Claim Number).
     try { setProgressForFlow_('SUB', 0.80, 'Relocate + sort...', { prefixFlowInStep: true }); } catch (eP9) {}
     const relocateSheets = __getSubRelocationSheetNames06a_(opSheets);
@@ -1363,6 +1379,56 @@ try {
       sorted: sortRes
     });
   });
+}
+
+function __refreshTokenOptionalSheetsFromSubRaw06a_(ss, rawSheetNames) {
+  const names = Array.isArray(rawSheetNames) ? rawSheetNames : [];
+  const out = { sheets: {}, evBike: 0, doss: 0 };
+  let highlightHeader = null;
+  const highlightRows = [];
+  for (let i = 0; i < names.length; i++) {
+    const rawName = String(names[i] || '').trim();
+    if (!rawName) continue;
+    const sh = ss ? ss.getSheetByName(rawName) : null;
+    if (!sh || sh.getLastRow() < 2 || sh.getLastColumn() < 1) {
+      out.sheets[rawName] = { skipped: true };
+      continue;
+    }
+    const vals = sh.getRange(1, 1, sh.getLastRow(), sh.getLastColumn()).getValues();
+    const header = vals[0].map(h => String(h || '').trim());
+    const headerIndex = buildHeaderIndex_(header);
+    const rows = vals.slice(1);
+    if (!highlightHeader) {
+      highlightHeader = header.slice();
+      for (let hr = 0; hr < rows.length; hr++) highlightRows.push(rows[hr]);
+    } else {
+      const curIdx = buildHeaderIndex_(header);
+      for (let hr = 0; hr < rows.length; hr++) {
+        const src = rows[hr] || [];
+        const dst = new Array(highlightHeader.length).fill('');
+        for (let hc = 0; hc < highlightHeader.length; hc++) {
+          const j = curIdx[highlightHeader[hc]];
+          if (j != null) dst[hc] = src[j];
+        }
+        highlightRows.push(dst);
+      }
+    }
+    let ev = 0;
+    let doss = 0;
+    if (typeof processEVBike_ === 'function') ev = processEVBike_(ss, rows, headerIndex, 'SUB') || 0;
+    if (typeof processDoss_ === 'function') doss = processDoss_(ss, rows, headerIndex, 'SUB') || 0;
+    out.evBike += ev;
+    out.doss += doss;
+    out.sheets[rawName] = { evBike: ev, doss: doss };
+  }
+  try {
+    if (highlightHeader && highlightRows.length && typeof applyOperationalClaimHighlightsByRaw_ === 'function') {
+      applyOperationalClaimHighlightsByRaw_(ss, highlightRows, buildHeaderIndex_(highlightHeader), 'SUB');
+    }
+  } catch (eHi) {
+    try { logLine_('SUB_HIGHLIGHT_WARN', 'Operational highlight refresh failed', '', String(eHi), 'WARN'); } catch (eHi2) {}
+  }
+  return out;
 }
 
 /** Try-lock wrapper for SUB (skip when busy). */
@@ -1715,6 +1781,8 @@ function __buildSubRawIndex06a_(values) {
   const idxALA = idxOfAny(['activity_log_aging', 'activity log aging', 'ala']);
   const idxLastStatus = idxOfAny(['claim_last_status_name', 'last_status', 'last status']);
   const idxSc = idxOfAny(['repairer_location_store_name', 'sc_name', 'service center', 'service_center']);
+  const idxTat = idxOfAny(['days_aging_from_submission', 'tat']);
+  const idxDeviceCheckinOption = idxOfAny(['device_checkin_option_name', 'device checkin option name', 'service type']);
 
   // NEW: fields requested for SUB enrichment
   const idxClaimLastUpd = idxOfAny(['claim_last_updated_datetime', 'claim last updated datetime', 'last_status_date', 'last status date']);
@@ -1763,6 +1831,8 @@ function __buildSubRawIndex06a_(values) {
       activity_log_aging: idxALA >= 0 ? row[idxALA] : '',
       last_status: idxLastStatus >= 0 ? row[idxLastStatus] : '',
       sc_name: idxSc >= 0 ? row[idxSc] : '',
+      tat: idxTat >= 0 ? row[idxTat] : '',
+      device_checkin_option_name: idxDeviceCheckinOption >= 0 ? row[idxDeviceCheckinOption] : '',
       claim_last_updated_datetime: idxClaimLastUpd >= 0 ? row[idxClaimLastUpd] : '',
       activity_log: act,
       activity_log_datetime: idxActLogDt >= 0 ? row[idxActLogDt] : '',
@@ -1804,6 +1874,8 @@ function __buildSubRawIndex06a_(values) {
       activity_log_aging: idxALA,
       last_status: idxLastStatus,
       sc_name: idxSc,
+      tat: idxTat,
+      device_checkin_option_name: idxDeviceCheckinOption,
       claim_last_updated_datetime: idxClaimLastUpd,
       activity_log: idxActLog,
       last_activity_log: idxLastActLog,
@@ -1896,17 +1968,7 @@ function __updateOperationalSheetsFromRaw06a_(ss, sheetNames, rawMap, ctx) {
       continue;
     }
 
-    // Mandatory: ensure Status Type header exists (append right).
-    try {
-      const hdr0 = sh.getRange(1, 1, 1, lastCol).getValues()[0].map(h => String(h || '').trim());
-      const norm0 = hdr0.map(h => h.toLowerCase());
-      if (norm0.indexOf('status type') < 0 && !isDryRun_()) {
-        sh.getRange(1, lastCol + 1).setValue('Status Type');
-        lastCol++;
-      }
-    } catch (e0) {}
-
-    // Re-read after possible header append.
+    // Re-read headers. Deprecated Status Type is intentionally not recreated.
     lastRow = sh.getLastRow();
     lastCol = sh.getLastColumn();
     const all = sh.getRange(1, 1, lastRow, lastCol).getValues();
@@ -1932,7 +1994,8 @@ function __updateOperationalSheetsFromRaw06a_(ss, sheetNames, rawMap, ctx) {
     const idxSc = idxOfAny(['service center', 'repairer_location_store_name', 'sc_name', 'service_center']);
     const idxActLog = idxOfAny(['activity log', 'activity_log', 'last activity log', 'last_activity_log']);
     const idxLastStatusDate = idxOfAny(['last status date', 'last_status_date', 'claim_last_updated_datetime', 'claim last updated datetime']);
-    const idxStatusType = idxOfAny(['status type']);
+    const idxTat = idxOfAny(['tat', 'days_aging_from_submission']);
+    const idxServiceType = idxOfAny(['service type', 'device_checkin_option_name']);
     const idxType = isScSheet ? idxOfAny(['type']) : -1;
     const idxSubmissionDate = idxOfAny(['submission date', 'claim_submitted_datetime', 'claim_submission_date', 'claim submitted datetime', 'submission_date']);
     const idxSubmissionMonth = idxOfAny(['submission by month', 'submission_month']);
@@ -1968,7 +2031,8 @@ function __updateOperationalSheetsFromRaw06a_(ss, sheetNames, rawMap, ctx) {
     const outSc = idxSc >= 0 ? new Array(numDataRows) : null;
     const outActLog = idxActLog >= 0 ? new Array(numDataRows) : null;
     const outLastStatusDate = idxLastStatusDate >= 0 ? new Array(numDataRows) : null;
-    const outStatusType = idxStatusType >= 0 ? new Array(numDataRows) : null;
+    const outTat = idxTat >= 0 ? new Array(numDataRows) : null;
+    const outServiceType = idxServiceType >= 0 ? new Array(numDataRows) : null;
     const outType = (idxType >= 0) ? new Array(numDataRows) : null;
     const outSubmissionDate = idxSubmissionDate >= 0 ? new Array(numDataRows) : null;
     const outSubmissionMonth = idxSubmissionMonth >= 0 ? new Array(numDataRows) : null;
@@ -1998,7 +2062,8 @@ function __updateOperationalSheetsFromRaw06a_(ss, sheetNames, rawMap, ctx) {
       if (outSc) outSc[o] = [row[idxSc]];
       if (outActLog) outActLog[o] = [row[idxActLog]];
       if (outLastStatusDate) outLastStatusDate[o] = [row[idxLastStatusDate]];
-      if (outStatusType) outStatusType[o] = [row[idxStatusType]];
+      if (outTat) outTat[o] = [row[idxTat]];
+      if (outServiceType) outServiceType[o] = [row[idxServiceType]];
       if (outType) outType[o] = [row[idxType]];
       if (outSubmissionDate) outSubmissionDate[o] = [row[idxSubmissionDate]];
       if (outSubmissionMonth) outSubmissionMonth[o] = [row[idxSubmissionMonth]];
@@ -2035,6 +2100,15 @@ function __updateOperationalSheetsFromRaw06a_(ss, sheetNames, rawMap, ctx) {
         const srcSubDate = isNonEmpty(rec.claim_submitted_datetime) ? rec.claim_submitted_datetime : (idxSubmissionDate >= 0 ? row[idxSubmissionDate] : '');
         outSubmissionMonth[o] = [__formatSubmissionMonthSub06a_(srcSubDate)];
       }
+      if (outTat) {
+        outTat[o] = [name === 'Submission' && typeof diffDaysDecimalFromNow_ === 'function'
+          ? diffDaysDecimalFromNow_(rec.claim_submitted_datetime)
+          : (isNonEmpty(rec.tat) ? rec.tat : row[idxTat])];
+      }
+      if (outServiceType) {
+        const rawServiceType = isNonEmpty(rec.device_checkin_option_name) ? rec.device_checkin_option_name : row[idxServiceType];
+        outServiceType[o] = [(typeof resolveServiceTypeFromStatus_ === 'function') ? resolveServiceTypeFromStatus_(name, rawServiceType, rec.last_status) : rawServiceType];
+      }
       if (outStoreName && isNonEmpty(rec.store_name)) outStoreName[o] = [rec.store_name];
       if (outPaName && isNonEmpty(rec.pa_name)) outPaName[o] = [rec.pa_name];
       if (outSpaName && isNonEmpty(rec.spa_name)) outSpaName[o] = [rec.spa_name];
@@ -2053,11 +2127,6 @@ function __updateOperationalSheetsFromRaw06a_(ss, sheetNames, rawMap, ctx) {
       // Do NOT reset Update Status/Timestamp/Status/Remarks on Last Status change in-place.
       // Reset now only happens when a claim row is relocated across operational sheets.
       void prevLast; void nextLast;
-
-      if (outStatusType) {
-        const st = String(isNonEmpty(rec.last_status) ? rec.last_status : row[idxLast] || '').trim();
-        outStatusType[o] = [__getStatusTypeSub06a_(st)];
-      }
 
       // SC sheet Type auto-fill (only when header exists)
       if (outType) {
@@ -2083,8 +2152,9 @@ function __updateOperationalSheetsFromRaw06a_(ss, sheetNames, rawMap, ctx) {
       writeCol(idxSc, outSc);
       writeCol(idxActLog, outActLog);
       writeCol(idxLastStatusDate, outLastStatusDate);
-      writeCol(idxStatusType, outStatusType);
       writeCol(idxType, outType);
+      writeCol(idxTat, outTat);
+      writeCol(idxServiceType, outServiceType);
       // Clear stale checkbox/dropdown DV FIRST; otherwise writing date/text into checkbox
       // cells may be coerced into blank/boolean values.
       if (idxSubmissionDate >= 0) {

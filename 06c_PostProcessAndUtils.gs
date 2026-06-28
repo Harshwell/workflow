@@ -897,20 +897,22 @@ function sanitizeProblematicDataValidations06_(ss, pic) {
     } catch (e0) {}
   });
 
-  // 2) EV-Bike: clear DV on Last Status to avoid validation violations when writing statuses
-  try {
-    const ev = ss.getSheetByName('EV-Bike');
-    if (!ev) return;
-    const lc = ev.getLastColumn();
-    const mr = ev.getMaxRows();
-    if (lc <= 0 || mr <= 1) return;
+  // 2) EV-Bike/Doss: clear DV on Last Status to avoid validation violations when writing statuses
+  ['EV-Bike', 'Doss'].forEach(function(sheetName) {
+    try {
+      const ev = ss.getSheetByName(sheetName);
+      if (!ev) return;
+      const lc = ev.getLastColumn();
+      const mr = ev.getMaxRows();
+      if (lc <= 0 || mr <= 1) return;
 
-    const headerEv = ev.getRange(1, 1, 1, lc).getValues()[0];
-    const idxLastStatusEv = __findHeaderIndexFlexible06_(headerEv, 'Last Status');
-    if (idxLastStatusEv !== -1) {
-      ev.getRange(2, idxLastStatusEv + 1, mr - 1, 1).clearDataValidations();
-    }
-  } catch (e1) {}
+      const headerEv = ev.getRange(1, 1, 1, lc).getValues()[0];
+      const idxLastStatusEv = __findHeaderIndexFlexible06_(headerEv, 'Last Status');
+      if (idxLastStatusEv !== -1) {
+        ev.getRange(2, idxLastStatusEv + 1, mr - 1, 1).clearDataValidations();
+      }
+    } catch (e1) {}
+  });
 }
 
 /**
@@ -919,8 +921,6 @@ function sanitizeProblematicDataValidations06_(ss, pic) {
  * - Status (values)
  * - OR (checkbox + values)
  * - Timestamp (values)
- * - Update Status Asso + Timestamp Asso
- * - Update Status Admin + Timestamp Admin
  *
  * Update Status rich text is handled by applyUpdateStatusRichTextToOperational_().
  */
@@ -939,11 +939,11 @@ function restoreOpsFieldsFromRawBackup_(ss, rawSheet, headerIndexRaw, pic) {
   const idxUpdateRaw = headerIndexRaw[h.updateStatus];
   const idxRemarksRaw = (typeof idxAny_ === 'function') ? idxAny_(headerIndexRaw, ['Remarks','Remark','remarks','remark']) : (headerIndexRaw['Remarks'] != null ? headerIndexRaw['Remarks'] : null);
 
-  // Manual tail columns (carry-forward / restore)
-  const idxUpdateAssoRaw = headerIndexRaw['Update Status Asso'];
-  const idxTsAssoRaw = headerIndexRaw['Timestamp Asso'];
-  const idxUpdateAdminRaw = headerIndexRaw['Update Status Admin'];
-  const idxTsAdminRaw = headerIndexRaw['Timestamp Admin'];
+  // Deprecated Asso/Admin tail fields are no longer restored.
+  const idxUpdateAssoRaw = null;
+  const idxTsAssoRaw = null;
+  const idxUpdateAdminRaw = null;
+  const idxTsAdminRaw = null;
 
   const n = rawSheet.getLastRow() - 1;
   if (n <= 0) return;
@@ -988,10 +988,10 @@ function restoreOpsFieldsFromRawBackup_(ss, rawSheet, headerIndexRaw, pic) {
     const idxUpdateOps = __findHeaderIndexFlexible06_(header, 'Update Status');
     const idxRemarksOps = __findHeaderIndexFlexible06_(header, 'Remarks');
 
-    const idxUpAssoOps = __findHeaderIndexFlexible06_(header, 'Update Status Asso');
-    const idxTsAssoOps = __findHeaderIndexFlexible06_(header, 'Timestamp Asso');
-    const idxUpAdminOps = __findHeaderIndexFlexible06_(header, 'Update Status Admin');
-    const idxTsAdminOps = __findHeaderIndexFlexible06_(header, 'Timestamp Admin');
+    const idxUpAssoOps = -1;
+    const idxTsAssoOps = -1;
+    const idxUpAdminOps = -1;
+    const idxTsAdminOps = -1;
 
     const lr = sh.getLastRow();
     if (lr <= 1) return;
@@ -1111,10 +1111,10 @@ function buildRawCarryForwardMap_(rawSheet, headerIndexRaw) {
 
   // Custom tail columns (manual)
   const idxAssoc = (headerIndexRaw[h.associate] != null) ? headerIndexRaw[h.associate] : headerIndexRaw['Associate'];
-  const idxUpdateAsso = headerIndexRaw['Update Status Asso'];
-  const idxTsAsso = headerIndexRaw['Timestamp Asso'];
-  const idxUpdateAdmin = headerIndexRaw['Update Status Admin'];
-  const idxTsAdmin = headerIndexRaw['Timestamp Admin'];
+  const idxUpdateAsso = null;
+  const idxTsAsso = null;
+  const idxUpdateAdmin = null;
+  const idxTsAdmin = null;
 
   const lr = rawSheet.getLastRow();
   if (lr < 2 || idxClaim == null) return { map: Object.create(null), count: 0 };
@@ -1176,10 +1176,10 @@ function applyCarryForwardToRawValues_(rawValues, headerIndexRaw, carry) {
   const idxStatus = headerIndexRaw[h.status];
   const idxRemarks = (typeof idxAny_ === 'function') ? idxAny_(headerIndexRaw, ['Remarks','Remark','remarks','remark']) : (headerIndexRaw['Remarks'] != null ? headerIndexRaw['Remarks'] : null);
 
-  const idxUpdateAsso = headerIndexRaw['Update Status Asso'];
-  const idxTsAsso = headerIndexRaw['Timestamp Asso'];
-  const idxUpdateAdmin = headerIndexRaw['Update Status Admin'];
-  const idxTsAdmin = headerIndexRaw['Timestamp Admin'];
+  const idxUpdateAsso = null;
+  const idxTsAsso = null;
+  const idxUpdateAdmin = null;
+  const idxTsAdmin = null;
 
   for (let i = 0; i < rawValues.length; i++) {
     const row = rawValues[i];
@@ -1558,6 +1558,25 @@ function __removeHeaderColumns06_(sh, headersToRemove, keepFirstByHeader) {
   return toDelete.length;
 }
 
+function __renameHeaderColumns06_(sh, renameMap) {
+  if (!sh || DRY_RUN) return 0;
+  const lc = sh.getLastColumn();
+  if (lc < 1) return 0;
+  const hdr = sh.getRange(1, 1, 1, lc).getValues()[0].map(v => String(v || '').trim());
+  const map = renameMap || {};
+  let touched = 0;
+  for (let i = 0; i < hdr.length; i++) {
+    const key = __normalizeHeaderText06_(hdr[i]);
+    const next = map[key];
+    if (!next || hdr[i] === next) continue;
+    try {
+      sh.getRange(1, i + 1).setValue(next);
+      touched++;
+    } catch (e) {}
+  }
+  return touched;
+}
+
 function __fillBranchFromServiceCenter06_(sh) {
   if (!sh || DRY_RUN) return 0;
   const lr = sh.getLastRow();
@@ -1621,7 +1640,7 @@ function __normalizeSubmissionByMonthColumn06_(sh) {
 
 function enforceOperationalLayout06_(ss) {
   if (!ss || DRY_RUN) return { touched: 0 };
-  const monthSheets = ['Submission', 'Ask Detail', 'Start', 'SC - Farhan', 'SC - Meilani', 'SC - Meindar', 'Finish', 'PO', 'Exclusion'];
+  const monthSheets = ['Submission', 'Ask Detail', 'Start', 'SC - Farhan', 'SC - Meilani', 'SC - Meindar', 'Finish', 'Claim Expired', 'PO', 'Exclusion'];
   let touched = 0;
   for (let i = 0; i < monthSheets.length; i++) {
     const sh = ss.getSheetByName(monthSheets[i]);
@@ -1629,21 +1648,40 @@ function enforceOperationalLayout06_(ss) {
     if (__ensureHeaderAtColumn06_(sh, 'Submission by Month', 2)) touched++;
     touched += __normalizeSubmissionByMonthColumn06_(sh);
   }
-  ['Start', 'Finish'].forEach(name => {
+  ['Start', 'Finish', 'Claim Expired'].forEach(name => {
     const sh = ss.getSheetByName(name);
     if (!sh) return;
     if (__ensureHeaderAtColumn06_(sh, 'Service Center PIC', 14)) touched++;
   });
 
-  const submission = ss.getSheetByName('Submission');
-  if (submission) {
-    touched += __removeHeaderColumns06_(submission, ['Start Date', 'End Date', 'Details', 'Submission Date'], { 'Submission Date': true });
-  }
+  const deprecatedEverywhere = ['DB', 'Status Type', 'Update Status Asso', 'Timestamp Asso', 'Update Status Admin', 'Timestamp Admin'];
+  const financeExcluded = ['Claim Amount', 'Claim Own Risk Amount', 'Nett Claim Amount', '% Approval'];
+  const evDossB2bDeprecated = ['Status Type', 'Start Date', 'End Date', 'Details'];
+  const stageRename = {
+    'Aging Position': 'Stage Aging',
+    'Aging Post.': 'Stage Aging',
+    'Aging Post': 'Stage Aging'
+  };
 
-  ['Ask Detail', 'Start', 'Finish'].forEach(function(name) {
+  const allCleanupSheets = ['Submission', 'Ask Detail', 'OR - OLD', 'Start', 'Finish', 'Claim Expired', 'SC - Farhan', 'SC - Meilani', 'SC - Meindar', 'SC - Unmapped', 'PO', 'Exclusion', 'B2B', 'EV-Bike', 'Doss', 'Special Case'];
+  allCleanupSheets.forEach(function(name) {
     const sh = ss.getSheetByName(name);
     if (!sh) return;
-    touched += __removeHeaderColumns06_(sh, ['Update Status Asso', 'Timestamp Asso', 'Update Status Admin', 'Timestamp Admin'], {});
+    touched += __removeHeaderColumns06_(sh, deprecatedEverywhere, {});
+    touched += __renameHeaderColumns06_(sh, stageRename);
+  });
+
+  ['Submission', 'Ask Detail', 'Start', 'Finish', 'Claim Expired'].forEach(function(name) {
+    const sh = ss.getSheetByName(name);
+    if (!sh) return;
+    touched += __removeHeaderColumns06_(sh, financeExcluded, {});
+    if (name === 'Submission') touched += __removeHeaderColumns06_(sh, ['Start Date', 'End Date', 'Details', 'Submission Date'], { 'Submission Date': true });
+  });
+
+  ['EV-Bike', 'Doss', 'B2B'].forEach(function(name) {
+    const sh = ss.getSheetByName(name);
+    if (!sh) return;
+    touched += __removeHeaderColumns06_(sh, evDossB2bDeprecated, {});
   });
 
   const start = ss.getSheetByName('Start');
@@ -3820,6 +3858,7 @@ function runSelfCheck_() {
     'processB2B_',
     'processSpecialCase_',
     'processEVBike_',
+    'processDoss_',
     'sortOperationalSheetsPreserveFilter06b_',
     'sortOperationalSheetPreserveFilter06c_'
   ];
@@ -4000,8 +4039,8 @@ function __appendSubmissionFromRawIfMissing06e_(ss, rawMap, rawHdrIdx, dbTag) {
   }
 
   const idxSubDate = idxOf('submission date');
+  const idxSubMonth = idxOf('submission by month');
   const idxDbLink = idxOf('db link');
-  const idxDb = idxOf('db');
   const idxPartner = idxOf('partner name');
   const idxIns = idxOf('insurance');
   const idxDeviceType = idxOf('device type');
@@ -4010,6 +4049,8 @@ function __appendSubmissionFromRawIfMissing06e_(ss, rawMap, rawHdrIdx, dbTag) {
   const idxSc = idxOf('service center');
   const idxLSA = idxOf('last status aging');
   const idxALA = idxOf('activity log aging');
+  const idxTat = idxOf('tat');
+  const idxActLog = idxOf('activity log');
 
   const flow = (typeof CONFIG === 'object' && CONFIG && CONFIG.subFlow) ? CONFIG.subFlow : null;
   let dbValue = String(dbTag || '').trim().toUpperCase();
@@ -4050,6 +4091,11 @@ function __appendSubmissionFromRawIfMissing06e_(ss, rawMap, rawHdrIdx, dbTag) {
     const row = new Array(lastCol).fill('');
 
     if (idxSubDate >= 0) row[idxSubDate] = rec.claim_submitted_datetime || '';
+    if (idxSubMonth >= 0) {
+      row[idxSubMonth] = (typeof formatSubmissionMonthShort_ === 'function')
+        ? formatSubmissionMonthShort_(rec.claim_submitted_datetime)
+        : '';
+    }
     row[idxClaim] = cn;
 
     if (idxDbLink >= 0) {
@@ -4057,8 +4103,6 @@ function __appendSubmissionFromRawIfMissing06e_(ss, rawMap, rawHdrIdx, dbTag) {
       const url = String(rec.dashboard_link || '').trim() || ((typeof buildDashboardLinkFromClaimNumber_ === 'function') ? buildDashboardLinkFromClaimNumber_(cn) : '');
       if (url) richLinks.push({ rowOffset: rowsToAppend.length, url: url });
     }
-    if (idxDb >= 0) row[idxDb] = dbValue;
-
     if (idxPartner >= 0) row[idxPartner] = rec.partner_name || '';
     if (idxIns >= 0) row[idxIns] = rec.insurance || '';
     if (idxDeviceType >= 0) row[idxDeviceType] = rec.device_type || '';
@@ -4067,6 +4111,8 @@ function __appendSubmissionFromRawIfMissing06e_(ss, rawMap, rawHdrIdx, dbTag) {
     if (idxSc >= 0) row[idxSc] = rec.sc_name || '';
     if (idxLSA >= 0) row[idxLSA] = rec.last_status_aging || '';
     if (idxALA >= 0) row[idxALA] = rec.activity_log_aging || '';
+    if (idxTat >= 0) row[idxTat] = (typeof diffDaysDecimalFromNow_ === 'function') ? diffDaysDecimalFromNow_(rec.claim_submitted_datetime) : (rec.tat || '');
+    if (idxActLog >= 0) row[idxActLog] = rec.activity_log || '';
 
     rowsToAppend.push(row);
     existing.add(cn);

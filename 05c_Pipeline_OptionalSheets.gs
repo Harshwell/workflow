@@ -320,25 +320,7 @@ function processB2B_(ss, rawValues, headerIndexRaw, pic) { // `pic` kept for bac
   let header = headerRow;
   let idxH = buildHeaderIndex_(header);
 
-  // Ensure mandatory Status Type only when this sheet schema includes Last Status.
-  if (idxH['Last Status'] != null) {
-    header = __ensureAppendColumnIfMissing05c_(sh, header, 'Status Type');
-    idxH = buildHeaderIndex_(header);
-  }
-  // Schema guard + self-heal for required computed columns.
-  try {
-    const need = ['Claim Number','Start Date','End Date','Details'].map(__normalizeHeaderText05c_);
-    const missing = need.filter(n => idxH[n] == null);
-    if (missing.length) {
-      for (let mi = 0; mi < missing.length; mi++) {
-        header = __ensureAppendColumnIfMissing05c_(sh, header, missing[mi]);
-      }
-      idxH = buildHeaderIndex_(header);
-      if (typeof logLine_ === 'function') {
-        logLine_('WARN', 'B2B_SCHEMA_HEAL', 'Auto-added columns: ' + missing.join(', '), '', '');
-      }
-    }
-  } catch (e) {}
+  // Deprecated B2B columns are cleaned by enforceOperationalLayout06_; do not recreate them here.
 
 
   const dbLinkCol0 = idxH['DB Link'];
@@ -378,10 +360,6 @@ function processB2B_(ss, rawValues, headerIndexRaw, pic) { // `pic` kept for bac
     set('DB Link', dbUrl ? 'LINK' : '');
     dbUrls.push(dbUrl);
 
-    const src = String((idxSource != null) ? row[idxSource] : '' || '').toUpperCase();
-    const dbFromClaim = computeDbValueFromClaimNumber05c_(claimUp);
-    set('DB', dbFromClaim || ((src.indexOf('OLD') > -1) ? 'OLD' : (src.indexOf('NEW') > -1 ? 'NEW' : (src || ''))));
-
     set('Partner Name', (idxBP != null) ? row[idxBP] : '');
     set('Insurance', mapInsuranceShort_((idxInsPartner != null) ? row[idxInsPartner] : ''));
     set('Device Type', (idxDevice != null) ? row[idxDevice] : '');
@@ -395,7 +373,6 @@ function processB2B_(ss, rawValues, headerIndexRaw, pic) { // `pic` kept for bac
       const d0 = __parseClaimLastUpdatedDatetime05c_((idxClaimLastUpdated != null) ? row[idxClaimLastUpdated] : null);
       set('Last Status Date', d0 ? d0 : '');
     }
-    if (idxH['Status Type'] != null) set('Status Type', __getStatusType05c_(lastStatus));
 
     const lsa = (idxLSA != null) ? normalizeInt_(row[idxLSA]) : null;
     const ala = (idxALA != null) ? normalizeInt_(row[idxALA]) : null;
@@ -435,7 +412,6 @@ function processB2B_(ss, rawValues, headerIndexRaw, pic) { // `pic` kept for bac
       const sClaim = subIdx['Claim Number'];
       const sPartner = (subIdx['Partner Name'] != null) ? subIdx['Partner Name'] : subIdx['Partner'];
       const sSubDate = subIdx['Submission Date'];
-      const sDb = subIdx['DB'];
       const sDbLink = subIdx['DB Link'];
       const sInsurance = subIdx['Insurance'];
       const sDevice = subIdx['Device Type'];
@@ -464,13 +440,11 @@ function processB2B_(ss, rawValues, headerIndexRaw, pic) { // `pic` kept for bac
           const set = (k, v) => { const j = idxH[k]; if (j != null) out[j] = v; };
           set('Submission Date', (sSubDate != null) ? r[sSubDate] : '');
           set('Claim Number', claim);
-          set('DB', (sDb != null) ? r[sDb] : computeDbValueFromClaimNumber05c_(claimUp));
           set('Partner Name', (sPartner != null) ? r[sPartner] : '');
           set('Insurance', (sInsurance != null) ? r[sInsurance] : '');
           set('Device Type', (sDevice != null) ? r[sDevice] : '');
           set('Service Center', (sSc != null) ? r[sSc] : '');
           set('Last Status', lastStatus);
-          if (idxH['Status Type'] != null) set('Status Type', __getStatusType05c_(lastStatus));
           const dbUrl = (sDbLink != null) ? r[sDbLink] : '';
           set('DB Link', dbUrl ? 'LINK' : '');
           dbUrls.push(dbUrl);
@@ -651,11 +625,6 @@ function processSpecialCase_(ss, rawValues, headerIndexRaw, pic) { // `pic` kept
     }
   } catch (eDrop) {}
 
-  // Ensure mandatory Status Type only when this sheet schema includes Last Status.
-  if (idxH['Last Status'] != null) {
-    header = __ensureAppendColumnIfMissing05c_(sh, header, 'Status Type');
-    idxH = buildHeaderIndex_(header);
-  }
   // Schema guard (minimal). Legacy columns (Start Date/End Date/Details) are optional.
   try {
     const need = ['Claim Number'].map(__normalizeHeaderText05c_);
@@ -772,7 +741,7 @@ function processSpecialCase_(ss, rawValues, headerIndexRaw, pic) { // `pic` kept
 
   // Controlled columns (UPSERT should not wipe other manual columns)
   const controlledNames = [
-    'Submission Date','Claim Number','DB','DB Link','Partner Name','Insurance','Device Type','Last Status',
+    'Submission Date','Claim Number','DB Link','Partner Name','Insurance','Device Type','Last Status',
     'Service Center',
     // Column rename support
     'Last Status Aging','LSA',
@@ -873,10 +842,6 @@ function processSpecialCase_(ss, rawValues, headerIndexRaw, pic) { // `pic` kept
     set('Submission Date', subDate ? subDate : '');
     set('Claim Number', claimRaw);
 
-    const src = String((idxSource != null) ? row[idxSource] : '' || '').toUpperCase();
-    const dbFromClaim = computeDbValueFromClaimNumber05c_(claimKey);
-    set('DB', dbFromClaim || ((src.indexOf('OLD') > -1) ? 'OLD' : (src.indexOf('NEW') > -1 ? 'NEW' : (src || ''))));
-
     const dbUrl = ((idxDashboard != null) ? String(row[idxDashboard] || '').trim() : '') || ((typeof buildDashboardLinkFromClaimNumber_ === 'function') ? buildDashboardLinkFromClaimNumber_(claimRaw) : '');
     set('DB Link', dbUrl ? 'LINK' : '');
 
@@ -894,7 +859,6 @@ function processSpecialCase_(ss, rawValues, headerIndexRaw, pic) { // `pic` kept
       const d0 = __parseClaimLastUpdatedDatetime05c_((idxClaimLastUpdated != null) ? row[idxClaimLastUpdated] : null);
       set('Last Status Date', d0 ? d0 : '');
     }
-    if (idxH['Status Type'] != null) set('Status Type', __getStatusType05c_(lastStatus));
 
     const lsa = (idxLSA != null) ? normalizeInt_(row[idxLSA]) : null;
     const ala = (idxALA != null) ? normalizeInt_(row[idxALA]) : null;
@@ -1137,13 +1101,17 @@ rowsOut.push(out);
 }
 
 /** Optional: EV-Bike — enabled by default. Set RUNTIME.enableEvBike = false to disable. */
-function processEVBike_(ss, rawValues, headerIndexRaw, pic) { // `pic` kept for backward compatibility
+function processEVBike_(ss, rawValues, headerIndexRaw, pic, opts) { // `pic` kept for backward compatibility
   // Default ON. Only skip when explicitly disabled.
   if (typeof RUNTIME !== 'undefined' && RUNTIME && RUNTIME.enableEvBike === false) return 0;
   if (typeof applyRawHeaderAliases_ === 'function') headerIndexRaw = applyRawHeaderAliases_(headerIndexRaw);
 
   const h = CONFIG.headers;
-  const sh = ss.getSheetByName('EV-Bike');
+  opts = opts || {};
+  const targetSheetName = String(opts.sheetName || 'EV-Bike').trim();
+  const targetClaimToken = String(opts.claimToken || 'VVMAR').trim().toUpperCase();
+  const logLabel = targetSheetName === 'Doss' ? 'DOSS_METRICS' : 'EVBIKE_METRICS';
+  const sh = ss.getSheetByName(targetSheetName);
   if (!sh) return 0;
 
   const idxClaim = headerIndexRaw[h.claimNumber];
@@ -1187,14 +1155,11 @@ function processEVBike_(ss, rawValues, headerIndexRaw, pic) { // `pic` kept for 
     }
   } catch (eDrop) {}
 
-  // Ensure mandatory Status Type only when this sheet schema includes Last Status.
-  if (idxH['Last Status'] != null) {
-    header = __ensureAppendColumnIfMissing05c_(sh, header, 'Status Type');
-    idxH = buildHeaderIndex_(header);
-  }
   // Keep schema flexible: do not force legacy EV-Bike columns (Start Date / End Date / Details).
 
-  const patterns = (CONFIG.patterns.evBikePartners || []).map(s => String(s || '').toLowerCase());
+  const patterns = targetSheetName === 'Doss'
+    ? []
+    : (CONFIG.patterns.evBikePartners || []).map(s => String(s || '').toLowerCase());
   const computeTatFromSubmission_ = (v) => {
     const d = coerceDate_(v);
     if (!d) return '';
@@ -1230,7 +1195,10 @@ function processEVBike_(ss, rawValues, headerIndexRaw, pic) { // `pic` kept for 
           if (!c) continue;
 
           const partner = String((sPartner != null) ? r[sPartner] : '').trim().toLowerCase();
-          if (patterns.length && !patterns.some(p => p && partner.indexOf(p) > -1)) continue;
+          const claimUp = c.toUpperCase();
+          const matchPartner = patterns.some(p => p && partner.indexOf(p) > -1);
+          const matchClaim = targetClaimToken ? claimUp.indexOf(targetClaimToken) > -1 : false;
+          if (!matchPartner && !matchClaim) continue;
 
           const pol = String((sPolicy != null) ? r[sPolicy] : '').trim();
           if (pol && excludedPolicySet.has(pol)) continue;
@@ -1279,21 +1247,16 @@ function processEVBike_(ss, rawValues, headerIndexRaw, pic) { // `pic` kept for 
   for (let i = 0; i < rawValues.length; i++) {
     const row = rawValues[i];
 
-    const partner = String((idxBP != null) ? row[idxBP] : '' || '').toLowerCase();
-    if (!patterns.some(p => p && partner.indexOf(p) > -1)) continue;
-
     const claimUp = String(row[idxClaim] || '').toUpperCase();
 
     if (!claimUp) continue;
+    const partner = String((idxBP != null) ? row[idxBP] : '' || '').toLowerCase();
+    const matchPartner = patterns.some(p => p && partner.indexOf(p) > -1);
+    const matchClaim = targetClaimToken ? claimUp.indexOf(targetClaimToken) > -1 : false;
+    if (!matchPartner && !matchClaim) continue;
     if (seenClaims.has(claimUp)) continue;
     seenClaims.add(claimUp);
     const lastStatus = String((idxLastStatus != null) ? row[idxLastStatus] : '' || '').trim();
-    const lastStatusKey = lastStatus.toUpperCase();
-
-    if (OPTIONAL_FLAGS.EVBIKE_SKIP_EXCLUDED_LAST_STATUSES && EXCLUDED_LAST_STATUSES.has(lastStatusKey)) {
-      evSkippedExcludedCount++;
-      continue;
-    }
 
     let pos = existingMap[claimUp];
     if (pos == null) { pos = values.length; existingMap[claimUp] = pos; }
@@ -1327,7 +1290,6 @@ function processEVBike_(ss, rawValues, headerIndexRaw, pic) { // `pic` kept for 
 
     // Optional columns if present in EV-Bike sheet schema
     set('Last Status', lastStatus);
-    if (idxH['Status Type'] != null) set('Status Type', __getStatusType05c_(lastStatus));
     evRawMatchedCount++;
   }
 
@@ -1374,7 +1336,6 @@ function processEVBike_(ss, rawValues, headerIndexRaw, pic) { // `pic` kept for 
 	      setH('Insurance', info.insurance || '');
 	      setH('Sum Insured', info.sumInsured || '');
           setH('Last Status', info.lastStatus || '');
-          if (idxH['Status Type'] != null) setH('Status Type', __getStatusType05c_(info.lastStatus || ''));
           if (idxH['TAT'] != null) setH('TAT', computeTatFromSubmission_(info.submissionDate));
 
       // DB Link handling: expect URL; display text stays 'LINK'
@@ -1423,7 +1384,7 @@ function processEVBike_(ss, rawValues, headerIndexRaw, pic) { // `pic` kept for 
     if (typeof logLine_ === 'function') {
       logLine_(
         'INFO',
-        'EVBIKE_METRICS',
+        logLabel,
         'rows=' + values.length
           + ' raw=' + evRawMatchedCount
           + ' submission_overlay=' + evSubmissionOverlayCount
@@ -1434,4 +1395,11 @@ function processEVBike_(ss, rawValues, headerIndexRaw, pic) { // `pic` kept for 
     }
   } catch (eM) {}
   return values.length;
+}
+
+function processDoss_(ss, rawValues, headerIndexRaw, pic) {
+  return processEVBike_(ss, rawValues, headerIndexRaw, pic, {
+    sheetName: 'Doss',
+    claimToken: 'DOSS'
+  });
 }

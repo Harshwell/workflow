@@ -154,6 +154,18 @@ Kalau ingin mengubah flow manual/form:
 
 ## Change impact map
 
+### Update MAIN/SUB/FORM 2026-06-29
+
+Perubahan kontrak terbaru:
+
+- `DB`, `Status Type`, `Update Status Asso`, `Timestamp Asso`, `Update Status Admin`, dan `Timestamp Admin` tidak lagi dibuat/diisi oleh writer operational.
+- `Aging Position` / `Aging Post.` dinormalisasi menjadi `Stage Aging`.
+- `Submission.TAT` dihitung lebih detail dari `claim_submitted_datetime` sampai runtime, sehingga nilai seperti `14,2` bisa muncul sesuai locale sheet.
+- `CLAIM_EXPIRE` dan `CLAIM_EXPIRE_WALKIN` masuk ke sheet `Claim Expired`.
+- `EV-Bike` menerima klaim token `VVMAR` tanpa pengecualian status; `Doss` menerima klaim token `DOSS` dengan pola writer yang sama.
+- SUB refresh ikut meng-upsert `EV-Bike` dan `Doss` dari `Raw OLD` / `Raw NEW`.
+- `Claimed Active Policies` menjadi flag prioritas tertinggi untuk highlight/note claim number.
+
 ### Jika menambah status baru
 Minimal cek:
 - `OPS_ROUTING_POLICY`

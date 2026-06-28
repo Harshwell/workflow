@@ -141,8 +141,7 @@ function runPipeline_(pic, fileIds, opts) {
   // Apply carry-forward
   applyCarryForwardToRawValues_(rawValues, headerIndexRaw, carry);
 
-  // DB classification (OLD/NEW) based on Claim Number codes (SFP/SFX/SMR => OLD; VVMAR/GADLD => NEW)
-  try { applyDbClassification06_(rawValues, headerIndexRaw, carry); } catch (eDb) { try { logLine_('WARN', 'DB classify failed', '', String(eDb), 'WARN'); } catch (e2) {} }
+  // DB classification is deprecated and no longer written.
 
   // Persist Remarks: backup from operational sheets into in-memory Raw (non-empty only).
   // This makes Main/Form idempotent even if Raw is fully rewritten.
@@ -248,24 +247,11 @@ function runPipeline_(pic, fileIds, opts) {
   pushIdx_(colsToWrite, headerIndexRaw['Q-L (Months)']);
   pushIdx_(colsToWrite, headerIndexRaw['M-L (Months)']);
   pushIdx_(colsToWrite, headerIndexRaw['M-Q (Months)']);
-  pushIdx_(colsToWrite, headerIndexRaw['Update Status Asso']);
-  pushIdx_(colsToWrite, headerIndexRaw['Timestamp Asso']);
-  pushIdx_(colsToWrite, headerIndexRaw['Update Status Admin']);
-  pushIdx_(colsToWrite, headerIndexRaw['Timestamp Admin']);
 
   pushIdx_(colsToWrite, headerIndexRaw[CONFIG.headers.orColumn]);
   if (!didFullBackup) pushIdx_(colsToWrite, headerIndexRaw[CONFIG.headers.updateStatus]);
   pushIdx_(colsToWrite, headerIndexRaw[CONFIG.headers.timestamp]);
   pushIdx_(colsToWrite, headerIndexRaw[CONFIG.headers.status]);
-
-  // DB (OLD/NEW) — write if exists in Raw header
-  const idxDbRaw = resolveRawIdx06_(headerIndexRaw, [
-    (CONFIG && CONFIG.headers && (CONFIG.headers.db || CONFIG.headers.dbClass || CONFIG.headers.dbStatus))
-      ? (CONFIG.headers.db || CONFIG.headers.dbClass || CONFIG.headers.dbStatus)
-      : null,
-    'DB'
-  ]);
-  pushIdx_(colsToWrite, idxDbRaw);
 
   // Remarks — ensure persisted in Raw Data
   const idxRemarksRaw = resolveRawIdx06_(headerIndexRaw, [
@@ -438,7 +424,7 @@ function runPipeline_(pic, fileIds, opts) {
   try { exTatCount = recomputeExclusionTat_(ss, profileName) || 0; } catch (e) {}
 
   // Optional sheets (always enabled in master)
-  let b2bCount = 0, evCount = 0, scCount = 0;
+  let b2bCount = 0, evCount = 0, dossCount = 0, scCount = 0;
   let scMetrics = {};
 
   setProgress_(0.78, 'Optional sheets…');
@@ -462,6 +448,9 @@ function runPipeline_(pic, fileIds, opts) {
   if (RUNTIME.enableEvBike) {
     try { evCount = processEVBike_(ss, rawValues, headerIndexRaw, profileName) || 0; } catch (e3) {
       try { logLine_('ERR', 'EV-Bike failed', String(e3)); } catch (e) {}
+    }
+    try { dossCount = (typeof processDoss_ === 'function') ? (processDoss_(ss, rawValues, headerIndexRaw, profileName) || 0) : 0; } catch (e4) {
+      try { logLine_('ERR', 'Doss failed', String(e4)); } catch (e) {}
     }
   }
 
@@ -507,7 +496,7 @@ function runPipeline_(pic, fileIds, opts) {
   } catch (eWrb) { try { logLine_('WARN', 'Weekly Report Base refresh failed', '', String(eWrb), 'WARN'); } catch (e2) {} }
   try {
     const ops = (typeof getOperationalSheetNames06b_ === 'function') ? getOperationalSheetNames06b_(profileName) : [];
-    const optional = ['B2B', 'EV-Bike', 'Special Case', 'Daily Report Base', 'Weekly Report Base'];
+    const optional = ['B2B', 'EV-Bike', 'Doss', 'Special Case', 'Daily Report Base', 'Weekly Report Base'];
     const seen = Object.create(null);
     ops.concat(optional).forEach(function(name) {
       const n = String(name || '').trim();
@@ -790,45 +779,8 @@ function normalizeInsuranceShort06_(insuranceVal) {
 }
 
 /**
- * DB classification (OLD/NEW) by Claim Number code:
- * - OLD if Claim Number contains: SFP, SFX, SMR
- * - NEW if Claim Number contains: VVMAR, GADLD
- *
- * Note:
- * - Only sets DB when a rule matches (does not clear DB for other claims).
- */
-function applyDbClassification06_(rawValues, headerIndexRaw, carry) {
-  if (!rawValues || !rawValues.length || !headerIndexRaw) return;
-
-  const idxClaim = resolveRawIdx06_(headerIndexRaw, [
-    (CONFIG && CONFIG.headers && CONFIG.headers.claimNumber) ? CONFIG.headers.claimNumber : null,
-    'claim_number',
-    'Claim Number'
-  ]);
-  const idxDb = resolveRawIdx06_(headerIndexRaw, [
-    (CONFIG && CONFIG.headers && (CONFIG.headers.db || CONFIG.headers.dbClass || CONFIG.headers.dbStatus))
-      ? (CONFIG.headers.db || CONFIG.headers.dbClass || CONFIG.headers.dbStatus)
-      : null,
-    'DB'
-  ]);
-  if (idxClaim == null || idxDb == null) return;
-
-  for (let i = 0; i < rawValues.length; i++) {
-    const row = rawValues[i];
-    const claim = String(row[idxClaim] || '').trim();
-    if (!claim) continue;
-
-    const db = computeDbValueFromClaimNumber06_(claim);
-    if (!db) continue;
-
-    // Enforce when a rule matches (even if DB was previously filled by older logic).
-    row[idxDb] = db;
-  }
-}
-
-/**
  * Enrich operational sheets (non-optional) with:
- * - Derived/Raw passthrough: DB, Partner Name, Insurance, Device Type, Service Center,
+ * - Derived/Raw passthrough: Partner Name, Insurance, Device Type, Service Center,
  *   Activity Log Aging (ALA), Last Status Aging (LSA), TAT (only if column exists)
  * - Mandatory new columns (insert if missing): Product, Device Brand, IMEI/SN,
  *   Sum Insured Amount, Claim Amount, Claim Own Risk Amount, Nett Claim Amount, % Approval
@@ -854,7 +806,6 @@ function enrichOperationalSheetsFromRaw06_(ss, rawValues, headerIndexRaw, pic, o
   if (idxClaimRaw == null) return;
 
   const rawClaimMap = buildRawClaimMap06_(rawValues, idxClaimRaw);
-  const idxDbRaw = rawIdx.idxDbRaw;
   const idxPartnerRaw = rawIdx.idxPartnerRaw;
   const idxInsuranceRaw = rawIdx.idxInsuranceRaw;
   const idxDeviceTypeRaw = rawIdx.idxDeviceTypeRaw;
@@ -888,19 +839,22 @@ function enrichOperationalSheetsFromRaw06_(ss, rawValues, headerIndexRaw, pic, o
   const fmt = _fmt06_();
   const moneyFmt = fmt && fmt.MONEY0 ? fmt.MONEY0 : '#,##0';
   const pctFmt = '0%';
+  const financeExcludedSheets = new Set(['Submission', 'Ask Detail', 'Start', 'Finish', 'Claim Expired']);
 
-  const mandatoryOpsHeaders = [
+  const mandatoryBaseHeaders = [
     'Product',
     'Device Brand',
     'IMEI/SN',
+    'Buss. Category',
+    'PM Name',
+    'APM Name'
+  ];
+  const mandatoryFinanceHeaders = [
     'Sum Insured Amount',
     'Claim Amount',
     'Claim Own Risk Amount',
     'Nett Claim Amount',
-    '% Approval',
-    'Buss. Category',
-    'PM Name',
-    'APM Name'
+    '% Approval'
   ];
 
   sheets.forEach(sheetName => {
@@ -912,12 +866,13 @@ function enrichOperationalSheetsFromRaw06_(ss, rawValues, headerIndexRaw, pic, o
 
     // 2026 spec: do NOT add Update Status/Timestamp columns to Ask Detail / Start / Finish.
 
-    // Ensure mandatory columns everywhere
-    // Mandatory (new): Status Type
-    try { ensureHeadersAtEnd06_(sh, ['Status Type']); } catch (e) {}
+    // Ensure mandatory columns. Deprecated DB/Status Type columns are intentionally not recreated.
     try { ensureHeadersAtEnd06_(sh, ['Submission by Month']); } catch (e) {}
-    try { ensureHeadersAtEnd06_(sh, mandatoryOpsHeaders); } catch (e) {}
-    if (sheetName === 'Start' || sheetName === 'Finish') {
+    try { ensureHeadersAtEnd06_(sh, mandatoryBaseHeaders); } catch (e) {}
+    if (!financeExcludedSheets.has(sheetName)) {
+      try { ensureHeadersAtEnd06_(sh, mandatoryFinanceHeaders); } catch (e) {}
+    }
+    if (sheetName === 'Start' || sheetName === 'Finish' || sheetName === 'Claim Expired') {
       try { ensureHeadersAtEnd06_(sh, ['Service Type']); } catch (e) {}
     }
 
@@ -933,7 +888,6 @@ function enrichOperationalSheetsFromRaw06_(ss, rawValues, headerIndexRaw, pic, o
     const claims = sh.getRange(2, idxClaimOps + 1, rowCount, 1).getValues();
 
     // Resolve ops columns (fill only if exists)
-    const idxDbOps = resolveOpsColIdx06_(hidx, ['DB']);
     const idxPartnerOps = resolveOpsColIdx06_(hidx, ['Partner Name']);
     const idxInsuranceOps = resolveOpsColIdx06_(hidx, ['Insurance']);
     const idxDeviceTypeOps = resolveOpsColIdx06_(hidx, ['Device Type']);
@@ -951,7 +905,6 @@ function enrichOperationalSheetsFromRaw06_(ss, rawValues, headerIndexRaw, pic, o
     const idxNettOps = resolveOpsColIdx06_(hidx, ['Nett Claim Amount']);
     const idxApprovalOps = resolveOpsColIdx06_(hidx, ['% Approval']);
     const idxLastStatusOps = resolveOpsColIdx06_(hidx, ['Last Status', (CONFIG && CONFIG.headers && CONFIG.headers.lastStatus) ? CONFIG.headers.lastStatus : null, 'last_status']);
-    const idxStatusTypeOps = resolveOpsColIdx06_(hidx, ['Status Type']);
     const idxSubmissionMonthOps = resolveOpsColIdx06_(hidx, ['Submission by Month']);
     const idxServiceCenterPicOps = resolveOpsColIdx06_(hidx, ['Service Center PIC']);
     const idxActivityLogOps = resolveOpsColIdx06_(hidx, ['Activity Log']);
@@ -959,7 +912,7 @@ function enrichOperationalSheetsFromRaw06_(ss, rawValues, headerIndexRaw, pic, o
     const idxBusinessCategoryOps = resolveOpsColIdx06_(hidx, ['Buss. Category']);
     const idxPmOps = resolveOpsColIdx06_(hidx, ['PM Name']);
     const idxApmOps = resolveOpsColIdx06_(hidx, ['APM Name']);
-    const idxAgingPostOps = resolveOpsColIdx06_(hidx, ['Aging Post.']);
+    const idxAgingPostOps = resolveOpsColIdx06_(hidx, ['Stage Aging', 'Aging Position', 'Aging Post.', 'Aging Post']);
     const idxServiceTypeOps = resolveOpsColIdx06_(hidx, ['Service Type']);
 
 
@@ -969,7 +922,6 @@ function enrichOperationalSheetsFromRaw06_(ss, rawValues, headerIndexRaw, pic, o
 
     // Build column outputs
     const colOut = (idx) => (idx === -1 ? null : new Array(rowCount));
-    const outDb = colOut(idxDbOps);
     const outPartner = colOut(idxPartnerOps);
     const outInsurance = colOut(idxInsuranceOps);
     const outDeviceType = colOut(idxDeviceTypeOps);
@@ -986,7 +938,6 @@ function enrichOperationalSheetsFromRaw06_(ss, rawValues, headerIndexRaw, pic, o
     const outOwnRisk = colOut(idxOwnRiskOps);
     const outNett = colOut(idxNettOps);
     const outApproval = colOut(idxApprovalOps);
-    const outStatusType = colOut(idxStatusTypeOps);
     const outSubmissionMonth = colOut(idxSubmissionMonthOps);
     const outServiceCenterPic = colOut(idxServiceCenterPicOps);
     const outActivityLog = colOut(idxActivityLogOps);
@@ -1003,8 +954,6 @@ function enrichOperationalSheetsFromRaw06_(ss, rawValues, headerIndexRaw, pic, o
 
       const rawGet = (idx) => (rawRow && idx != null ? rawRow[idx] : '');
 
-      const dbComputed = computeDbValueFromClaimNumber06_(claim);
-      if (outDb) outDb[r] = [ (dbComputed || (idxDbRaw != null ? rawGet(idxDbRaw) : '')) ];
       if (outPartner) outPartner[r] = [ idxPartnerRaw != null ? rawGet(idxPartnerRaw) : '' ];
       if (outInsurance) outInsurance[r] = [ idxInsuranceRaw != null ? normalizeInsuranceShort06_(rawGet(idxInsuranceRaw)) : '' ];
       if (outDeviceType) outDeviceType[r] = [ idxDeviceTypeRaw != null ? rawGet(idxDeviceTypeRaw) : '' ];
@@ -1012,7 +961,13 @@ function enrichOperationalSheetsFromRaw06_(ss, rawValues, headerIndexRaw, pic, o
       if (outServiceCenter) outServiceCenter[r] = [ scNameVal ];
       if (outLsa) outLsa[r] = [ idxLsaRaw != null ? rawGet(idxLsaRaw) : '' ];
       if (outAla) outAla[r] = [ idxAlaRaw != null ? rawGet(idxAlaRaw) : '' ];
-      if (outTat) outTat[r] = [ idxTatRaw != null ? rawGet(idxTatRaw) : '' ];
+      if (outTat) {
+        if (sheetName === 'Submission') {
+          outTat[r] = [ (typeof diffDaysDecimalFromNow_ === 'function') ? diffDaysDecimalFromNow_(idxSubmissionDateRaw != null ? rawGet(idxSubmissionDateRaw) : '') : (idxTatRaw != null ? rawGet(idxTatRaw) : '') ];
+        } else {
+          outTat[r] = [ idxTatRaw != null ? rawGet(idxTatRaw) : '' ];
+        }
+      }
       if (outBusinessCategory) outBusinessCategory[r] = [ idxBusinessCategoryRaw != null ? rawGet(idxBusinessCategoryRaw) : '' ];
       if (outPm) outPm[r] = [ idxPmRaw != null ? rawGet(idxPmRaw) : '' ];
       if (outApm) outApm[r] = [ idxApmRaw != null ? rawGet(idxApmRaw) : '' ];
@@ -1025,8 +980,10 @@ function enrichOperationalSheetsFromRaw06_(ss, rawValues, headerIndexRaw, pic, o
         outAgingPost[r] = [ idxAgingPostRaw != null ? rawGet(idxAgingPostRaw) : '' ];
       }
       if (outServiceType) {
-        const idxServiceRaw = (sheetName === 'Start') ? idxCheckinServiceTypeRaw : (sheetName === 'Finish' ? idxCheckoutServiceTypeRaw : null);
-        outServiceType[r] = [ idxServiceRaw != null ? rawGet(idxServiceRaw) : '' ];
+        const idxServiceRaw = (sheetName === 'Start' || sheetName === 'Finish' || sheetName === 'Claim Expired') ? idxCheckinServiceTypeRaw : null;
+        const rawServiceType = idxServiceRaw != null ? rawGet(idxServiceRaw) : '';
+        const statusForService = lastStatuses ? String((lastStatuses[r] && lastStatuses[r][0]) || '').trim() : '';
+        outServiceType[r] = [ (typeof resolveServiceTypeFromStatus_ === 'function') ? resolveServiceTypeFromStatus_(sheetName, rawServiceType, statusForService) : rawServiceType ];
       }
 
       if (outProduct) outProduct[r] = [ idxProductRaw != null ? rawGet(idxProductRaw) : '' ];
@@ -1080,11 +1037,6 @@ function enrichOperationalSheetsFromRaw06_(ss, rawValues, headerIndexRaw, pic, o
         outLastStatusDate[r] = [ dt || '' ];
       }
 
-      // Status Type (mandatory)
-      if (outStatusType) {
-        const ls = lastStatuses ? String((lastStatuses[r] && lastStatuses[r][0]) || '').trim() : '';
-        outStatusType[r] = [ getStatusTypeFromLastStatus06b_(ls) ];
-      }
       if (outSubmissionMonth) {
         const monthSource = (idxSubmissionDateRaw != null ? rawGet(idxSubmissionDateRaw) : '') || (idxSubmissionMonthRaw != null ? rawGet(idxSubmissionMonthRaw) : '');
         outSubmissionMonth[r] = [ toSubmissionMonthDate06b_(monthSource) || '' ];
@@ -1105,7 +1057,6 @@ function enrichOperationalSheetsFromRaw06_(ss, rawValues, headerIndexRaw, pic, o
       if (numFmt) rg.setNumberFormat(numFmt);
     };
 
-    setCol(idxDbOps, outDb, null);
     setCol(idxPartnerOps, outPartner, null);
     setCol(idxInsuranceOps, outInsurance, null);
     setCol(idxDeviceTypeOps, outDeviceType, null);
@@ -1130,7 +1081,6 @@ function enrichOperationalSheetsFromRaw06_(ss, rawValues, headerIndexRaw, pic, o
     const dtFmt = (flowName === 'sub') ? 'dd MMM yy, HH:mm' : 'dd MMM yy';
     setCol(idxLastStatusDateOps, outLastStatusDate, dtFmt);
 
-    setCol(idxStatusTypeOps, outStatusType, null);
     setCol(idxSubmissionMonthOps, outSubmissionMonth, 'MMM yy');
     setCol(idxServiceCenterPicOps, outServiceCenterPic, null);
     setCol(idxBusinessCategoryOps, outBusinessCategory, null);
@@ -1290,12 +1240,6 @@ function __resolveEnrichRawIndexes06b_(headerIndexRaw) {
       (CONFIG && CONFIG.headers && CONFIG.headers.claimNumber) ? CONFIG.headers.claimNumber : null,
       'claim_number',
       'Claim Number'
-    ]),
-    idxDbRaw: resolveRawIdx06_(headerIndexRaw, [
-      (CONFIG && CONFIG.headers && (CONFIG.headers.db || CONFIG.headers.dbClass || CONFIG.headers.dbStatus))
-        ? (CONFIG.headers.db || CONFIG.headers.dbClass || CONFIG.headers.dbStatus)
-        : null,
-      'DB'
     ]),
     idxPartnerRaw: resolveRawIdx06_(headerIndexRaw, [
       (CONFIG && CONFIG.headers && (CONFIG.headers.partnerName || CONFIG.headers.partner)) ? (CONFIG.headers.partnerName || CONFIG.headers.partner) : null,
