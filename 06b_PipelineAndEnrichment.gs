@@ -123,6 +123,7 @@ function runPipeline_(pic, fileIds, opts) {
   try { ensureRawRemarksColumn06b_(rawSheet); } catch (e) {}
   const rawHeader = getRawHeader_(rawSheet);
   headerIndexRaw = buildHeaderIndex_(rawHeader);
+  if (typeof applyRawHeaderAliases_ === 'function') headerIndexRaw = applyRawHeaderAliases_(headerIndexRaw);
 
   // Apply RAW number formats (bounded rows, buffer-safe)
   applyRawSchemaFormats_(rawSheet, rawHeader, (mainData.rows ? mainData.rows.length : 0), 300);
@@ -839,6 +840,7 @@ function applyDbClassification06_(rawValues, headerIndexRaw, carry) {
 function enrichOperationalSheetsFromRaw06_(ss, rawValues, headerIndexRaw, pic, opts) {
   if (DRY_RUN) return;
   if (!ss || !rawValues || !rawValues.length || !headerIndexRaw) return;
+  if (typeof applyRawHeaderAliases_ === 'function') headerIndexRaw = applyRawHeaderAliases_(headerIndexRaw);
 
   let sheets = getOperationalSheetNames06b_(pic);
   sheets = Array.from(new Set((sheets || []).concat(['B2B'])));
@@ -873,6 +875,15 @@ function enrichOperationalSheetsFromRaw06_(ss, rawValues, headerIndexRaw, pic, o
   const idxClaimLastUpdatedRaw = rawIdx.idxClaimLastUpdatedRaw;
   const idxLastUpdateRaw = rawIdx.idxLastUpdateRaw;
   const idxRemarksRaw = rawIdx.idxRemarksRaw;
+  const idxBusinessCategoryRaw = rawIdx.idxBusinessCategoryRaw;
+  const idxPmRaw = rawIdx.idxPmRaw;
+  const idxApmRaw = rawIdx.idxApmRaw;
+  const idxAgingStartRaw = rawIdx.idxAgingStartRaw;
+  const idxAgingScReceiveRaw = rawIdx.idxAgingScReceiveRaw;
+  const idxAgingInsApproveRaw = rawIdx.idxAgingInsApproveRaw;
+  const idxAgingFinishRaw = rawIdx.idxAgingFinishRaw;
+  const idxCheckinServiceTypeRaw = rawIdx.idxCheckinServiceTypeRaw;
+  const idxCheckoutServiceTypeRaw = rawIdx.idxCheckoutServiceTypeRaw;
 
   const fmt = _fmt06_();
   const moneyFmt = fmt && fmt.MONEY0 ? fmt.MONEY0 : '#,##0';
@@ -886,7 +897,10 @@ function enrichOperationalSheetsFromRaw06_(ss, rawValues, headerIndexRaw, pic, o
     'Claim Amount',
     'Claim Own Risk Amount',
     'Nett Claim Amount',
-    '% Approval'
+    '% Approval',
+    'Buss. Category',
+    'PM Name',
+    'APM Name'
   ];
 
   sheets.forEach(sheetName => {
@@ -903,6 +917,9 @@ function enrichOperationalSheetsFromRaw06_(ss, rawValues, headerIndexRaw, pic, o
     try { ensureHeadersAtEnd06_(sh, ['Status Type']); } catch (e) {}
     try { ensureHeadersAtEnd06_(sh, ['Submission by Month']); } catch (e) {}
     try { ensureHeadersAtEnd06_(sh, mandatoryOpsHeaders); } catch (e) {}
+    if (sheetName === 'Start' || sheetName === 'Finish') {
+      try { ensureHeadersAtEnd06_(sh, ['Service Type']); } catch (e) {}
+    }
 
     // Re-read header after possible insertions
     const lastCol = sh.getLastColumn();
@@ -939,6 +956,11 @@ function enrichOperationalSheetsFromRaw06_(ss, rawValues, headerIndexRaw, pic, o
     const idxServiceCenterPicOps = resolveOpsColIdx06_(hidx, ['Service Center PIC']);
     const idxActivityLogOps = resolveOpsColIdx06_(hidx, ['Activity Log']);
     const idxLastStatusDateOps = resolveOpsColIdx06_(hidx, ['Last Status Date']);
+    const idxBusinessCategoryOps = resolveOpsColIdx06_(hidx, ['Buss. Category']);
+    const idxPmOps = resolveOpsColIdx06_(hidx, ['PM Name']);
+    const idxApmOps = resolveOpsColIdx06_(hidx, ['APM Name']);
+    const idxAgingPostOps = resolveOpsColIdx06_(hidx, ['Aging Post.']);
+    const idxServiceTypeOps = resolveOpsColIdx06_(hidx, ['Service Type']);
 
 
     const lastStatuses = (idxLastStatusOps !== -1)
@@ -969,6 +991,11 @@ function enrichOperationalSheetsFromRaw06_(ss, rawValues, headerIndexRaw, pic, o
     const outServiceCenterPic = colOut(idxServiceCenterPicOps);
     const outActivityLog = colOut(idxActivityLogOps);
     const outLastStatusDate = colOut(idxLastStatusDateOps);
+    const outBusinessCategory = colOut(idxBusinessCategoryOps);
+    const outPm = colOut(idxPmOps);
+    const outApm = colOut(idxApmOps);
+    const outAgingPost = colOut(idxAgingPostOps);
+    const outServiceType = colOut(idxServiceTypeOps);
 
     for (let r = 0; r < rowCount; r++) {
       const claim = String((claims[r] && claims[r][0]) || '').trim();
@@ -986,6 +1013,21 @@ function enrichOperationalSheetsFromRaw06_(ss, rawValues, headerIndexRaw, pic, o
       if (outLsa) outLsa[r] = [ idxLsaRaw != null ? rawGet(idxLsaRaw) : '' ];
       if (outAla) outAla[r] = [ idxAlaRaw != null ? rawGet(idxAlaRaw) : '' ];
       if (outTat) outTat[r] = [ idxTatRaw != null ? rawGet(idxTatRaw) : '' ];
+      if (outBusinessCategory) outBusinessCategory[r] = [ idxBusinessCategoryRaw != null ? rawGet(idxBusinessCategoryRaw) : '' ];
+      if (outPm) outPm[r] = [ idxPmRaw != null ? rawGet(idxPmRaw) : '' ];
+      if (outApm) outApm[r] = [ idxApmRaw != null ? rawGet(idxApmRaw) : '' ];
+      if (outAgingPost) {
+        let idxAgingPostRaw = null;
+        if (sheetName === 'Start') idxAgingPostRaw = idxAgingStartRaw;
+        else if (sheetName === 'SC - Farhan' || sheetName === 'SC - Meilani' || sheetName === 'SC - Meindar') idxAgingPostRaw = idxAgingScReceiveRaw;
+        else if (sheetName === 'PO') idxAgingPostRaw = idxAgingInsApproveRaw;
+        else if (sheetName === 'Finish') idxAgingPostRaw = idxAgingFinishRaw;
+        outAgingPost[r] = [ idxAgingPostRaw != null ? rawGet(idxAgingPostRaw) : '' ];
+      }
+      if (outServiceType) {
+        const idxServiceRaw = (sheetName === 'Start') ? idxCheckinServiceTypeRaw : (sheetName === 'Finish' ? idxCheckoutServiceTypeRaw : null);
+        outServiceType[r] = [ idxServiceRaw != null ? rawGet(idxServiceRaw) : '' ];
+      }
 
       if (outProduct) outProduct[r] = [ idxProductRaw != null ? rawGet(idxProductRaw) : '' ];
       if (outBrand) outBrand[r] = [ idxBrandRaw != null ? rawGet(idxBrandRaw) : '' ];
@@ -1091,6 +1133,11 @@ function enrichOperationalSheetsFromRaw06_(ss, rawValues, headerIndexRaw, pic, o
     setCol(idxStatusTypeOps, outStatusType, null);
     setCol(idxSubmissionMonthOps, outSubmissionMonth, 'MMM yy');
     setCol(idxServiceCenterPicOps, outServiceCenterPic, null);
+    setCol(idxBusinessCategoryOps, outBusinessCategory, null);
+    setCol(idxPmOps, outPm, null);
+    setCol(idxApmOps, outApm, null);
+    setCol(idxAgingPostOps, outAgingPost, null);
+    setCol(idxServiceTypeOps, outServiceType, null);
   });
 }
 
@@ -1170,13 +1217,15 @@ function shouldRunWeeklyReportBaseForSub06b_() {
 
 function applyStrictSubmissionDateAndMonth06b_(ss, rawValues, headerIndexRaw) {
   if (!ss || !rawValues || !rawValues.length || !headerIndexRaw) return;
+  if (typeof applyRawHeaderAliases_ === 'function') headerIndexRaw = applyRawHeaderAliases_(headerIndexRaw);
 
   const idxClaimRaw = resolveRawIdx06_(headerIndexRaw, ['claim_number', 'Claim Number']);
   if (idxClaimRaw == null) return;
 
-  // Strict source: only Raw Data claim_submission_date (allow header formatting variants only).
-  const idxSubmissionDateRaw = resolveRawIdx06_(headerIndexRaw, ['claim_submission_date']);
+  // Strict source: Raw Data claim_submitted_datetime, with legacy claim_submission_date fallback.
+  const idxSubmissionDateRaw = resolveRawIdx06_(headerIndexRaw, ['claim_submitted_datetime', 'claim_submission_date']);
   if (idxSubmissionDateRaw == null) return;
+  const idxSubmissionMonthRaw = resolveRawIdx06_(headerIndexRaw, ['claim_submitted_month', 'claim_submission_months']);
 
   const byClaim = Object.create(null);
   for (let i = 0; i < rawValues.length; i++) {
@@ -1212,12 +1261,14 @@ function applyStrictSubmissionDateAndMonth06b_(ss, rawValues, headerIndexRaw) {
       const claim = String((claims[r] && claims[r][0]) || '').trim().toUpperCase();
       const rawRow = claim ? byClaim[claim] : null;
       const rawVal = (rawRow ? rawRow[idxSubmissionDateRaw] : '');
+      const rawMonthVal = (rawRow && idxSubmissionMonthRaw != null) ? rawRow[idxSubmissionMonthRaw] : '';
       const d = coerceDate_(rawVal);
       const validDate = (d && !isNaN(d.getTime())) ? d : null;
+      const monthDate = rawMonthVal ? toSubmissionMonthDate06b_(rawMonthVal) : null;
       const keepDate = (curSubDate && curSubDate[r]) ? curSubDate[r][0] : '';
       const keepMonth = (curSubMonth && curSubMonth[r]) ? curSubMonth[r][0] : '';
       if (outSubDate) outSubDate[r] = [validDate || keepDate || ''];
-      if (outSubMonth) outSubMonth[r] = [validDate ? toSubmissionMonthDate06b_(validDate) : (keepMonth || '')];
+      if (outSubMonth) outSubMonth[r] = [monthDate || (validDate ? toSubmissionMonthDate06b_(validDate) : (keepMonth || ''))];
     }
 
     if (outSubDate) {
@@ -1267,6 +1318,7 @@ function __resolveEnrichRawIndexes06b_(headerIndexRaw) {
     ]),
     idxServiceCenterRaw: resolveRawIdx06_(headerIndexRaw, [
       (CONFIG && CONFIG.headers && (CONFIG.headers.serviceCenter || CONFIG.headers.scName)) ? (CONFIG.headers.serviceCenter || CONFIG.headers.scName) : null,
+      'repairer_location_store_name',
       'service_center',
       'sc_name',
       'Service Center',
@@ -1274,6 +1326,7 @@ function __resolveEnrichRawIndexes06b_(headerIndexRaw) {
     ]),
     idxLsaRaw: resolveRawIdx06_(headerIndexRaw, [
       (CONFIG && CONFIG.headers && CONFIG.headers.lastStatusAging) ? CONFIG.headers.lastStatusAging : null,
+      'days_aging_from_last_activity',
       'Last Status Aging',
       'LSA',
       'last_status_aging',
@@ -1337,16 +1390,19 @@ function __resolveEnrichRawIndexes06b_(headerIndexRaw) {
     ]),
     idxSubmissionMonthRaw: resolveRawIdx06_(headerIndexRaw, [
       (CONFIG && CONFIG.headers && (CONFIG.headers.claimSubmissionMonths || CONFIG.headers.claim_submission_months)) ? (CONFIG.headers.claimSubmissionMonths || CONFIG.headers.claim_submission_months) : null,
+      'claim_submitted_month',
       'claim_submission_months',
       'Submission by Month'
     ]),
     idxSubmissionDateRaw: resolveRawIdx06_(headerIndexRaw, [
-      'claim_submission_date',
       (CONFIG && CONFIG.headers && (CONFIG.headers.claimSubmissionDate || CONFIG.headers.claim_submission_date)) ? (CONFIG.headers.claimSubmissionDate || CONFIG.headers.claim_submission_date) : null,
+      'claim_submitted_datetime',
+      'claim_submission_date',
       'claim submission date'
     ]),
     idxActivityLogRaw: resolveRawIdx06_(headerIndexRaw, [
       (CONFIG && CONFIG.headers && (CONFIG.headers.lastActivityLog || CONFIG.headers.last_activity_log)) ? (CONFIG.headers.lastActivityLog || CONFIG.headers.last_activity_log) : null,
+      'last_activity_log_name',
       'last_activity_log',
       'Last Activity Log',
       'Last Activity',
@@ -1362,10 +1418,39 @@ function __resolveEnrichRawIndexes06b_(headerIndexRaw) {
     ]),
     idxLastUpdateRaw: resolveRawIdx06_(headerIndexRaw, [
       (CONFIG && CONFIG.headers && CONFIG.headers.lastUpdate) ? CONFIG.headers.lastUpdate : null,
+      'last_update_datetime',
       'last_update',
       'Last Update Datetime',
       'Last Update',
       'last update datetime'
+    ]),
+    idxBusinessCategoryRaw: resolveRawIdx06_(headerIndexRaw, [
+      (CONFIG && CONFIG.headers && CONFIG.headers.businessPartnerCategoryName) ? CONFIG.headers.businessPartnerCategoryName : null,
+      'id_business_partner_category_name',
+      'Buss. Category',
+      'Business Category'
+    ]),
+    idxPmRaw: resolveRawIdx06_(headerIndexRaw, [
+      (CONFIG && CONFIG.headers && CONFIG.headers.pmName) ? CONFIG.headers.pmName : null,
+      'pm_name',
+      'PM Name'
+    ]),
+    idxApmRaw: resolveRawIdx06_(headerIndexRaw, [
+      (CONFIG && CONFIG.headers && CONFIG.headers.apmName) ? CONFIG.headers.apmName : null,
+      'apm_name',
+      'APM Name'
+    ]),
+    idxAgingStartRaw: resolveRawIdx06_(headerIndexRaw, ['Aging Start', 'aging_start']),
+    idxAgingScReceiveRaw: resolveRawIdx06_(headerIndexRaw, ['Aging SC Receive', 'aging_sc_receive']),
+    idxAgingInsApproveRaw: resolveRawIdx06_(headerIndexRaw, ['Aging Ins Approve', 'aging_ins_approve']),
+    idxAgingFinishRaw: resolveRawIdx06_(headerIndexRaw, ['Aging Finish', 'aging_finish']),
+    idxCheckinServiceTypeRaw: resolveRawIdx06_(headerIndexRaw, [
+      (CONFIG && CONFIG.headers && CONFIG.headers.deviceCheckinOptionName) ? CONFIG.headers.deviceCheckinOptionName : null,
+      'device_checkin_option_name'
+    ]),
+    idxCheckoutServiceTypeRaw: resolveRawIdx06_(headerIndexRaw, [
+      (CONFIG && CONFIG.headers && CONFIG.headers.deviceCheckoutOptionName) ? CONFIG.headers.deviceCheckoutOptionName : null,
+      'device_checkout_option_name'
     ]),
     idxRemarksRaw: resolveRawIdx06_(headerIndexRaw, [
       (CONFIG && CONFIG.headers && (CONFIG.headers.remarks || CONFIG.headers.remark)) ? (CONFIG.headers.remarks || CONFIG.headers.remark) : null,

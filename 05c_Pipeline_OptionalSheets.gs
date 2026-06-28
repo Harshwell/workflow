@@ -231,6 +231,7 @@ function __setDbLinkRichTextSegments_(sh, colIndex0, rowNums, urlMap) {
 function processB2B_(ss, rawValues, headerIndexRaw, pic) { // `pic` kept for backward compatibility
   // Default ON. Only skip when explicitly disabled.
   if (typeof RUNTIME !== 'undefined' && RUNTIME && RUNTIME.enableB2B === false) return 0;
+  if (typeof applyRawHeaderAliases_ === 'function') headerIndexRaw = applyRawHeaderAliases_(headerIndexRaw);
 
   const patterns = (CONFIG.patterns.b2bPartners || []).map(s => String(s || '').toLowerCase());
   const claimToken = String(
@@ -272,9 +273,10 @@ function processB2B_(ss, rawValues, headerIndexRaw, pic) { // `pic` kept for bac
     : null;
 
   const idxLSA =
-    (headerIndexRaw['Last Status Aging'] != null) ? headerIndexRaw['Last Status Aging']
+    (headerIndexRaw[h.lastStatusAging] != null) ? headerIndexRaw[h.lastStatusAging]
+    : (headerIndexRaw['days_aging_from_last_activity'] != null) ? headerIndexRaw['days_aging_from_last_activity']
+    : (headerIndexRaw['Last Status Aging'] != null) ? headerIndexRaw['Last Status Aging']
     : (headerIndexRaw['LSA'] != null) ? headerIndexRaw['LSA']
-    : (headerIndexRaw[h.lastStatusAging] != null) ? headerIndexRaw[h.lastStatusAging]
     : (headerIndexRaw['last_status_aging'] != null) ? headerIndexRaw['last_status_aging']
     : null;
   const idxALA =
@@ -372,7 +374,7 @@ function processB2B_(ss, rawValues, headerIndexRaw, pic) { // `pic` kept for bac
     set('Claim Number', (idxClaim != null) ? row[idxClaim] : '');
     if (claimUp) seenClaims.add(claimUp);
 
-    const dbUrl = (idxDashboard != null) ? row[idxDashboard] : '';
+    const dbUrl = ((idxDashboard != null) ? String(row[idxDashboard] || '').trim() : '') || ((typeof buildDashboardLinkFromClaimNumber_ === 'function') ? buildDashboardLinkFromClaimNumber_(claimUp) : '');
     set('DB Link', dbUrl ? 'LINK' : '');
     dbUrls.push(dbUrl);
 
@@ -560,6 +562,7 @@ function processSpecialCase_(ss, rawValues, headerIndexRaw, pic) { // `pic` kept
   if (typeof RUNTIME !== 'undefined' && RUNTIME && RUNTIME.enableSpecialCase === false) {
     return { count: 0, metrics: { status: 'disabled' } };
   }
+  if (typeof applyRawHeaderAliases_ === 'function') headerIndexRaw = applyRawHeaderAliases_(headerIndexRaw);
 
   const h = CONFIG.headers;
   const sh = ss.getSheetByName('Special Case');
@@ -595,9 +598,10 @@ function processSpecialCase_(ss, rawValues, headerIndexRaw, pic) { // `pic` kept
     : null;
 
   const idxLSA =
-    (headerIndexRaw['Last Status Aging'] != null) ? headerIndexRaw['Last Status Aging']
+    (headerIndexRaw[h.lastStatusAging] != null) ? headerIndexRaw[h.lastStatusAging]
+    : (headerIndexRaw['days_aging_from_last_activity'] != null) ? headerIndexRaw['days_aging_from_last_activity']
+    : (headerIndexRaw['Last Status Aging'] != null) ? headerIndexRaw['Last Status Aging']
     : (headerIndexRaw['LSA'] != null) ? headerIndexRaw['LSA']
-    : (headerIndexRaw[h.lastStatusAging] != null) ? headerIndexRaw[h.lastStatusAging]
     : (headerIndexRaw['last_status_aging'] != null) ? headerIndexRaw['last_status_aging']
     : null;
   const idxALA =
@@ -873,7 +877,7 @@ function processSpecialCase_(ss, rawValues, headerIndexRaw, pic) { // `pic` kept
     const dbFromClaim = computeDbValueFromClaimNumber05c_(claimKey);
     set('DB', dbFromClaim || ((src.indexOf('OLD') > -1) ? 'OLD' : (src.indexOf('NEW') > -1 ? 'NEW' : (src || ''))));
 
-    const dbUrl = (idxDashboard != null) ? row[idxDashboard] : '';
+    const dbUrl = ((idxDashboard != null) ? String(row[idxDashboard] || '').trim() : '') || ((typeof buildDashboardLinkFromClaimNumber_ === 'function') ? buildDashboardLinkFromClaimNumber_(claimRaw) : '');
     set('DB Link', dbUrl ? 'LINK' : '');
 
     set('Partner Name', partnerRaw);
@@ -1136,6 +1140,7 @@ rowsOut.push(out);
 function processEVBike_(ss, rawValues, headerIndexRaw, pic) { // `pic` kept for backward compatibility
   // Default ON. Only skip when explicitly disabled.
   if (typeof RUNTIME !== 'undefined' && RUNTIME && RUNTIME.enableEvBike === false) return 0;
+  if (typeof applyRawHeaderAliases_ === 'function') headerIndexRaw = applyRawHeaderAliases_(headerIndexRaw);
 
   const h = CONFIG.headers;
   const sh = ss.getSheetByName('EV-Bike');
@@ -1299,7 +1304,7 @@ function processEVBike_(ss, rawValues, headerIndexRaw, pic) { // `pic` kept for 
     set('Submission Date', buildSubmissionDateCell_(row, headerIndexRaw));
     set('Claim Number', row[idxClaim]);
 
-    const dbUrl = (idxDashboard != null) ? row[idxDashboard] : '';
+    const dbUrl = ((idxDashboard != null) ? String(row[idxDashboard] || '').trim() : '') || ((typeof buildDashboardLinkFromClaimNumber_ === 'function') ? buildDashboardLinkFromClaimNumber_(claimUp) : '');
     set('DB Link', dbUrl ? 'LINK' : '');
     if (pos != null) {
       const rn = 2 + pos;

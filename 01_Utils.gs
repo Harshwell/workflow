@@ -376,7 +376,67 @@ function canonicalizeHeaderSnake_(h) {
   if (k === 'repair_replace_amount') return 'claim_amount';
   if (k === 'or_amount') return 'claim_own_risk_amount';
 
+  // MAIN Raw Data 2026 source renames.
+  if (k === 'policy_start_datetime') return 'policy_start_date';
+  if (k === 'policy_end_datetime') return 'policy_end_date';
+  if (k === 'policy_issued_datetime') return 'activation_datetime';
+  if (k === 'claim_submitted_month') return 'claim_submission_months';
+  if (k === 'repairer_location_store_name') return 'sc_name';
+  if (k === 'repairer_location_city_name') return 'sc_city';
+  if (k === 'claim_last_status_name') return 'last_status';
+  if (k === 'days_aging_from_last_activity') return 'last_status_aging';
+  if (k === 'device_checkout_datetime') return 'device_checkout_date';
+  if (k === 'last_update_datetime') return 'last_update';
+  if (k === 'last_activity_log_name') return 'last_activity_log';
+  if (k === 'pic_name') return 'qoala_pic_name';
+
   return k;
+}
+
+function getRawHeaderAliasGroups_() {
+  return [
+    ['policy_start_datetime', 'policy_start_date'],
+    ['policy_end_datetime', 'policy_end_date'],
+    ['policy_issued_datetime', 'activation_datetime'],
+    ['claim_submitted_datetime', 'claim_submission_date'],
+    ['claim_submitted_month', 'claim_submission_months'],
+    ['repairer_location_store_name', 'sc_name', 'service_center', 'service_center_name', 'Service Center', 'SC Name'],
+    ['repairer_location_city_name', 'sc_city'],
+    ['claim_last_status_name', 'last_status', 'Last Status'],
+    ['days_aging_from_last_activity', 'last_status_aging', 'Last Status Aging', 'LSA'],
+    ['activity_log_aging', 'Activity Log Aging', 'ALA'],
+    ['repair_done_datetime', 'repair_replace_done_date'],
+    ['replace_done_datetime', 'repair_replace_done_date'],
+    ['device_checkout_datetime', 'device_checkout_date'],
+    ['last_update_datetime', 'last_update', 'Last Update Datetime', 'Last Update'],
+    ['last_activity_log_datetime', 'last_activity_log_date'],
+    ['last_activity_log_name', 'last_activity_log', 'activity_log', 'Activity Log'],
+    ['pic_name', 'qoala_pic_name'],
+    ['business_partner_name', '3. All Transaction - qoala_policy_number → outlet_name', 'outlet_name', 'store_name', 'Store Name'],
+    ['pa_name', '3. All Transaction - qoala_policy_number → pa_name', 'PA Name'],
+    ['spa_name', '3. All Transaction - qoala_policy_number → spa_name', 'SPA Name'],
+    ['device_checkin_option_name', 'Service Type Start'],
+    ['device_checkout_option_name', 'Service Type Finish']
+  ];
+}
+
+function applyRawHeaderAliases_(headerIndex) {
+  if (!headerIndex) return headerIndex;
+  const groups = getRawHeaderAliasGroups_();
+  for (let g = 0; g < groups.length; g++) {
+    const group = groups[g] || [];
+    let idx = null;
+    for (let i = 0; i < group.length; i++) {
+      const key = group[i];
+      if (key && headerIndex[key] != null) { idx = headerIndex[key]; break; }
+    }
+    if (idx == null) continue;
+    for (let i = 0; i < group.length; i++) {
+      const key = group[i];
+      if (key && headerIndex[key] == null) headerIndex[key] = idx;
+    }
+  }
+  return headerIndex;
 }
 
 /**
@@ -1366,6 +1426,16 @@ function computeDbValueFromClaimNumber_(claimNumber) {
   if (s.indexOf('SFP') !== -1 || s.indexOf('SFX') !== -1 || s.indexOf('SMR') !== -1) return 'OLD';
   if (s.indexOf('VVMAR') !== -1 || s.indexOf('GADLD') !== -1) return 'NEW';
   return '';
+}
+
+function buildDashboardLinkFromClaimNumber_(claimNumber) {
+  const claim = String(claimNumber == null ? '' : claimNumber).trim();
+  if (!claim) return '';
+  const isGadget = /SFP|SFX|SMR|SPP/i.test(claim);
+  const base = isGadget
+    ? 'https://internal.qoala.app/gadget/claim/'
+    : 'https://internal.qoala.app/partnership/claim/';
+  return base + claim;
 }
 
 function parseClaimLastUpdatedDatetime_(v) {
