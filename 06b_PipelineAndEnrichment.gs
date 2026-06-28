@@ -44,6 +44,11 @@ function runPipeline_(pic, fileIds, opts) {
   try { ensureMasterSheets_(ss); } catch (e) {}
   try { if (typeof ensurePicSheets_ === 'function') ensurePicSheets_(ss, profileName); } catch (e) {} // best-effort for legacy templates
   try { validateWorkbook_(ss, profileName); } catch (e) {}
+  try {
+    if (typeof __expandWorkbookFiltersToUsedRange06_ === 'function') {
+      __expandWorkbookFiltersToUsedRange06_(ss);
+    }
+  } catch (eFlt0) { try { logLine_('WARN', 'Pre-write filter range sync failed', '', String(eFlt0), 'WARN'); } catch (e2) {} }
   endSegment_(segEnsure, 'ok', 'profile=MASTER', 'INFO');
 
   // Best-effort: Tag current run flow in Overview sheet (non-destructive).
@@ -436,13 +441,17 @@ function runPipeline_(pic, fileIds, opts) {
     }
   }
 
-  try {
-    const sc = processSpecialCase_(ss, rawValues, headerIndexRaw, profileName);
-    scCount = (sc && sc.count) ? sc.count : 0;
-    scMetrics = (sc && sc.metrics) ? sc.metrics : {};
-    try { logInfo_('SC_METRICS', 'count=' + scCount + ' ' + JSON.stringify(scMetrics)); } catch (e) {}
-  } catch (e2) {
-    try { logLine_('ERR', 'Special Case failed', String(e2)); } catch (e) {}
+  if (flowName === 'main') {
+    try {
+      const sc = processSpecialCase_(ss, rawValues, headerIndexRaw, profileName);
+      scCount = (sc && sc.count) ? sc.count : 0;
+      scMetrics = (sc && sc.metrics) ? sc.metrics : {};
+      try { logInfo_('SC_METRICS', 'count=' + scCount + ' ' + JSON.stringify(scMetrics)); } catch (e) {}
+    } catch (e2) {
+      try { logLine_('ERR', 'Special Case failed', String(e2)); } catch (e) {}
+    }
+  } else {
+    scMetrics = { status: 'skipped_non_main_flow', flow: flowName };
   }
 
   if (RUNTIME.enableEvBike) {
@@ -829,17 +838,19 @@ function enrichOperationalSheetsFromRaw06_(ss, rawValues, headerIndexRaw, pic, o
   const idxBusinessCategoryRaw = rawIdx.idxBusinessCategoryRaw;
   const idxPmRaw = rawIdx.idxPmRaw;
   const idxApmRaw = rawIdx.idxApmRaw;
+  const idxAgingAskDetailRaw = rawIdx.idxAgingAskDetailRaw;
   const idxAgingStartRaw = rawIdx.idxAgingStartRaw;
   const idxAgingScReceiveRaw = rawIdx.idxAgingScReceiveRaw;
   const idxAgingInsApproveRaw = rawIdx.idxAgingInsApproveRaw;
   const idxAgingFinishRaw = rawIdx.idxAgingFinishRaw;
+  const idxAgingExpiredRaw = rawIdx.idxAgingExpiredRaw;
   const idxCheckinServiceTypeRaw = rawIdx.idxCheckinServiceTypeRaw;
   const idxCheckoutServiceTypeRaw = rawIdx.idxCheckoutServiceTypeRaw;
 
   const fmt = _fmt06_();
   const moneyFmt = fmt && fmt.MONEY0 ? fmt.MONEY0 : '#,##0';
   const pctFmt = '0%';
-  const financeExcludedSheets = new Set(['Submission', 'Ask Detail', 'Start', 'Finish', 'Claim Expired']);
+  const financeExcludedSheets = new Set(['Submission', 'Ask Detail', 'Start', 'Finish', 'Expired Claim']);
 
   const mandatoryBaseHeaders = [
     'Product',
@@ -872,7 +883,7 @@ function enrichOperationalSheetsFromRaw06_(ss, rawValues, headerIndexRaw, pic, o
     if (!financeExcludedSheets.has(sheetName)) {
       try { ensureHeadersAtEnd06_(sh, mandatoryFinanceHeaders); } catch (e) {}
     }
-    if (sheetName === 'Start' || sheetName === 'Finish' || sheetName === 'Claim Expired') {
+    if (sheetName === 'Start' || sheetName === 'Finish' || sheetName === 'Expired Claim') {
       try { ensureHeadersAtEnd06_(sh, ['Service Type']); } catch (e) {}
     }
 
@@ -912,7 +923,7 @@ function enrichOperationalSheetsFromRaw06_(ss, rawValues, headerIndexRaw, pic, o
     const idxBusinessCategoryOps = resolveOpsColIdx06_(hidx, ['Buss. Category']);
     const idxPmOps = resolveOpsColIdx06_(hidx, ['PM Name']);
     const idxApmOps = resolveOpsColIdx06_(hidx, ['APM Name']);
-    const idxAgingPostOps = resolveOpsColIdx06_(hidx, ['Stage Aging', 'Aging Position', 'Aging Post.', 'Aging Post']);
+    const idxAgingPostOps = (sheetName === 'Submission') ? -1 : resolveOpsColIdx06_(hidx, ['Stage Aging', 'Aging Position', 'Aging Post.', 'Aging Post']);
     const idxServiceTypeOps = resolveOpsColIdx06_(hidx, ['Service Type']);
 
 
@@ -973,14 +984,16 @@ function enrichOperationalSheetsFromRaw06_(ss, rawValues, headerIndexRaw, pic, o
       if (outApm) outApm[r] = [ idxApmRaw != null ? rawGet(idxApmRaw) : '' ];
       if (outAgingPost) {
         let idxAgingPostRaw = null;
-        if (sheetName === 'Start') idxAgingPostRaw = idxAgingStartRaw;
+        if (sheetName === 'Ask Detail') idxAgingPostRaw = idxAgingAskDetailRaw;
+        else if (sheetName === 'Start') idxAgingPostRaw = idxAgingStartRaw;
         else if (sheetName === 'SC - Farhan' || sheetName === 'SC - Meilani' || sheetName === 'SC - Meindar') idxAgingPostRaw = idxAgingScReceiveRaw;
         else if (sheetName === 'PO') idxAgingPostRaw = idxAgingInsApproveRaw;
         else if (sheetName === 'Finish') idxAgingPostRaw = idxAgingFinishRaw;
+        else if (sheetName === 'Expired Claim') idxAgingPostRaw = idxAgingExpiredRaw;
         outAgingPost[r] = [ idxAgingPostRaw != null ? rawGet(idxAgingPostRaw) : '' ];
       }
       if (outServiceType) {
-        const idxServiceRaw = (sheetName === 'Start' || sheetName === 'Finish' || sheetName === 'Claim Expired') ? idxCheckinServiceTypeRaw : null;
+        const idxServiceRaw = (sheetName === 'Start' || sheetName === 'Finish' || sheetName === 'Expired Claim') ? idxCheckinServiceTypeRaw : null;
         const rawServiceType = idxServiceRaw != null ? rawGet(idxServiceRaw) : '';
         const statusForService = lastStatuses ? String((lastStatuses[r] && lastStatuses[r][0]) || '').trim() : '';
         outServiceType[r] = [ (typeof resolveServiceTypeFromStatus_ === 'function') ? resolveServiceTypeFromStatus_(sheetName, rawServiceType, statusForService) : rawServiceType ];
@@ -1185,7 +1198,9 @@ function applyStrictSubmissionDateAndMonth06b_(ss, rawValues, headerIndexRaw) {
     byClaim[claim] = row;
   }
 
-  const targetSheets = ['Submission', 'Ask Detail', 'Start', 'Finish', 'PO', 'B2B', 'Special Case'];
+  const flowName = String((typeof RUNTIME !== 'undefined' && RUNTIME && RUNTIME.flowName) ? RUNTIME.flowName : 'main').trim().toLowerCase();
+  const targetSheets = ['Submission', 'Ask Detail', 'Start', 'Finish', 'PO', 'B2B'];
+  if (flowName === 'main') targetSheets.push('Special Case');
   targetSheets.forEach(function(name) {
     const sh = ss.getSheetByName(name);
     if (!sh) return;
@@ -1384,10 +1399,12 @@ function __resolveEnrichRawIndexes06b_(headerIndexRaw) {
       'apm_name',
       'APM Name'
     ]),
+    idxAgingAskDetailRaw: resolveRawIdx06_(headerIndexRaw, ['Aging Ask Detail', 'aging_ask_detail']),
     idxAgingStartRaw: resolveRawIdx06_(headerIndexRaw, ['Aging Start', 'aging_start']),
     idxAgingScReceiveRaw: resolveRawIdx06_(headerIndexRaw, ['Aging SC Receive', 'aging_sc_receive']),
     idxAgingInsApproveRaw: resolveRawIdx06_(headerIndexRaw, ['Aging Ins Approve', 'aging_ins_approve']),
     idxAgingFinishRaw: resolveRawIdx06_(headerIndexRaw, ['Aging Finish', 'aging_finish']),
+    idxAgingExpiredRaw: resolveRawIdx06_(headerIndexRaw, ['Aging Expired', 'aging_expired']),
     idxCheckinServiceTypeRaw: resolveRawIdx06_(headerIndexRaw, [
       (CONFIG && CONFIG.headers && CONFIG.headers.deviceCheckinOptionName) ? CONFIG.headers.deviceCheckinOptionName : null,
       'device_checkin_option_name'
@@ -1605,6 +1622,7 @@ function sortOperationalSheetsPreserveFilter06b_(ss, pic) {
     if (idxDate === -1 || idxStatus === -1) continue;
 
     try {
+      if (typeof __expandSheetFilterToUsedRange06_ === 'function') __expandSheetFilterToUsedRange06_(sh);
       const f = sh.getFilter ? sh.getFilter() : null;
       if (f && f.getRange) {
         const fr = f.getRange();

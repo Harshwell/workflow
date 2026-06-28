@@ -330,6 +330,7 @@ const SV03_TEMPLATES = Object.freeze({
     'Claim Amount','OR','Claim Own Risk Amount',
     'Nett Claim Amount',
     'Selisih',
+    'Start Date','End Date','Details',
     'Reason'
   ]),
 
@@ -347,7 +348,7 @@ const SV03_OPTIONAL_SHEETS_DEFAULT = Object.freeze(['B2B', 'EV-Bike', 'Doss', 'S
 // If headers change, user will adjust them manually.
 const SV03_FIXED_SCHEMA_SHEETS = new Set(['Special Case', 'Exclusion']);
 // Sheets that have specific Update Status/Timestamp columns (Asso/Admin) and must NOT receive generic ones.
-const SV03_WORKFLOW_SHEETS = new Set(['Ask Detail', 'Start', 'Finish', 'Claim Expired']);
+const SV03_WORKFLOW_SHEETS = new Set(['Ask Detail', 'Start', 'Finish', 'Expired Claim']);
 
 
 function sv03_isFixedSchemaSheet_(name) {
@@ -632,7 +633,7 @@ function sv03_removeAllFiltersForPic_(ss, rawSheet, pic) {
   }
 
   targets.forEach(name => {
-    // Requirement: never reset/unfilter EV-Bike/Doss sheets.
+    // Keep EV-Bike/Doss filter criteria; runtime expands their filter ranges before writes.
     const optionalTokenSheet = String(name || '').trim();
     if (optionalTokenSheet === 'EV-Bike' || optionalTokenSheet === 'Doss') return;
     const sh = ss.getSheetByName(name);

@@ -552,15 +552,15 @@ function runSubFromFormDrive06a_(req, runId) {
     'Finish',
     'PO',
     'Exclusion',
-    'Claim Expired',
+    'Expired Claim',
     'B2B',
     'EV-Bike',
-    'Doss',
-    'Special Case'
+    'Doss'
   ];
-  const opSheets = (Array.isArray(subFlow.OPERATIONAL_SHEETS) && subFlow.OPERATIONAL_SHEETS.length)
+  let opSheets = (Array.isArray(subFlow.OPERATIONAL_SHEETS) && subFlow.OPERATIONAL_SHEETS.length)
     ? subFlow.OPERATIONAL_SHEETS.map(s => String(s || '').trim()).filter(Boolean)
     : defaultOpSheets.slice();
+  opSheets = __normalizeSubOperationalSheetNames06a_(opSheets);
 
   // Ensure SC fallback/quarantine sheet participates in relocate + sort.
   try {
@@ -568,6 +568,12 @@ function runSubFromFormDrive06a_(req, runId) {
     if (fb && opSheets.indexOf(fb) < 0) opSheets.push(fb);
     __ensureSubScFallbackSheetExists06a_(masterSs, fb);
   } catch (eFb) {}
+
+  try {
+    if (typeof __expandWorkbookFiltersToUsedRange06_ === 'function') {
+      __expandWorkbookFiltersToUsedRange06_(masterSs);
+    }
+  } catch (eFlt0) { try { logLine_('SUB_WARN', 'Pre-write filter range sync failed', String(eFlt0), '', 'WARN'); } catch (eFltLog) {} }
 
   const sortSpecs = (Array.isArray(subFlow.SORT_SPECS) && subFlow.SORT_SPECS.length) ? subFlow.SORT_SPECS : null;
 
@@ -704,6 +710,22 @@ function __getSubRelocationSheetNames06a_(sheetNames) {
   });
 }
 
+function __normalizeSubOperationalSheetNames06a_(sheetNames) {
+  const out = [];
+  const seen = Object.create(null);
+  (Array.isArray(sheetNames) ? sheetNames : []).forEach(function(name) {
+    let n = String(name || '').trim();
+    if (!n) return;
+    if (n === 'Claim Expired') n = 'Expired Claim';
+    const key = n.toLowerCase();
+    if (seen[key]) return;
+    seen[key] = true;
+    out.push(n);
+  });
+  if (!seen['expired claim']) out.push('Expired Claim');
+  return out;
+}
+
 function __ensureSubScFallbackSheetExists06a_(ss, fallbackSheetName) {
   const fb = String(fallbackSheetName || '').trim();
   if (!ss || !fb) return;
@@ -779,6 +801,12 @@ function ensureMasterSheets_(ss) {
 
   const rawName = (CONFIG && CONFIG.masterRawSheetName) ? CONFIG.masterRawSheetName : 'Raw Data';
 
+  try {
+    const oldExpired = ss.getSheetByName('Claim Expired');
+    const newExpired = ss.getSheetByName('Expired Claim');
+    if (oldExpired && !newExpired) oldExpired.setName('Expired Claim');
+  } catch (eRenameExpired) {}
+
   // Ensure Raw Data exists
   let raw = ss.getSheetByName(rawName);
   if (!raw) {
@@ -790,7 +818,7 @@ function ensureMasterSheets_(ss) {
 
   const mustHave = [
     // Operational
-    'Submission', 'Ask Detail', 'OR - OLD', 'Start', 'Finish', 'Claim Expired', 'SC - Farhan', 'SC - Meilani', 'SC - Meindar', 'SC - Unmapped', 'PO', 'Exclusion',
+    'Submission', 'Ask Detail', 'OR - OLD', 'Start', 'Finish', 'Expired Claim', 'SC - Farhan', 'SC - Meilani', 'SC - Meindar', 'SC - Unmapped', 'PO', 'Exclusion',
     // Optional
     'B2B', 'EV-Bike', 'Doss', 'Special Case'
   ];
@@ -1219,17 +1247,17 @@ function runSubEmailIngest(maxThreads) {
       'Finish',
       'PO',
       'Exclusion',
-      'Claim Expired',
+      'Expired Claim',
       'B2B',
       'EV-Bike',
-      'Doss',
-      'Special Case'
+      'Doss'
     ];
-    const opSheets = (Array.isArray(subFlow.OPERATIONAL_SHEETS) && subFlow.OPERATIONAL_SHEETS.length)
+    let opSheets = (Array.isArray(subFlow.OPERATIONAL_SHEETS) && subFlow.OPERATIONAL_SHEETS.length)
       ? subFlow.OPERATIONAL_SHEETS.map(s => String(s || '').trim()).filter(Boolean)
       : (Array.isArray(pMerged.OPERATIONAL_SHEETS) && pMerged.OPERATIONAL_SHEETS.length
         ? pMerged.OPERATIONAL_SHEETS.map(s => String(s || '').trim()).filter(Boolean)
         : defaultOpSheets);
+    opSheets = __normalizeSubOperationalSheetNames06a_(opSheets);
 
     // Align required operational column layout for SUB updates too.
     try { if (typeof enforceOperationalLayout06_ === 'function') enforceOperationalLayout06_(masterSs); } catch (eLay) {}
@@ -1240,6 +1268,12 @@ function runSubEmailIngest(maxThreads) {
       if (fb && opSheets.indexOf(fb) < 0) opSheets.push(fb);
       __ensureSubScFallbackSheetExists06a_(masterSs, fb);
     } catch (eFb) {}
+
+    try {
+      if (typeof __expandWorkbookFiltersToUsedRange06_ === 'function') {
+        __expandWorkbookFiltersToUsedRange06_(masterSs);
+      }
+    } catch (eFlt0) { try { logLine_('SUB_WARN', 'Pre-write filter range sync failed', String(eFlt0), '', 'WARN'); } catch (eFltLog) {} }
 
 
     // Sorting spec (multi-key) after SUB completes.
@@ -2494,6 +2528,13 @@ function __relocateOperationalRowsByLastStatusSub06a_(ss, sheetNames) {
       const row = d.vals[r];
       const claim = String(row[idxClaim] || '').trim();
       if (!claim) continue;
+      const exclusiveTokenClaim = (typeof isExclusiveTokenClaim_ === 'function') ? isExclusiveTokenClaim_(claim) : false;
+      const scFallbackSheet = __getScFallbackSheet06a_();
+      if (exclusiveTokenClaim && sheetName === scFallbackSheet) {
+        deletesBySheet[sheetName] = deletesBySheet[sheetName] || new Set();
+        deletesBySheet[sheetName].add(r + 1);
+        continue;
+      }
 
       // Skip rows that will be deleted as duplicates
       if (toDelete.has(r + 1)) continue;
@@ -2510,6 +2551,7 @@ function __relocateOperationalRowsByLastStatusSub06a_(ss, sheetNames) {
 
       const scName = (idxSc >= 0) ? row[idxSc] : '';
       let dest = pickDest(status, scName, candidates);
+      if (exclusiveTokenClaim && dest === scFallbackSheet) continue;
 
       // [Inference] If a row is already in SC - Farhan but Service Center is outside allowlist, push it to SC - Meilani as a safe default.
       // Override by ensuring CONFIG.statusRoutingSub (or CONFIG.statusRoutingAdmin) maps SC-stage statuses to all SC sheets, and/or configure CONFIG.SC_SHEET_ALLOWLISTS.
@@ -2597,7 +2639,8 @@ function __relocateOperationalRowsByLastStatusSub06a_(ss, sheetNames) {
       updateStatus: idxOfAnyLocal(['update status']),
       timestamp: idxOfAnyLocal(['timestamp']),
       status: idxOfAnyLocal(['status']),
-      remarks: idxOfAnyLocal(['remarks', 'remark'])
+      remarks: idxOfAnyLocal(['remarks', 'remark']),
+      stageAging: idxOfAnyLocal(['stage aging', 'aging position', 'aging post.', 'aging post'])
     };
   }
 
@@ -2609,6 +2652,8 @@ function __relocateOperationalRowsByLastStatusSub06a_(ss, sheetNames) {
       const ix = resetIdx[keys[i]];
       if (ix != null && ix >= 0 && ix < out.length) out[ix] = '';
     }
+    const idxStageAging = resetIdx.stageAging;
+    if (idxStageAging != null && idxStageAging >= 0 && idxStageAging < out.length) out[idxStageAging] = 0;
     return out;
   }
 
@@ -2733,7 +2778,7 @@ function __relocateOperationalRowsByLastStatusSub06a_(ss, sheetNames) {
           for (let c = 0; c < tgt.lc; c++) {
             if (alignedAfterReset[c] !== '' && alignedAfterReset[c] != null) merged[c] = alignedAfterReset[c];
           }
-          // Always reset the 4 manual columns after cross-sheet movement.
+          // Always reset manual workflow columns and Stage Aging after cross-sheet movement.
           const mergedAfterReset = resetMovedRowFieldsByHeader(merged, resetIdx);
           tgt.sh.getRange(keepRow, 1, 1, tgt.lc).setValues([mergedAfterReset]);
           applyRichTextLinksToTarget(srcName, mv.row1Based, mv.srcHdr, tgt.sh, tgt.hdr, keepRow, tgt.lc);

@@ -868,6 +868,33 @@ function formatSubmissionMonthShort_(value) {
   return '';
 }
 
+function isExclusiveTokenClaim_(claimNumber) {
+  const s = String(claimNumber == null ? '' : claimNumber).toUpperCase();
+  return s.indexOf('VVMAR') > -1 || s.indexOf('DOSS') > -1;
+}
+
+function getStageAgingRawHeaderCandidates_(sheetName) {
+  const sheet = String(sheetName || '').trim().toLowerCase();
+  if (!sheet || sheet === 'submission') return [];
+  if (sheet === 'ask detail') return ['Aging Ask Detail', 'aging_ask_detail'];
+  if (sheet === 'start') return ['Aging Start', 'aging_start'];
+  if (sheet === 'sc - farhan' || sheet === 'sc - meilani' || sheet === 'sc - meindar') {
+    return ['Aging SC Receive', 'aging_sc_receive'];
+  }
+  if (sheet === 'po') return ['Aging Ins Approve', 'aging_ins_approve'];
+  if (sheet === 'finish') return ['Aging Finish', 'aging_finish'];
+  if (sheet === 'expired claim') return ['Aging Expired', 'aging_expired'];
+  return [];
+}
+
+function resolveStageAgingFromRaw_(sheetName, rawGetter) {
+  if (typeof rawGetter !== 'function') return '';
+  const candidates = getStageAgingRawHeaderCandidates_(sheetName);
+  if (!candidates.length) return '';
+  const v = rawGetter(candidates);
+  return (v == null) ? '' : v;
+}
+
 function resolveServiceTypeFromStatus_(sheetName, rawValue, lastStatus) {
   const direct = String(rawValue == null ? '' : rawValue).trim();
   if (direct) return direct;
@@ -900,7 +927,7 @@ function resolveServiceTypeFromStatus_(sheetName, rawValue, lastStatus) {
     'COURIER_CLAIM_PICKUP_FINISH_DONE'
   ]);
 
-  if (sheet === 'start' || sheet === 'claim expired') {
+  if (sheet === 'start' || sheet === 'expired claim') {
     if (startWalkin.has(status)) return 'WALKIN';
     if (startPickup.has(status)) return 'PICKUP';
   }
@@ -2013,6 +2040,7 @@ function sortSheetDataByHeaderSpecsPreserveFilter_(sheet, specs, headerRowIndex)
 
   // Prefer filter range when filter exists.
   let filter = null;
+  try { if (typeof __expandSheetFilterToUsedRange06_ === 'function') __expandSheetFilterToUsedRange06_(sheet); } catch (e0) {}
   try { filter = sheet.getFilter ? sheet.getFilter() : null; } catch (e) { filter = null; }
   if (!filter) return sortSheetDataByHeaderSpecs_(sheet, specs, headerRowIndex);
 
