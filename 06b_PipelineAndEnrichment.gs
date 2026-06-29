@@ -1245,6 +1245,7 @@ function applyStrictSubmissionDateAndMonth06b_(ss, rawValues, headerIndexRaw) {
 
     if (outSubDate) {
       const rg = sh.getRange(2, idxSubDateOps + 1, n, 1);
+      try { rg.clearDataValidations(); } catch (eDvSubDate) {}
       rg.setValues(outSubDate);
       rg.setNumberFormat('dd MMM yy');
     }

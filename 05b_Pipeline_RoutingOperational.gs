@@ -229,6 +229,24 @@ function normalizeScKeywordText05b_(v) {
     .trim();
 }
 
+function __shouldPreserveSubHighlight05b_(pic, bg, note) {
+  if (String(pic || '').trim().toUpperCase() !== 'SUB') return false;
+  if (String(note || '').trim() === '') return false;
+  const policy = getOperationalClaimHighlightPolicy_();
+  const markerColors = [
+    policy.expired && policy.expired.bg,
+    policy.flex && policy.flex.bg,
+    policy.b2b && policy.b2b.bg,
+    policy.duplicate && policy.duplicate.bg,
+    policy.secondYear && policy.secondYear.bg,
+    policy.firstMonthPolicy && policy.firstMonthPolicy.bg,
+    policy.remaining1Month && policy.remaining1Month.bg,
+    policy.migrationPolicy && policy.migrationPolicy.bg
+  ].map(normalizeColor_).filter(Boolean);
+  const c = normalizeColor_(bg);
+  return !!c && markerColors.indexOf(c) > -1;
+}
+
 
 function filterScTargets05b_(targets, scNameVal, scFarhan, scMeilani, scIvan, kwFarhan, kwMeilani, kwIvan, scFallback) {
   if (!targets || !targets.length) return targets || [];
@@ -1078,7 +1096,7 @@ const __setNotes05b__ = (range, matrix, sheetName) => {
         if (notes[i][0] !== desiredNote) { notes[i][0] = desiredNote; noteChanged = true; }
       } else {
         const curMarker = markerFromNote_(notes[i][0]);
-        if (curMarker) {
+        if (curMarker && String(pic || '').trim().toUpperCase() !== 'SUB') {
           if (notes[i][0] !== '') { notes[i][0] = ''; noteChanged = true; }
         }
       }
@@ -1092,7 +1110,7 @@ const __setNotes05b__ = (range, matrix, sheetName) => {
         if (normalizeColor_(bgs[i][0]) !== normalizeColor_(desiredBg)) { bgs[i][0] = desiredBg; bgChanged = true; }
       } else {
         // Clear only our marker colors to avoid wiping user formatting.
-        if (isMarkerBg_(bgs[i][0])) { bgs[i][0] = ''; bgChanged = true; }
+        if (isMarkerBg_(bgs[i][0]) && !__shouldPreserveSubHighlight05b_(pic, bgs[i][0], notes[i][0])) { bgs[i][0] = ''; bgChanged = true; }
       }
     }
 

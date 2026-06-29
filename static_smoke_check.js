@@ -160,8 +160,155 @@ function runSmoke() {
     throw new Error('05a header-index regression guard failed: ' + JSON.stringify(guard || {}));
   }
 
+  const workflowGuard = vm.runInContext(`(function () {
+    function makeGridSheet(name, data) {
+      return {
+        name: name,
+        data: data,
+        getName: function () { return name; },
+        getLastRow: function () { return this.data.length; },
+        getLastColumn: function () { return this.data[0] ? this.data[0].length : 0; },
+        getRange: function (row, col, numRows, numCols) {
+          const sh = this;
+          return {
+            getValues: function () {
+              const out = [];
+              for (let r = 0; r < numRows; r++) {
+                const line = [];
+                for (let c = 0; c < numCols; c++) line.push((sh.data[row - 1 + r] || [])[col - 1 + c]);
+                out.push(line);
+              }
+              return out;
+            },
+            setValues: function (values) {
+              for (let r = 0; r < values.length; r++) {
+                while (sh.data.length <= row - 1 + r) sh.data.push(new Array(sh.getLastColumn()).fill(''));
+                for (let c = 0; c < values[r].length; c++) sh.data[row - 1 + r][col - 1 + c] = values[r][c];
+              }
+            }
+          };
+        }
+      };
+    }
+
+    const b2b = makeGridSheet('B2B', [
+      ['Claim Number', 'Last Status', 'Service Center', 'Last Status Aging', 'Stage Aging'],
+      ['XY', 'INSURANCE_CLAIM_REVIEW', 'Old SC', 37, 37]
+    ]);
+    const b2bChanged = updateB2BStatusServiceCenterFromRaw05c_(b2b, [
+      ['XY', 'SERVICE_CENTER_CLAIM_WAITING_PICKUP_FINISH', 'New SC', 5]
+    ], {
+      claim_number: 0,
+      claim_last_status_name: 1,
+      repairer_location_store_name: 2,
+      days_aging_from_last_activity: 3
+    });
+    const b2bRow = b2b.data[1];
+    const b2bOk = b2bChanged === 1
+      && b2bRow[1] === 'SERVICE_CENTER_CLAIM_WAITING_PICKUP_FINISH'
+      && b2bRow[2] === 'New SC'
+      && b2bRow[3] === 5
+      && b2bRow[4] === 0;
+
+    const policy = getOperationalClaimHighlightPolicy_();
+    const markerBg = policy.remaining1Month.bg;
+    const highlightSheet = {
+      getName: function () { return 'SC - Farhan'; },
+      getLastRow: function () { return 2; },
+      getLastColumn: function () { return 1; },
+      values: [['Claim Number'], ['ABC']],
+      bgs: [[markerBg]],
+      notes: [['Flagging retained from MAIN\\n\\nSubmission Date : 25 May 26']],
+      getRange: function (row, col, numRows, numCols) {
+        const sh = this;
+        return {
+          getValues: function () {
+            if (row === 1) return [sh.values[0].slice(0, numCols)];
+            return [[sh.values[row - 1][col - 1]]];
+          },
+          getBackgrounds: function () { return sh.bgs.map(function (r) { return r.slice(); }); },
+          setBackgrounds: function (v) { sh.bgs = v.map(function (r) { return r.slice(); }); },
+          getNotes: function () { return sh.notes.map(function (r) { return r.slice(); }); },
+          setNotes: function (v) { sh.notes = v.map(function (r) { return r.slice(); }); }
+        };
+      }
+    };
+    const ss = { getSheetByName: function () { return highlightSheet; } };
+    applyOperationalClaimHighlightsByRaw_(ss, [['ABC']], { claim_number: 0 }, 'SUB');
+    const highlightOk = typeof __shouldPreserveSubHighlight05b_ === 'function'
+      && __shouldPreserveSubHighlight05b_('SUB', markerBg, 'Flagging retained from MAIN') === true
+      && highlightSheet.notes[0][0].indexOf('Flagging retained from MAIN') === 0
+      && normalizeColor_(highlightSheet.bgs[0][0]) === normalizeColor_(markerBg);
+
+    const finishCloneOk = typeof __shouldKeepScRowAndCloneFinishSub06a_ === 'function'
+      && __shouldKeepScRowAndCloneFinishSub06a_('SERVICE_CENTER_CLAIM_WAITING_PICKUP_FINISH') === true;
+
+    const parsedSubmissionDate = normalizeDate_('25 May 26');
+    const submissionDateOk = parsedSubmissionDate
+      && parsedSubmissionDate.getFullYear() === 2026
+      && parsedSubmissionDate.getMonth() === 4
+      && parsedSubmissionDate.getDate() === 25;
+
+    const strictSheet = {
+      data: [
+        ['Claim Number', 'Submission Date', 'Submission by Month'],
+        ['XY', true, 'stale']
+      ],
+      validationActive: true,
+      validationCleared: false,
+      numberFormats: {},
+      getLastRow: function () { return this.data.length; },
+      getLastColumn: function () { return this.data[0].length; },
+      getRange: function (row, col, numRows, numCols) {
+        const sh = this;
+        return {
+          getValues: function () {
+            const out = [];
+            for (let r = 0; r < numRows; r++) {
+              const line = [];
+              for (let c = 0; c < numCols; c++) line.push(sh.data[row - 1 + r][col - 1 + c]);
+              out.push(line);
+            }
+            return out;
+          },
+          setValues: function (values) {
+            for (let r = 0; r < values.length; r++) {
+              for (let c = 0; c < values[r].length; c++) {
+                const targetCol = col - 1 + c;
+                const v = values[r][c];
+                sh.data[row - 1 + r][targetCol] = (targetCol === 1 && sh.validationActive && v instanceof Date) ? true : v;
+              }
+            }
+          },
+          clearDataValidations: function () {
+            if (col === 2) {
+              sh.validationActive = false;
+              sh.validationCleared = true;
+            }
+            return this;
+          },
+          setNumberFormat: function (fmt) { sh.numberFormats[col] = fmt; return this; }
+        };
+      }
+    };
+    const strictSs = { getSheetByName: function (name) { return name === 'Submission' ? strictSheet : null; } };
+    applyStrictSubmissionDateAndMonth06b_(strictSs, [['XY', '25 May 26']], { claim_number: 0, claim_submitted_datetime: 1 });
+    const strictVal = strictSheet.data[1][1];
+    const strictSyncOk = strictSheet.validationCleared
+      && strictVal instanceof Date
+      && strictVal.getFullYear() === 2026
+      && strictVal.getMonth() === 4
+      && strictVal.getDate() === 25
+      && strictSheet.numberFormats[2] === 'dd MMM yy';
+
+    return { ok: b2bOk && highlightOk && finishCloneOk && submissionDateOk && strictSyncOk, b2bOk, highlightOk, finishCloneOk, submissionDateOk, strictSyncOk, strictVal: String(strictVal), validationCleared: strictSheet.validationCleared, b2bRow: b2bRow, bg: highlightSheet.bgs[0][0], note: highlightSheet.notes[0][0] };
+  })()`, ctx);
+  if (!workflowGuard || workflowGuard.ok !== true) {
+    throw new Error('MAIN/SUB workflow regression guard failed: ' + JSON.stringify(workflowGuard || {}, null, 2));
+  }
+
   console.log('✅ static_smoke_check: PASS');
-  console.log(JSON.stringify({ ok: report.ok, warnings: report.warnings || [], summary: report.summary || {}, guard: guard }, null, 2));
+  console.log(JSON.stringify({ ok: report.ok, warnings: report.warnings || [], summary: report.summary || {}, guard: guard, workflowGuard: workflowGuard }, null, 2));
 }
 
 try {

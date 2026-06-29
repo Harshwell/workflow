@@ -2408,6 +2408,15 @@ function __getStatusTypeSub06a_(lastStatus) {
   return '';
 }
 
+function __shouldKeepScRowAndCloneFinishSub06a_(status) {
+  const s = String(status || '').trim();
+  if (!s) return false;
+  try {
+    if (typeof isFinishStatus05a_ === 'function' && isFinishStatus05a_(s)) return true;
+  } catch (e0) {}
+  return /FINISH/i.test(s);
+}
+
 /** SUB relocation: ensure each row sits in the operational sheet that matches its Last Status mapping.
  *  - Moves FULL row (all columns) and preserves existing fields.
  *  - Deduplicates by Claim Number (keeps latest by Last Status Date when available).
@@ -2415,7 +2424,7 @@ function __getStatusTypeSub06a_(lastStatus) {
  */
 function __relocateOperationalRowsByLastStatusSub06a_(ss, sheetNames) {
   const names = Array.isArray(sheetNames) ? sheetNames : [];
-  const res = { moved: 0, dedupDeleted: 0, sheets: {} };
+  const res = { moved: 0, clonedToFinish: 0, dedupDeleted: 0, sheets: {} };
 
   const routingMap = __getSubRoutingMap06a_();
   const routingIdxRaw = (typeof buildRoutingIndex06_ === 'function') ? buildRoutingIndex06_(routingMap) : __buildRoutingIndexLocalSub06a_(routingMap);
@@ -2561,16 +2570,25 @@ function __relocateOperationalRowsByLastStatusSub06a_(ss, sheetNames) {
       if (scPolicy.sharedStatusSet.has(status)) {
         candidates = scPolicy.scSheets.filter(function (n) { return !!ss.getSheetByName(n); });
       }
-      if (typeof isFinishStatus05a_ === 'function' && isFinishStatus05a_(status) && ss.getSheetByName('Finish')) {
-        candidates = Array.isArray(candidates) ? candidates.slice() : [];
-        if (candidates.indexOf('Finish') === -1) candidates.push('Finish');
-      }
+      const keepScAndCloneFinish = __shouldKeepScRowAndCloneFinishSub06a_(status) && !!ss.getSheetByName('Finish');
       if (!candidates || !candidates.length) continue;
 
       const scName = (idxSc >= 0) ? row[idxSc] : '';
-      let dest = (typeof isFinishStatus05a_ === 'function' && isFinishStatus05a_(status) && ss.getSheetByName('Finish'))
-        ? 'Finish'
-        : pickDest(status, scName, candidates);
+      if (keepScAndCloneFinish) {
+        const scSheets = scPolicy.scSheets.filter(function (n) { return !!ss.getSheetByName(n); });
+        const scDest = pickDest(status, scName, scSheets);
+        if (scDest && scDest !== sheetName && !(exclusiveTokenClaim && scDest === scFallbackSheet)) {
+          movesBySource[sheetName] = movesBySource[sheetName] || [];
+          movesBySource[sheetName].push({ row1Based: r + 1, claim, dest: scDest, rowVals: row.slice(), srcHdr: d.hdr, copyOnly: sheetName === 'Finish' });
+        }
+        if (sheetName !== 'Finish') {
+          movesBySource[sheetName] = movesBySource[sheetName] || [];
+          movesBySource[sheetName].push({ row1Based: r + 1, claim, dest: 'Finish', rowVals: row.slice(), srcHdr: d.hdr, copyOnly: true, finishClone: true });
+        }
+        continue;
+      }
+
+      let dest = pickDest(status, scName, candidates);
       if (exclusiveTokenClaim && dest === scFallbackSheet) continue;
 
       // [Inference] If a row is already in SC - Farhan but Service Center is outside allowlist, push it to SC - Meilani as a safe default.
@@ -2835,14 +2853,16 @@ function __relocateOperationalRowsByLastStatusSub06a_(ss, sheetNames) {
         tgt.map.set(mv.claim, [appendRow]);
       }
 
-      res.moved++;
+      if (mv.finishClone) res.clonedToFinish++;
+      else res.moved++;
       res.sheets[srcName] = res.sheets[srcName] || {};
-      res.sheets[srcName].moved = (res.sheets[srcName].moved || 0) + 1;
+      if (mv.finishClone) res.sheets[srcName].clonedToFinish = (res.sheets[srcName].clonedToFinish || 0) + 1;
+      else res.sheets[srcName].moved = (res.sheets[srcName].moved || 0) + 1;
     }
 
     // Delete sources (including dedupe deletes)
     const delSet = deletesBySheet[srcName] || new Set();
-    list.forEach(mv => delSet.add(mv.row1Based));
+    list.forEach(mv => { if (!mv.copyOnly) delSet.add(mv.row1Based); });
 
     const delRows = Array.from(delSet).sort((a, b) => b - a);
     if (!isDryRun_()) {
