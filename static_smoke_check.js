@@ -29,6 +29,12 @@ const SOURCE_FILES = [
 
 function createContext() {
   const labelStub = { getName: () => '', getThreads: () => [] };
+  const scriptProperties = {};
+  const scriptPropertiesStub = {
+    getProperty: (key) => Object.prototype.hasOwnProperty.call(scriptProperties, key) ? scriptProperties[key] : null,
+    setProperty: (key, value) => { scriptProperties[key] = String(value); },
+    deleteProperty: (key) => { delete scriptProperties[key]; }
+  };
   const threadStub = {
     getId: () => 'thread',
     getMessages: () => [],
@@ -65,7 +71,7 @@ function createContext() {
     Logger: { log: () => {} },
     Session: { getScriptTimeZone: () => 'Asia/Jakarta' },
     PropertiesService: {
-      getScriptProperties: () => ({ getProperty: () => null, setProperty: () => {} }),
+      getScriptProperties: () => scriptPropertiesStub,
       getDocumentProperties: () => ({ getProperty: () => null, setProperty: () => {} })
     },
     CacheService: {
@@ -357,7 +363,24 @@ function runSmoke() {
       && stageMissingRaw === 0
       && stageBlankRaw === 0;
 
-    return { ok: b2bOk && highlightOk && finishCloneOk && submissionDateOk && strictSyncOk && smartStageAgingOk, b2bOk, highlightOk, finishCloneOk, submissionDateOk, strictSyncOk, smartStageAgingOk, stageSameBucket, stageChangedBucket, stageMissingRaw, stageBlankRaw, strictVal: String(strictVal), validationCleared: strictSheet.validationCleared, b2bRow: b2bRow, bg: highlightSheet.bgs[0][0], note: highlightSheet.notes[0][0] };
+    const pendingMarked = __markSubPendingAfterBusyLock06a_('smoke-main-busy');
+    const pendingBeforeDrain = __hasPendingSubAfterMain06a_();
+    const pendingConsumed = __consumePendingSubAfterMain06a_();
+    const pendingAfterDrain = __hasPendingSubAfterMain06a_();
+    const originalTryLock = withTryScriptLock_;
+    withTryScriptLock_ = function () { return { acquired: false, result: null }; };
+    const busyLockResult = __withTryLockSub06a_(function () { return { shouldNotRun: true }; });
+    const busyLockPendingConsumed = __consumePendingSubAfterMain06a_();
+    withTryScriptLock_ = originalTryLock;
+    const pendingSubOk = pendingMarked === true
+      && pendingBeforeDrain === true
+      && pendingConsumed === true
+      && pendingAfterDrain === false
+      && busyLockResult
+      && busyLockResult.pending === true
+      && busyLockPendingConsumed === true;
+
+    return { ok: b2bOk && highlightOk && finishCloneOk && submissionDateOk && strictSyncOk && smartStageAgingOk && pendingSubOk, b2bOk, highlightOk, finishCloneOk, submissionDateOk, strictSyncOk, smartStageAgingOk, pendingSubOk, stageSameBucket, stageChangedBucket, stageMissingRaw, stageBlankRaw, strictVal: String(strictVal), validationCleared: strictSheet.validationCleared, b2bRow: b2bRow, bg: highlightSheet.bgs[0][0], note: highlightSheet.notes[0][0] };
   })()`, ctx);
   if (!workflowGuard || workflowGuard.ok !== true) {
     throw new Error('MAIN/SUB workflow regression guard failed: ' + JSON.stringify(workflowGuard || {}, null, 2));

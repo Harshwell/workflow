@@ -17,6 +17,7 @@ Formatnya sengaja sederhana: **Added / Changed / Fixed**. Tidak perlu sok formal
 - `Special Case` kembali fokus MAIN-only; SUB/FORM tidak lagi memproses atau strict-sync sheet tersebut.
 - SUB cross-sheet relocation kini smart-reset `Stage Aging`: bucket status lama/baru yang sama memakai aging source sheet tujuan dari `Raw Data`, sedangkan bucket berubah atau referensi kosong tetap reset ke `0`.
 - Filter range aktif diexpand ke full used range sebelum MAIN/SUB write/sort agar hidden/out-of-filter rows tetap ikut update.
+- SUB yang kena lock saat MAIN berjalan sekarang ditandai pending dan didrain otomatis setelah MAIN selesai, bukan hilang sebagai skip biasa.
 - Flag `Migration Policy` dari `Claimed Active Policies` menjadi prioritas highlight tertinggi dan digabung dengan note flag lain.
 - `Store Name` operational sekarang diisi dari `Raw Data.outlet_name`.
 - `B2B` MAIN hanya mengambil row dengan `id_business_partner_category_name = B2B Partnership`; SUB hanya memperbarui `Last Status` dan `Service Center` pada claim yang sudah ada.

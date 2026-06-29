@@ -24,6 +24,7 @@ Update kontrak MAIN/SUB/FORM:
 - filter aktif diexpand ke full used range sebelum MAIN/SUB write/sort agar row yang sedang hidden/out-of-filter tetap ikut update.
 - flag `Migration Policy` dari `Claimed Active Policies` menjadi prioritas warna tertinggi dan note-nya digabung dengan flag lain.
 - `Submission Date` strict-sync diperluas ke operational/optional sheets aktif dan nilai boolean existing tidak dipertahankan, supaya tidak ada output `TRUE`.
+- Jika SUB trigger kena lock saat MAIN masih berjalan, SUB ditandai pending dan langsung dijalankan setelah MAIN selesai melepas lock.
 - `IMEI/SN` ditulis sebagai plain text tanpa koma ribuan.
 - `Expired Claim` mendapat fallback `Service Type = Ask Detail` untuk `CLAIM_EXPIRE`, serta ikut autofill `Branch` dan `Service Center PIC`.
 - `Store Name` operational diisi dari `Raw Data.outlet_name`.

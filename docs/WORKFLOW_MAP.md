@@ -170,6 +170,7 @@ Perubahan kontrak terbaru:
 - `Special Case` diproses MAIN-only; SUB/FORM tidak menjalankan writer atau strict sync terhadap sheet ini.
 - SUB refresh ikut meng-upsert `EV-Bike` dan `Doss` dari `Raw OLD` / `Raw NEW`.
 - MAIN/SUB expand active filters ke full used range sebelum write/sort supaya row yang sedang hidden/out-of-filter tetap ikut update.
+- Jika SUB trigger berjalan saat MAIN masih memegang script lock, SUB hanya mencatat pending marker; setelah MAIN selesai dan lock dilepas, MAIN langsung menjalankan pending SUB satu kali.
 - `Claimed Active Policies` menjadi flag prioritas tertinggi untuk highlight/note claim number.
 - Strict sync `Submission Date` / `Submission by Month` berlaku untuk semua operational/optional sheets aktif; nilai boolean existing tidak dipakai sebagai fallback.
 - `IMEI/SN` dipaksa plain text dan dinormalisasi tanpa separator koma.

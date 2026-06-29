@@ -205,6 +205,62 @@ function withLock_(fn) {
   }
 }
 
+function __subPendingAfterMainPropKey06a_() {
+  return 'WORKFLOW_SUB_PENDING_AFTER_MAIN';
+}
+
+function __markSubPendingAfterBusyLock06a_(reason) {
+  try {
+    const props = PropertiesService.getScriptProperties();
+    props.setProperty(__subPendingAfterMainPropKey06a_(), JSON.stringify({
+      at: new Date().toISOString(),
+      reason: String(reason || 'lock_busy').slice(0, 120)
+    }));
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
+function __hasPendingSubAfterMain06a_() {
+  try {
+    return !!PropertiesService.getScriptProperties().getProperty(__subPendingAfterMainPropKey06a_());
+  } catch (e) {
+    return false;
+  }
+}
+
+function __consumePendingSubAfterMain06a_() {
+  try {
+    const props = PropertiesService.getScriptProperties();
+    const key = __subPendingAfterMainPropKey06a_();
+    if (!props.getProperty(key)) return false;
+    props.deleteProperty(key);
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
+function __drainPendingSubAfterMain06a_(source) {
+  if (!__consumePendingSubAfterMain06a_()) {
+    return { severity: 'INFO', message: 'No pending SUB after MAIN', skipped: true };
+  }
+  try {
+    resetRunState_();
+    logLine_('SUB_PENDING', 'Run pending SUB after MAIN completed', String(source || 'MAIN'), '', 'INFO');
+  } catch (e0) {}
+  try {
+    return runSubEmailIngest(1, { forceAfterMain: true });
+  } catch (err) {
+    try {
+      __markSubPendingAfterBusyLock06a_('drain_failed');
+      logLine_('SUB_PENDING_WARN', 'Pending SUB drain failed; keep pending for next trigger', String(err), '', 'WARN');
+    } catch (e1) {}
+    return { severity: 'WARN', message: 'Pending SUB drain failed: ' + String(err), failed: 1 };
+  }
+}
+
 /** =========================
  * Run state reset
  * ========================= */
@@ -931,7 +987,9 @@ function runEmailIngest(maxThreads) {
   // Success => markRead + removeLabel(QUEUED_MAIN) + moveToTrash
   // Error   => leave as-is in QUEUED_MAIN for automatic retry
   try { if (typeof resetRuntime_ === 'function') resetRuntime_(); } catch (err0) {}
-  return withLock_(() => {
+  let mainOkForPendingSub = false;
+  try {
+    const mainResult = withLock_(() => {
     resetRunState_();
     if (PIPELINE_FLAGS.CLEAR_LOG_BEFORE_RUN) clearLogSheet_();
 
@@ -1077,7 +1135,12 @@ function runEmailIngest(maxThreads) {
     } finally {
       try { __logOverviewDuration06_('Master', startedAt, ssTiming); } catch (e2) {}
     }
-  });
+    });
+    mainOkForPendingSub = String((mainResult && mainResult.severity) ? mainResult.severity : 'INFO').toUpperCase() !== 'ERROR';
+    return mainResult;
+  } finally {
+    if (mainOkForPendingSub) __drainPendingSubAfterMain06a_('EMAIL_MAIN');
+  }
 }
 
 
@@ -1116,17 +1179,18 @@ function installSubEmailIngestTrigger() {
  *   - OLD: last_status == SUBMITTED
  *   - NEW: last_status == CLAIM_INITIATE
  * - After both succeed: cleanup email (markRead + remove label + trash)
- * - Anti-bentrok: uses tryLock; if lock busy, SKIP without error
+ * - Anti-bentrok: uses tryLock; if lock busy, mark pending so MAIN can drain SUB after finishing.
  */
-function runSubEmailIngest(maxThreads) {
+function runSubEmailIngest(maxThreads, options) {
   try { if (typeof resetRuntime_ === 'function') resetRuntime_(); } catch (err0) {}
   try { if (typeof runtimePreflight06f_ === 'function') runtimePreflight06f_('SUB_PIPELINE'); } catch (ePf) {}
+  const opt = options || {};
 
   // Skip 08:00 hour to avoid collision with MAIN daily ingest.
   try {
     const tz = (typeof getTzSafe_ === 'function') ? getTzSafe_() : (Session.getScriptTimeZone() || 'Asia/Jakarta');
     const hr = Number(Utilities.formatDate(new Date(), tz, 'H'));
-    if (hr === 8) {
+    if (hr === 8 && !opt.forceAfterMain) {
       try { resetRunState_(); logLine_('SUB_SKIP', 'Skip SUB at 08:00 to avoid MAIN', '', '', 'INFO'); } catch (e1) {}
       return { severity: 'INFO', message: 'Skip SUB at 08:00', processed: 0, failed: 0, skipped: true };
     }
@@ -1471,7 +1535,7 @@ function __refreshTokenOptionalSheetsFromSubRaw06a_(ss, rawSheetNames) {
   return out;
 }
 
-/** Try-lock wrapper for SUB (skip when busy). */
+/** Try-lock wrapper for SUB: mark pending when busy so MAIN can drain it after completion. */
 function __withTryLockSub06a_(fn) {
   // Prefer shared utility if available (keeps behavior consistent across modules).
   if (typeof withTryScriptLock_ === 'function') {
@@ -1479,22 +1543,24 @@ function __withTryLockSub06a_(fn) {
     if (!lr || !lr.acquired) {
       try {
         resetRunState_();
+        __markSubPendingAfterBusyLock06a_('lock_busy_shared');
         logLine_('SUB_SKIP', 'Skip SUB: lock busy (likely MAIN running)', '', '', 'INFO');
       } catch (e1) {}
-      return { severity: 'INFO', message: 'Skip SUB (lock busy)', processed: 0, failed: 0, skipped: true };
+      return { severity: 'INFO', message: 'SUB pending after MAIN (lock busy)', processed: 0, failed: 0, skipped: true, pending: true };
     }
     return lr.result;
   }
 
   // Fallback local try-lock.
   const lock = LockService.getScriptLock();
-  const ok = lock.tryLock(750); // short try-lock; SUB is hourly and must be non-blocking
+  const ok = lock.tryLock(750); // short try-lock; SUB records pending instead of waiting inside the trigger.
   if (!ok) {
     try {
       resetRunState_();
+      __markSubPendingAfterBusyLock06a_('lock_busy_local');
       logLine_('SUB_SKIP', 'Skip SUB: lock busy (likely MAIN running)', '', '', 'INFO');
     } catch (e1) {}
-    return { severity: 'INFO', message: 'Skip SUB (lock busy)', processed: 0, failed: 0, skipped: true };
+    return { severity: 'INFO', message: 'SUB pending after MAIN (lock busy)', processed: 0, failed: 0, skipped: true, pending: true };
   }
   try {
     return (typeof fn === 'function') ? fn() : null;
@@ -3186,7 +3252,9 @@ function runManual(picOrFileIdsCsv, fileIdsCsvMaybe) {
 
   const key = resolveSpreadsheetKey_(pic);
 
-  return withLock_(() => {
+  let mainOkForPendingSub = false;
+  try {
+    const mainResult = withLock_(() => {
     resetRunState_();
     if (PIPELINE_FLAGS.CLEAR_LOG_BEFORE_RUN) clearLogSheet_();
 
@@ -3223,7 +3291,12 @@ function runManual(picOrFileIdsCsv, fileIdsCsvMaybe) {
     finally {
       try { __logOverviewDuration06_(key, startedAt, ssTiming); } catch (e2) {}
     }
-  });
+    });
+    mainOkForPendingSub = String((mainResult && mainResult.severity) ? mainResult.severity : 'INFO').toUpperCase() !== 'ERROR';
+    return mainResult;
+  } finally {
+    if (mainOkForPendingSub) __drainPendingSubAfterMain06a_('MANUAL_MAIN');
+  }
 }
 
 
