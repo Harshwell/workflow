@@ -249,7 +249,59 @@ function runSmoke() {
       && parsedSubmissionDate.getMonth() === 4
       && parsedSubmissionDate.getDate() === 25;
 
-    return { ok: b2bOk && highlightOk && finishCloneOk && submissionDateOk, b2bOk, highlightOk, finishCloneOk, submissionDateOk, b2bRow: b2bRow, bg: highlightSheet.bgs[0][0], note: highlightSheet.notes[0][0] };
+    const strictSheet = {
+      data: [
+        ['Claim Number', 'Submission Date', 'Submission by Month'],
+        ['XY', true, 'stale']
+      ],
+      validationActive: true,
+      validationCleared: false,
+      numberFormats: {},
+      getLastRow: function () { return this.data.length; },
+      getLastColumn: function () { return this.data[0].length; },
+      getRange: function (row, col, numRows, numCols) {
+        const sh = this;
+        return {
+          getValues: function () {
+            const out = [];
+            for (let r = 0; r < numRows; r++) {
+              const line = [];
+              for (let c = 0; c < numCols; c++) line.push(sh.data[row - 1 + r][col - 1 + c]);
+              out.push(line);
+            }
+            return out;
+          },
+          setValues: function (values) {
+            for (let r = 0; r < values.length; r++) {
+              for (let c = 0; c < values[r].length; c++) {
+                const targetCol = col - 1 + c;
+                const v = values[r][c];
+                sh.data[row - 1 + r][targetCol] = (targetCol === 1 && sh.validationActive && v instanceof Date) ? true : v;
+              }
+            }
+          },
+          clearDataValidations: function () {
+            if (col === 2) {
+              sh.validationActive = false;
+              sh.validationCleared = true;
+            }
+            return this;
+          },
+          setNumberFormat: function (fmt) { sh.numberFormats[col] = fmt; return this; }
+        };
+      }
+    };
+    const strictSs = { getSheetByName: function (name) { return name === 'Submission' ? strictSheet : null; } };
+    applyStrictSubmissionDateAndMonth06b_(strictSs, [['XY', '25 May 26']], { claim_number: 0, claim_submitted_datetime: 1 });
+    const strictVal = strictSheet.data[1][1];
+    const strictSyncOk = strictSheet.validationCleared
+      && strictVal instanceof Date
+      && strictVal.getFullYear() === 2026
+      && strictVal.getMonth() === 4
+      && strictVal.getDate() === 25
+      && strictSheet.numberFormats[2] === 'dd MMM yy';
+
+    return { ok: b2bOk && highlightOk && finishCloneOk && submissionDateOk && strictSyncOk, b2bOk, highlightOk, finishCloneOk, submissionDateOk, strictSyncOk, strictVal: String(strictVal), validationCleared: strictSheet.validationCleared, b2bRow: b2bRow, bg: highlightSheet.bgs[0][0], note: highlightSheet.notes[0][0] };
   })()`, ctx);
   if (!workflowGuard || workflowGuard.ok !== true) {
     throw new Error('MAIN/SUB workflow regression guard failed: ' + JSON.stringify(workflowGuard || {}, null, 2));
