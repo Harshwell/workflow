@@ -779,7 +779,7 @@ function normalizeDate_(value) {
     feb:1, februari:1,
     mar:2, maret:2,
     apr:3, april:3,
-    mei:4,
+    mei:4, may:4,
     jun:5, juni:5,
     jul:6, juli:6,
     agu:7, ags:7, agustus:7, aug:7, august:7,

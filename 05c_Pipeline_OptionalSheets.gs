@@ -228,6 +228,34 @@ function __setDbLinkRichTextSegments_(sh, colIndex0, rowNums, urlMap) {
  *  ========================= */
 
 /** Optional: B2B — enabled by default. Set RUNTIME.enableB2B = false to disable. */
+function __getB2BStatusRouteBucket05c_(status) {
+  const s = String(status || '').trim().toUpperCase();
+  if (!s) return '';
+  try {
+    if (typeof isFinishStatus05a_ === 'function' && isFinishStatus05a_(s)) return 'Finish';
+  } catch (e0) {}
+  const policy = (typeof OPS_ROUTING_POLICY !== 'undefined' && OPS_ROUTING_POLICY) ? OPS_ROUTING_POLICY : null;
+  const bySheet = policy && policy.LAST_STATUS_BY_SHEET ? policy.LAST_STATUS_BY_SHEET : {};
+  const keys = Object.keys(bySheet || {});
+  for (let i = 0; i < keys.length; i++) {
+    const sheet = keys[i];
+    const arr = bySheet[sheet] || [];
+    for (let j = 0; j < arr.length; j++) {
+      if (String(arr[j] || '').trim().toUpperCase() === s) {
+        return sheet === '__SC_SHARED__' ? 'SC' : sheet;
+      }
+    }
+  }
+  return s;
+}
+
+function __shouldResetB2BStageAging05c_(prevStatus, nextStatus) {
+  const prev = String(prevStatus || '').trim();
+  const next = String(nextStatus || '').trim();
+  if (!prev || !next || prev === next) return false;
+  return __getB2BStatusRouteBucket05c_(prev) !== __getB2BStatusRouteBucket05c_(next);
+}
+
 function updateB2BStatusServiceCenterFromRaw05c_(sh, rawValues, headerIndexRaw) {
   if (!sh || !rawValues || !rawValues.length) return 0;
   const h = CONFIG.headers || {};
@@ -238,6 +266,12 @@ function updateB2BStatusServiceCenterFromRaw05c_(sh, rawValues, headerIndexRaw) 
     (headerIndexRaw[h.serviceCenter] != null) ? headerIndexRaw[h.serviceCenter] :
     (headerIndexRaw['sc_name'] != null) ? headerIndexRaw['sc_name'] :
     headerIndexRaw['service_center'];
+  const idxLsaRaw =
+    (headerIndexRaw[h.lastStatusAging] != null) ? headerIndexRaw[h.lastStatusAging] :
+    (headerIndexRaw['days_aging_from_last_activity'] != null) ? headerIndexRaw['days_aging_from_last_activity'] :
+    (headerIndexRaw['last_status_aging'] != null) ? headerIndexRaw['last_status_aging'] :
+    (headerIndexRaw['Last Status Aging'] != null) ? headerIndexRaw['Last Status Aging'] :
+    headerIndexRaw['LSA'];
   if (idxClaimRaw == null) return 0;
 
   const byClaim = Object.create(null);
@@ -247,7 +281,8 @@ function updateB2BStatusServiceCenterFromRaw05c_(sh, rawValues, headerIndexRaw) 
     if (!claim) continue;
     byClaim[claim] = {
       lastStatus: idxLastRaw != null ? row[idxLastRaw] : '',
-      serviceCenter: idxScRaw != null ? row[idxScRaw] : ''
+      serviceCenter: idxScRaw != null ? row[idxScRaw] : '',
+      lastStatusAging: idxLsaRaw != null ? row[idxLsaRaw] : ''
     };
   }
 
@@ -259,19 +294,26 @@ function updateB2BStatusServiceCenterFromRaw05c_(sh, rawValues, headerIndexRaw) 
   const idxClaim = idxH['Claim Number'];
   const idxLast = idxH['Last Status'];
   const idxSc = idxH['Service Center'] != null ? idxH['Service Center'] : idxH['Service Center Name'];
-  if (idxClaim == null || (idxLast == null && idxSc == null)) return 0;
+  const idxLsa = idxH['Last Status Aging'] != null ? idxH['Last Status Aging'] : idxH['LSA'];
+  const idxStage = idxH['Stage Aging'];
+  if (idxClaim == null || (idxLast == null && idxSc == null && idxLsa == null && idxStage == null)) return 0;
 
   const n = lr - 1;
   const claimVals = sh.getRange(2, idxClaim + 1, n, 1).getValues();
   const lastVals = idxLast != null ? sh.getRange(2, idxLast + 1, n, 1).getValues() : null;
   const scVals = idxSc != null ? sh.getRange(2, idxSc + 1, n, 1).getValues() : null;
+  const lsaVals = idxLsa != null ? sh.getRange(2, idxLsa + 1, n, 1).getValues() : null;
+  const stageVals = idxStage != null ? sh.getRange(2, idxStage + 1, n, 1).getValues() : null;
   let changed = 0;
   let lastChanged = false;
   let scChanged = false;
+  let lsaChanged = false;
+  let stageChanged = false;
   for (let r = 0; r < claimVals.length; r++) {
     const claim = String(claimVals[r][0] || '').trim().toUpperCase();
     const rec = claim ? byClaim[claim] : null;
     if (!rec) continue;
+    const prevLast = lastVals ? lastVals[r][0] : '';
     if (lastVals && rec.lastStatus !== '' && rec.lastStatus != null) {
       lastVals[r][0] = rec.lastStatus;
       lastChanged = true;
@@ -280,11 +322,22 @@ function updateB2BStatusServiceCenterFromRaw05c_(sh, rawValues, headerIndexRaw) 
       scVals[r][0] = rec.serviceCenter;
       scChanged = true;
     }
+    if (lsaVals && rec.lastStatusAging !== '' && rec.lastStatusAging != null) {
+      const lsa = (typeof normalizeInt_ === 'function') ? normalizeInt_(rec.lastStatusAging) : Number(rec.lastStatusAging);
+      lsaVals[r][0] = (lsa != null && !isNaN(lsa)) ? lsa : rec.lastStatusAging;
+      lsaChanged = true;
+    }
+    if (stageVals && __shouldResetB2BStageAging05c_(prevLast, rec.lastStatus)) {
+      stageVals[r][0] = 0;
+      stageChanged = true;
+    }
     changed++;
   }
   if (changed && !__isDryRun05c__()) {
     if (lastChanged) sh.getRange(2, idxLast + 1, n, 1).setValues(lastVals);
     if (scChanged) sh.getRange(2, idxSc + 1, n, 1).setValues(scVals);
+    if (lsaChanged) sh.getRange(2, idxLsa + 1, n, 1).setValues(lsaVals);
+    if (stageChanged) sh.getRange(2, idxStage + 1, n, 1).setValues(stageVals);
   }
   return changed;
 }
@@ -317,7 +370,7 @@ function processB2B_(ss, rawValues, headerIndexRaw, pic) { // `pic` kept for bac
   const idxIns = headerIndexRaw[h.insuranceCode];
   const idxInsPartner = (h.insurancePartnerName && headerIndexRaw[h.insurancePartnerName] != null)
     ? headerIndexRaw[h.insurancePartnerName]
-    : headerIndexRaw['insurance_partner_name'];
+    : (headerIndexRaw['insurance_partner_name'] != null ? headerIndexRaw['insurance_partner_name'] : idxIns);
   const idxSource =
     (headerIndexRaw[h.sourceSystem] != null) ? headerIndexRaw[h.sourceSystem]
     : (headerIndexRaw['source_system_name'] != null) ? headerIndexRaw['source_system_name']
@@ -1101,6 +1154,127 @@ rowsOut.push(out);
 }
 
 /** Optional: EV-Bike — enabled by default. Set RUNTIME.enableEvBike = false to disable. */
+function updateTokenOptionalSheetFromSubRaw05c_(sh, rawValues, headerIndexRaw, opts) {
+  if (!sh || !rawValues || !rawValues.length) return 0;
+  opts = opts || {};
+  const h = CONFIG.headers || {};
+  const token = String(opts.claimToken || '').trim().toUpperCase();
+  const partnerPatterns = (opts.partnerPatterns || []).map(function (s) { return String(s || '').toLowerCase(); }).filter(Boolean);
+  const idxClaim = headerIndexRaw[h.claimNumber] != null ? headerIndexRaw[h.claimNumber] : headerIndexRaw['claim_number'];
+  if (idxClaim == null) return 0;
+
+  const idxLastStatus = headerIndexRaw[h.lastStatus] != null ? headerIndexRaw[h.lastStatus] : headerIndexRaw['claim_last_status_name'];
+  const idxLsa =
+    (headerIndexRaw[h.lastStatusAging] != null) ? headerIndexRaw[h.lastStatusAging] :
+    (headerIndexRaw['days_aging_from_last_activity'] != null) ? headerIndexRaw['days_aging_from_last_activity'] :
+    (headerIndexRaw['last_status_aging'] != null) ? headerIndexRaw['last_status_aging'] :
+    headerIndexRaw['LSA'];
+  const idxPartner = headerIndexRaw[h.businessPartner] != null ? headerIndexRaw[h.businessPartner] : headerIndexRaw['partner_name'];
+  const idxOwner = headerIndexRaw['holder_name'] != null ? headerIndexRaw['holder_name'] : headerIndexRaw['customer_name'];
+  const idxPolicy = headerIndexRaw['qoala_policy_number'] != null ? headerIndexRaw['qoala_policy_number'] : headerIndexRaw['policy_number'];
+  const idxSum = headerIndexRaw[h.sumInsured] != null ? headerIndexRaw[h.sumInsured] : headerIndexRaw['sum_insured_amount'];
+  const idxDashboard = headerIndexRaw[h.dashboardLink] != null ? headerIndexRaw[h.dashboardLink] : headerIndexRaw['dashboard_link'];
+  const idxInsPartner = (h.insurancePartnerName && headerIndexRaw[h.insurancePartnerName] != null)
+    ? headerIndexRaw[h.insurancePartnerName]
+    : (headerIndexRaw['insurance_partner_name'] != null ? headerIndexRaw['insurance_partner_name'] : headerIndexRaw[h.insuranceCode]);
+
+  const recs = [];
+  const seen = new Set();
+  for (let i = 0; i < rawValues.length; i++) {
+    const row = rawValues[i] || [];
+    const claim = String(row[idxClaim] || '').trim();
+    const claimUp = claim.toUpperCase();
+    if (!claimUp || seen.has(claimUp)) continue;
+    const partner = String(idxPartner != null ? row[idxPartner] : '').toLowerCase();
+    const matchClaim = token ? claimUp.indexOf(token) > -1 : false;
+    const matchPartner = partnerPatterns.some(function (p) { return p && partner.indexOf(p) > -1; });
+    if (!matchClaim && !matchPartner) continue;
+    seen.add(claimUp);
+    recs.push({
+      claim: claim,
+      key: claimUp,
+      row: row,
+      lastStatus: idxLastStatus != null ? row[idxLastStatus] : '',
+      lastStatusAging: idxLsa != null ? row[idxLsa] : '',
+      partnerName: idxPartner != null ? row[idxPartner] : '',
+      ownerName: idxOwner != null ? row[idxOwner] : '',
+      policyNumber: idxPolicy != null ? row[idxPolicy] : '',
+      sumInsured: idxSum != null ? row[idxSum] : '',
+      insurance: idxInsPartner != null ? mapInsuranceShort_(row[idxInsPartner]) : '',
+      dbUrl: idxDashboard != null ? String(row[idxDashboard] || '').trim() : ''
+    });
+  }
+  if (!recs.length) return 0;
+
+  const header = __getHeaderRow05c_(sh);
+  const idxH = buildHeaderIndex_(header);
+  const claimCol = idxH['Claim Number'];
+  if (claimCol == null) return 0;
+
+  const existing = sh.getLastRow() > 1 ? sh.getRange(2, 1, sh.getLastRow() - 1, header.length).getValues() : [];
+  const byClaim = {};
+  for (let i = 0; i < existing.length; i++) {
+    const c = String(existing[i][claimCol] || '').trim().toUpperCase();
+    if (c && byClaim[c] == null) byClaim[c] = i;
+  }
+
+  const values = existing.slice();
+  const dbLinkCol0 = idxH['DB Link'];
+  const urlMap = {};
+  const touchedRows = [];
+  let changed = 0;
+
+  function set(out, name, value) {
+    const j = idxH[name];
+    if (j != null) out[j] = value != null ? value : '';
+  }
+
+  recs.forEach(function (rec) {
+    let pos = byClaim[rec.key];
+    if (pos != null) {
+      const out = values[pos];
+      if (idxH['Last Status'] != null && rec.lastStatus !== '' && rec.lastStatus != null) set(out, 'Last Status', rec.lastStatus);
+      if (idxH['Last Status Aging'] != null && rec.lastStatusAging !== '' && rec.lastStatusAging != null) {
+        const lsa = (typeof normalizeInt_ === 'function') ? normalizeInt_(rec.lastStatusAging) : Number(rec.lastStatusAging);
+        set(out, 'Last Status Aging', (lsa != null && !isNaN(lsa)) ? lsa : rec.lastStatusAging);
+      }
+      changed++;
+      return;
+    }
+
+    const out = new Array(header.length).fill('');
+    set(out, 'Submission Date', buildSubmissionDateCell_(rec.row, headerIndexRaw));
+    set(out, 'Claim Number', rec.claim);
+    const dbUrl = rec.dbUrl || ((typeof buildDashboardLinkFromClaimNumber_ === 'function') ? buildDashboardLinkFromClaimNumber_(rec.claim) : '');
+    set(out, 'DB Link', dbUrl ? 'LINK' : '');
+    set(out, 'Owner Name', rec.ownerName);
+    set(out, 'Policy Number', rec.policyNumber);
+    set(out, 'Partner Name', rec.partnerName);
+    set(out, 'Insurance', rec.insurance);
+    set(out, 'Sum Insured', rec.sumInsured);
+    set(out, 'Last Status', rec.lastStatus);
+    if (rec.lastStatusAging !== '' && rec.lastStatusAging != null) {
+      const lsa = (typeof normalizeInt_ === 'function') ? normalizeInt_(rec.lastStatusAging) : Number(rec.lastStatusAging);
+      set(out, 'Last Status Aging', (lsa != null && !isNaN(lsa)) ? lsa : rec.lastStatusAging);
+    }
+    pos = values.length;
+    byClaim[rec.key] = pos;
+    values.push(out);
+    if (dbUrl && dbLinkCol0 != null) {
+      const rn = 2 + pos;
+      touchedRows.push(rn);
+      urlMap[rn] = dbUrl;
+    }
+    changed++;
+  });
+
+  if (changed && !__isDryRun05c__()) {
+    safeSetValues_(sh.getRange(2, 1, values.length, header.length), values);
+    if (dbLinkCol0 != null && touchedRows.length) __setDbLinkRichTextSegments_(sh, dbLinkCol0, touchedRows, urlMap);
+  }
+  return changed;
+}
+
 function processEVBike_(ss, rawValues, headerIndexRaw, pic, opts) { // `pic` kept for backward compatibility
   // Default ON. Only skip when explicitly disabled.
   if (typeof RUNTIME !== 'undefined' && RUNTIME && RUNTIME.enableEvBike === false) return 0;
@@ -1113,6 +1287,17 @@ function processEVBike_(ss, rawValues, headerIndexRaw, pic, opts) { // `pic` kep
   const logLabel = targetSheetName === 'Doss' ? 'DOSS_METRICS' : 'EVBIKE_METRICS';
   const sh = ss.getSheetByName(targetSheetName);
   if (!sh) return 0;
+
+  const flowName = String((typeof RUNTIME !== 'undefined' && RUNTIME && RUNTIME.flowName) ? RUNTIME.flowName : '').trim().toLowerCase();
+  if (flowName === 'sub' || String(pic || '').trim().toUpperCase() === 'SUB') {
+    const patternsSub = targetSheetName === 'Doss'
+      ? []
+      : (CONFIG.patterns.evBikePartners || []).map(s => String(s || '').toLowerCase());
+    return updateTokenOptionalSheetFromSubRaw05c_(sh, rawValues, headerIndexRaw, {
+      claimToken: targetClaimToken,
+      partnerPatterns: patternsSub
+    });
+  }
 
   const idxClaim = headerIndexRaw[h.claimNumber];
   if (idxClaim == null) return 0;
@@ -1134,7 +1319,7 @@ function processEVBike_(ss, rawValues, headerIndexRaw, pic, opts) { // `pic` kep
   const idxIns = headerIndexRaw[h.insuranceCode];
   const idxInsPartner = (h.insurancePartnerName && headerIndexRaw[h.insurancePartnerName] != null)
     ? headerIndexRaw[h.insurancePartnerName]
-    : headerIndexRaw['insurance_partner_name'];
+    : (headerIndexRaw['insurance_partner_name'] != null ? headerIndexRaw['insurance_partner_name'] : idxIns);
 
   let header = __getHeaderRow05c_(sh);
   let idxH = buildHeaderIndex_(header);

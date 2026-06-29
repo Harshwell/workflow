@@ -722,7 +722,9 @@ const EVBIKE_POLICY = Object.freeze({
     'Partner Name',
     'Insurance',
     'Sum Insured',
-    'DB Link'
+    'DB Link',
+    'Last Status',
+    'Last Status Aging'
   ]),
 
   // Manual columns (must never be overwritten)

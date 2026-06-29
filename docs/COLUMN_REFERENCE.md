@@ -33,20 +33,21 @@ These rules supersede older rows in this reference where legacy columns are stil
 | Deprecated derived columns | `DB` and operational `Status Type` are no longer written by MAIN/SUB/FORM sheet writers. `DB Link` remains active. |
 | Stage aging rename | Operational `Aging Position` / `Aging Post.` is renamed to `Stage Aging`; `Submission` excludes this field. |
 | Stage aging sources | `Ask Detail` <- `Aging Ask Detail`; `Start` <- `Aging Start`; SC owner sheets <- `Aging SC Receive`; `PO` <- `Aging Ins Approve`; `Finish` <- `Aging Finish`; `Expired Claim` <- `Aging Expired`. |
-| SUB Stage Aging movement | When SUB relocates a claim across operational sheets because status mapping changed, destination `Stage Aging` is reset to `0`. MAIN is responsible for filling sheet-specific aging detail again. |
+| SUB Stage Aging movement | When SUB relocates a claim across operational sheets because status mapping changed, destination `Stage Aging` is reset to `0`. MAIN is responsible for filling sheet-specific aging detail again. B2B also resets `Stage Aging` to `0` when SUB changes the status bucket. |
 | Detailed Submission TAT | Only sheet `Submission` uses decimal-day `TAT`, calculated from `claim_submitted_datetime` to the runtime timestamp. Other sheets keep raw `days_aging_from_submission` behavior. |
 | SUB new rows | New rows appended from SUB use `claim_submitted_datetime` for `Submission Date`, month derived from that datetime, decimal `TAT`, `last_status_aging`, and `activity_log_aging`. |
+| Finish duplication | Finish-status claims remain in their SC Universe sheet and are also cloned into `Finish`; matching headers are copied, and Finish-specific columns are filled when available. |
 | Expired Claim routing | `CLAIM_EXPIRE` and `CLAIM_EXPIRE_WALKIN` route to sheet `Expired Claim`. |
 | Expired Claim movement | `Expired Claim` stays inside SUB relocation scope, so claims can move out of it when `Last Status` changes to another mapped sheet. |
 | Finance exclusions | `Claim Amount`, `Claim Own Risk Amount`, `Nett Claim Amount`, and `% Approval` are ignored/removed on `Submission`, `Ask Detail`, `Start`, `Finish`, and `Expired Claim`. |
 | Service Type | `Start`, `Finish`, and `Expired Claim` read `device_checkin_option_name`; if missing, configured status fallbacks produce `WALKIN` / `PICKUP`, and `Expired Claim` with `CLAIM_EXPIRE` becomes `Ask Detail`. |
 | IMEI/SN format | `IMEI/SN` is written as plain text and normalized without comma separators. |
 | Store Name | Operational `Store Name` is sourced from `Raw Data.outlet_name` when available. |
-| EV-Bike | Claim numbers containing `VVMAR` are included in `EV-Bike` regardless of last status. SUB also refreshes EV-Bike from `Raw OLD` / `Raw NEW`. |
+| EV-Bike | Claim numbers containing `VVMAR` are included in `EV-Bike` regardless of last status. SUB adds missing token claims from `Raw OLD` / `Raw NEW`, but existing rows only refresh `Last Status` and `Last Status Aging`. |
 | Doss | Sheet `Doss` follows the EV-Bike writer shape but only includes claim numbers containing `DOSS`. |
 | SC - Unmapped exclusion | Claim numbers containing `VVMAR` or `DOSS` are excluded from `SC - Unmapped`; those claims belong to `EV-Bike` / `Doss`. |
 | B2B/EV-Bike/Doss cleanup | `Status Type`, `Start Date`, `End Date`, and `Details` are removed from `B2B`, `EV-Bike`, and `Doss`. |
-| B2B scope | MAIN writes B2B only when `Raw Data.id_business_partner_category_name` is `B2B Partnership`; SUB only updates existing B2B `Last Status` and `Service Center` by claim number. |
+| B2B scope | MAIN writes B2B only when `Raw Data.id_business_partner_category_name` is `B2B Partnership`; SUB updates existing B2B `Last Status`, `Last Status Aging`, `Stage Aging`, and `Service Center` by claim number. |
 | Special Case | `Special Case` is written only by MAIN. SUB/FORM do not process or strict-sync this sheet. All flagged claims are retained regardless of done/closed status. `Start Date`, `End Date`, and `Details` remain active for Special Case flag notes. |
 | Migration Policy flag | `Claimed Active Policies.policy_number` is matched to `Raw Data.qoala_policy_number` or SUB `policy_number` sources when available. Migration Policy has highest highlight priority and its note is placed before other flag notes. |
 | Active filters | MAIN/SUB expand active sheet filters to the full used range before write/sort, preserving criteria where possible, so rows outside the current filter range are still processed. |
@@ -362,7 +363,7 @@ Detection rule:
 | Signal | Meaning |
 | --- | --- |
 | `id_business_partner_category_name = B2B Partnership` | MAIN row is a B2B candidate. |
-| SUB flow | Does not append/rebuild B2B; only updates `Last Status` and `Service Center` for matching existing `Claim Number`. |
+| SUB flow | Does not rebuild B2B; updates existing `Last Status`, `Last Status Aging`, `Stage Aging`, and `Service Center` for matching `Claim Number`. `Stage Aging` resets to `0` when the status bucket changes. |
 
 Output columns:
 
@@ -465,6 +466,7 @@ Output columns:
 | `Sum Insured` | Raw-driven or Submission fallback | `sum_insured_amount` or `Submission.Sum Insured`. |
 | `TAT` | Derived fallback | Derived from `Submission Date` to current date when needed. |
 | `Last Status` | Raw-driven or Submission fallback | Current raw last status or `Submission.Last Status`. |
+| `Last Status Aging` | Raw-driven | `days_aging_from_last_activity`; SUB refreshes this for existing EV-Bike/Doss rows without touching other managed identity columns. |
 | `Status` | Manual/restored | Manual EV-Bike status field; preserved and not overwritten when possible. |
 
 Note: the runtime writer currently removes deprecated `Start Date`, `End Date`, and `Details` columns from EV-Bike if they are still present.
@@ -493,7 +495,7 @@ EV-Bike has an overlay behavior: Raw Data rows are the main source, but `Submiss
 
 ### B2B Claim
 
-A claim is treated as B2B only when MAIN Raw Data has `id_business_partner_category_name = B2B Partnership`. SUB does not create B2B rows; it only updates `Last Status` and `Service Center` for matching existing `Claim Number`.
+A claim is treated as B2B only when MAIN Raw Data has `id_business_partner_category_name = B2B Partnership`. SUB does not rebuild B2B rows; it only updates `Last Status`, `Last Status Aging`, `Stage Aging`, and `Service Center` for matching existing `Claim Number`.
 
 ### Special Case And Policy-Age Flags
 

@@ -335,7 +335,7 @@ const SV03_TEMPLATES = Object.freeze({
   ]),
 
   EV_BIKE: Object.freeze([
-    'Submission Date','Claim Number','DB Link','Owner Name','Policy Number','Partner Name','Insurance','Sum Insured','Status'
+    'Submission Date','Claim Number','DB Link','Owner Name','Policy Number','Partner Name','Insurance','Sum Insured','Last Status','Last Status Aging','Status'
   ])
 });
 
