@@ -33,7 +33,7 @@ These rules supersede older rows in this reference where legacy columns are stil
 | Deprecated derived columns | `DB` and operational `Status Type` are no longer written by MAIN/SUB/FORM sheet writers. `DB Link` remains active. |
 | Stage aging rename | Operational `Aging Position` / `Aging Post.` is renamed to `Stage Aging`; `Submission` excludes this field. |
 | Stage aging sources | `Ask Detail` <- `Aging Ask Detail`; `Start` <- `Aging Start`; SC owner sheets <- `Aging SC Receive`; `PO` <- `Aging Ins Approve`; `Finish` <- `Aging Finish`; `Expired Claim` <- `Aging Expired`. |
-| SUB Stage Aging movement | When SUB relocates a claim across operational sheets because status mapping changed, destination `Stage Aging` is reset to `0`. MAIN is responsible for filling sheet-specific aging detail again. B2B also resets `Stage Aging` to `0` when SUB changes the status bucket. |
+| SUB Stage Aging movement | When SUB relocates a claim across operational sheets, it compares the old status bucket from `Raw Data` with the new status bucket from `Raw NEW`. Same bucket uses the destination sheet aging source from `Raw Data`; changed bucket, missing claim, or blank source resets `Stage Aging` to `0`. B2B also resets `Stage Aging` to `0` when SUB changes the status bucket. |
 | Detailed Submission TAT | Only sheet `Submission` uses decimal-day `TAT`, calculated from `claim_submitted_datetime` to the runtime timestamp. Other sheets keep raw `days_aging_from_submission` behavior. |
 | SUB new rows | New rows appended from SUB use `claim_submitted_datetime` for `Submission Date`, month derived from that datetime, decimal `TAT`, `last_status_aging`, and `activity_log_aging`. |
 | Finish duplication | Finish-status claims remain in their SC Universe sheet and are also cloned into `Finish`; matching headers are copied, and Finish-specific columns are filled when available. |
@@ -325,7 +325,7 @@ Common PIC destination columns:
 | `Buss. Category` | Raw-driven | `id_business_partner_category_name`. |
 | `PM Name` | Raw-driven | `pm_name`. |
 | `APM Name` | Raw-driven | `apm_name`. |
-| `Stage Aging` | Raw-driven by sheet | `Aging Ask Detail` on `Ask Detail`, `Aging Start` on `Start`, `Aging SC Receive` on SC owner sheets, `Aging Ins Approve` on `PO`, `Aging Finish` on `Finish`, `Aging Expired` on `Expired Claim`; excluded from `Submission`. |
+| `Stage Aging` | Raw-driven by sheet | `Aging Ask Detail` on `Ask Detail`, `Aging Start` on `Start`, `Aging SC Receive` on SC owner sheets, `Aging Ins Approve` on `PO`, `Aging Finish` on `Finish`, `Aging Expired` on `Expired Claim`; excluded from `Submission`. During SUB relocation, this value is reused from `Raw Data` only when old/new status buckets match. |
 | `Service Type` | Raw-driven by sheet | `device_checkin_option_name` on `Start`, `Finish`, and `Expired Claim`; if blank/missing, status fallback maps to `WALKIN` / `PICKUP`. |
 
 SC destination sheets also include:

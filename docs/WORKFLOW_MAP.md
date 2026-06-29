@@ -161,7 +161,7 @@ Perubahan kontrak terbaru:
 - `DB`, `Status Type`, `Update Status Asso`, `Timestamp Asso`, `Update Status Admin`, dan `Timestamp Admin` tidak lagi dibuat/diisi oleh writer operational.
 - `Aging Position` / `Aging Post.` dinormalisasi menjadi `Stage Aging`.
 - `Stage Aging` diisi dari source aging per sheet dan tidak berlaku untuk `Submission`.
-- SUB relocation mereset `Stage Aging` menjadi `0` ketika klaim pindah operational sheet; MAIN mengisi ulang value detail dari Raw Data.
+- SUB relocation membandingkan bucket status lama di `Raw Data` dan status baru di `Raw NEW`: bucket sama memakai aging source sheet tujuan dari `Raw Data`, bucket berubah atau referensi kosong mereset `Stage Aging` ke `0`.
 - `Submission.TAT` dihitung lebih detail dari `claim_submitted_datetime` sampai runtime, sehingga nilai seperti `14,2` bisa muncul sesuai locale sheet.
 - `CLAIM_EXPIRE` dan `CLAIM_EXPIRE_WALKIN` masuk ke sheet `Expired Claim`.
 - `Expired Claim` ikut relocation SUB, sehingga klaim bisa bergerak keluar dari expired saat last status berubah.

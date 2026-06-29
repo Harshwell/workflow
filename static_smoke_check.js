@@ -301,7 +301,63 @@ function runSmoke() {
       && strictVal.getDate() === 25
       && strictSheet.numberFormats[2] === 'dd MMM yy';
 
-    return { ok: b2bOk && highlightOk && finishCloneOk && submissionDateOk && strictSyncOk, b2bOk, highlightOk, finishCloneOk, submissionDateOk, strictSyncOk, strictVal: String(strictVal), validationCleared: strictSheet.validationCleared, b2bRow: b2bRow, bg: highlightSheet.bgs[0][0], note: highlightSheet.notes[0][0] };
+    const routingMap = __getSubRoutingMap06a_();
+    const routingIdxRaw = (typeof buildRoutingIndex06_ === 'function') ? buildRoutingIndex06_(routingMap) : __buildRoutingIndexLocalSub06a_(routingMap);
+    const routingIdx = __normalizeRoutingIndexSub06a_(routingIdxRaw);
+    const scPolicy = __getScRoutingPolicySub06a_();
+    const rawStageRef = {
+      headerIndex: {
+        claim_number: 0,
+        claim_last_status_name: 1,
+        'Aging SC Receive': 2,
+        aging_sc_receive: 2,
+        'Aging Ins Approve': 3,
+        aging_ins_approve: 3
+      },
+      map: new Map([
+        ['CLAIMSC', ['CLAIMSC', 'SERVICE_CENTER_CLAIM_ESTIMATE', 32, 44]],
+        ['CLAIMPO', ['CLAIMPO', 'SERVICE_CENTER_CLAIM_ESTIMATE', 33, 45]],
+        ['CLAIMBLANK', ['CLAIMBLANK', 'SERVICE_CENTER_CLAIM_ESTIMATE', '', 46]]
+      ])
+    };
+    const stageSameBucket = __resolveMovedStageAgingSub06a_(
+      'CLAIMSC',
+      'SC - Farhan',
+      'SERVICE_CENTER_CLAIM_RESUBMIT_ESTIMATE',
+      rawStageRef,
+      routingIdx,
+      scPolicy
+    );
+    const stageChangedBucket = __resolveMovedStageAgingSub06a_(
+      'CLAIMPO',
+      'PO',
+      'CUSTOMER_WAITING_PAYMENT_DEDUCTIBLE_EXCESS_FEE_REPLACE',
+      rawStageRef,
+      routingIdx,
+      scPolicy
+    );
+    const stageMissingRaw = __resolveMovedStageAgingSub06a_(
+      'CLAIMNEW',
+      'SC - Farhan',
+      'SERVICE_CENTER_CLAIM_RESUBMIT_ESTIMATE',
+      rawStageRef,
+      routingIdx,
+      scPolicy
+    );
+    const stageBlankRaw = __resolveMovedStageAgingSub06a_(
+      'CLAIMBLANK',
+      'SC - Farhan',
+      'SERVICE_CENTER_CLAIM_RESUBMIT_ESTIMATE',
+      rawStageRef,
+      routingIdx,
+      scPolicy
+    );
+    const smartStageAgingOk = stageSameBucket === 32
+      && stageChangedBucket === 0
+      && stageMissingRaw === 0
+      && stageBlankRaw === 0;
+
+    return { ok: b2bOk && highlightOk && finishCloneOk && submissionDateOk && strictSyncOk && smartStageAgingOk, b2bOk, highlightOk, finishCloneOk, submissionDateOk, strictSyncOk, smartStageAgingOk, stageSameBucket, stageChangedBucket, stageMissingRaw, stageBlankRaw, strictVal: String(strictVal), validationCleared: strictSheet.validationCleared, b2bRow: b2bRow, bg: highlightSheet.bgs[0][0], note: highlightSheet.notes[0][0] };
   })()`, ctx);
   if (!workflowGuard || workflowGuard.ok !== true) {
     throw new Error('MAIN/SUB workflow regression guard failed: ' + JSON.stringify(workflowGuard || {}, null, 2));
