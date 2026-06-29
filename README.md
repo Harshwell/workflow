@@ -20,7 +20,7 @@ Update kontrak MAIN/SUB/FORM:
 - `EV-Bike` menerima klaim `VVMAR` tanpa pengecualian status; `Doss` menerima klaim `DOSS`.
 - `SC - Unmapped` mengecualikan claim `VVMAR` / `DOSS`; claim tersebut masuk sheet eksklusifnya.
 - `Special Case` diproses hanya di MAIN; kolom `Start Date`, `End Date`, dan `Details` dipulihkan untuk note flagging.
-- SUB relocation mereset `Stage Aging` menjadi `0` saat klaim pindah sheet; MAIN yang mengisi ulang aging detail.
+- SUB relocation membandingkan bucket status `Raw Data` vs `Raw NEW`: bucket sama memakai aging source sheet tujuan dari `Raw Data`, bucket berubah atau referensi kosong mereset `Stage Aging` ke `0`.
 - filter aktif diexpand ke full used range sebelum MAIN/SUB write/sort agar row yang sedang hidden/out-of-filter tetap ikut update.
 - flag `Migration Policy` dari `Claimed Active Policies` menjadi prioritas warna tertinggi dan note-nya digabung dengan flag lain.
 - `Submission Date` strict-sync diperluas ke operational/optional sheets aktif dan nilai boolean existing tidak dipertahankan, supaya tidak ada output `TRUE`.

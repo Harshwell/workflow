@@ -15,7 +15,7 @@ Formatnya sengaja sederhana: **Added / Changed / Fixed**. Tidak perlu sok formal
 - `CLAIM_EXPIRE` dan `CLAIM_EXPIRE_WALKIN` dipindahkan ke sheet `Expired Claim`.
 - `EV-Bike` sekarang menerima klaim token `VVMAR` tanpa pengecualian status; sheet baru `Doss` menerima klaim token `DOSS`.
 - `Special Case` kembali fokus MAIN-only; SUB/FORM tidak lagi memproses atau strict-sync sheet tersebut.
-- SUB cross-sheet relocation mereset `Stage Aging` menjadi `0`; nilai detail aging berikutnya hanya diisi ulang oleh MAIN.
+- SUB cross-sheet relocation kini smart-reset `Stage Aging`: bucket status lama/baru yang sama memakai aging source sheet tujuan dari `Raw Data`, sedangkan bucket berubah atau referensi kosong tetap reset ke `0`.
 - Filter range aktif diexpand ke full used range sebelum MAIN/SUB write/sort agar hidden/out-of-filter rows tetap ikut update.
 - Flag `Migration Policy` dari `Claimed Active Policies` menjadi prioritas highlight tertinggi dan digabung dengan note flag lain.
 - `Store Name` operational sekarang diisi dari `Raw Data.outlet_name`.

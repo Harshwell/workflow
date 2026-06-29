@@ -2417,6 +2417,92 @@ function __shouldKeepScRowAndCloneFinishSub06a_(status) {
   return /FINISH/i.test(s);
 }
 
+function __loadMainRawRowsForSubStageAging06a_(ss) {
+  const out = { map: new Map(), headerIndex: {} };
+  try {
+    const rawName = (typeof MASTER_RAW_SHEET_NAME !== 'undefined' && MASTER_RAW_SHEET_NAME) ? MASTER_RAW_SHEET_NAME : 'Raw Data';
+    const sh = ss ? ss.getSheetByName(rawName) : null;
+    if (!sh) return out;
+    const lr = sh.getLastRow();
+    const lc = sh.getLastColumn();
+    if (lr < 2 || lc < 1) return out;
+    const values = sh.getRange(1, 1, lr, lc).getValues();
+    const header = (values[0] || []).map(function (h) { return String(h || '').trim(); });
+    let headerIndex = (typeof buildHeaderIndex_ === 'function') ? buildHeaderIndex_(header) : {};
+    if (typeof applyRawHeaderAliases_ === 'function') headerIndex = applyRawHeaderAliases_(headerIndex);
+    const idxClaim = __findRawIdxForSubStageAging06a_(headerIndex, ['claim_number', 'Claim Number']);
+    if (idxClaim == null) return out;
+    out.headerIndex = headerIndex;
+    for (let r = 1; r < values.length; r++) {
+      const row = values[r] || [];
+      const claim = __normalizeClaimKeySub06a_(row[idxClaim]);
+      if (!claim || out.map.has(claim)) continue;
+      out.map.set(claim, row);
+    }
+  } catch (e) {}
+  return out;
+}
+
+function __findRawIdxForSubStageAging06a_(headerIndex, candidates) {
+  if (!headerIndex) return null;
+  const list = candidates || [];
+  for (let i = 0; i < list.length; i++) {
+    const k = list[i];
+    if (k && headerIndex[k] != null) return headerIndex[k];
+  }
+  const keys = Object.keys(headerIndex);
+  const norm = function (v) {
+    if (typeof normalizeHeaderKey_ === 'function') return normalizeHeaderKey_(v);
+    return String(v || '').trim().toLowerCase().replace(/\s+/g, ' ');
+  };
+  const wanted = list.map(norm);
+  for (let i = 0; i < keys.length; i++) {
+    const nk = norm(keys[i]);
+    if (wanted.indexOf(nk) > -1) return headerIndex[keys[i]];
+  }
+  return null;
+}
+
+function __getRawValueForSubStageAging06a_(row, headerIndex, candidates) {
+  const idx = __findRawIdxForSubStageAging06a_(headerIndex, candidates);
+  if (idx == null || !row) return '';
+  return row[idx];
+}
+
+function __canonicalSubRoutingBucket06a_(sheetOrStatus, routingIdx, scPolicy) {
+  const raw = String(sheetOrStatus || '').trim();
+  if (!raw) return '';
+  const lower = raw.toLowerCase();
+  if (lower === 'sc - farhan' || lower === 'sc - meilani' || lower === 'sc - meindar' || lower === 'sc - unmapped' || lower === '__sc_shared__') return 'SC';
+
+  const status = __normalizeRoutingStatusKeySub06a_(raw);
+  if (status) {
+    try {
+      if (typeof isFinishStatus05a_ === 'function' && isFinishStatus05a_(status)) return 'FINISH';
+    } catch (e0) {}
+    if (scPolicy && scPolicy.sharedStatusSet && scPolicy.sharedStatusSet.has(status)) return 'SC';
+    const candidates = routingIdx && routingIdx[status] ? routingIdx[status] : null;
+    if (candidates && candidates.length) return __canonicalSubRoutingBucket06a_(candidates[0], routingIdx, scPolicy);
+  }
+
+  return raw.toUpperCase();
+}
+
+function __resolveMovedStageAgingSub06a_(claim, destSheet, newStatus, mainRaw, routingIdx, scPolicy) {
+  const ref = mainRaw && mainRaw.map && mainRaw.map.get ? mainRaw.map.get(__normalizeClaimKeySub06a_(claim)) : null;
+  if (!ref) return 0;
+  const headerIndex = (mainRaw && mainRaw.headerIndex) ? mainRaw.headerIndex : {};
+  const oldStatus = __getRawValueForSubStageAging06a_(ref, headerIndex, ['claim_last_status_name', 'last_status', 'Last Status']);
+  const oldBucket = __canonicalSubRoutingBucket06a_(oldStatus, routingIdx, scPolicy);
+  const newBucket = __canonicalSubRoutingBucket06a_(newStatus, routingIdx, scPolicy);
+  if (!oldBucket || !newBucket || oldBucket !== newBucket) return 0;
+
+  const aging = (typeof resolveStageAgingFromRaw_ === 'function')
+    ? resolveStageAgingFromRaw_(destSheet, function (keys) { return __getRawValueForSubStageAging06a_(ref, headerIndex, keys); })
+    : '';
+  return (aging === '' || aging == null) ? 0 : aging;
+}
+
 /** SUB relocation: ensure each row sits in the operational sheet that matches its Last Status mapping.
  *  - Moves FULL row (all columns) and preserves existing fields.
  *  - Deduplicates by Claim Number (keeps latest by Last Status Date when available).
@@ -2431,6 +2517,7 @@ function __relocateOperationalRowsByLastStatusSub06a_(ss, sheetNames) {
   const routingIdx = __normalizeRoutingIndexSub06a_(routingIdxRaw);
   const scAllow = __getScSheetAllowlistsSub06a_();
   const scPolicy = __getScRoutingPolicySub06a_();
+  const mainRawForStageAging = __loadMainRawRowsForSubStageAging06a_(ss);
 
   // Preload sheet data
   const data = {};
@@ -2579,11 +2666,11 @@ function __relocateOperationalRowsByLastStatusSub06a_(ss, sheetNames) {
         const scDest = pickDest(status, scName, scSheets);
         if (scDest && scDest !== sheetName && !(exclusiveTokenClaim && scDest === scFallbackSheet)) {
           movesBySource[sheetName] = movesBySource[sheetName] || [];
-          movesBySource[sheetName].push({ row1Based: r + 1, claim, dest: scDest, rowVals: row.slice(), srcHdr: d.hdr, copyOnly: sheetName === 'Finish' });
+          movesBySource[sheetName].push({ row1Based: r + 1, claim, dest: scDest, status: status, rowVals: row.slice(), srcHdr: d.hdr, copyOnly: sheetName === 'Finish' });
         }
         if (sheetName !== 'Finish') {
           movesBySource[sheetName] = movesBySource[sheetName] || [];
-          movesBySource[sheetName].push({ row1Based: r + 1, claim, dest: 'Finish', rowVals: row.slice(), srcHdr: d.hdr, copyOnly: true, finishClone: true });
+          movesBySource[sheetName].push({ row1Based: r + 1, claim, dest: 'Finish', status: status, rowVals: row.slice(), srcHdr: d.hdr, copyOnly: true, finishClone: true });
         }
         continue;
       }
@@ -2605,7 +2692,7 @@ function __relocateOperationalRowsByLastStatusSub06a_(ss, sheetNames) {
       if (!dest || dest === sheetName) continue;
 
       movesBySource[sheetName] = movesBySource[sheetName] || [];
-      movesBySource[sheetName].push({ row1Based: r + 1, claim, dest, rowVals: row.slice(), srcHdr: d.hdr });
+      movesBySource[sheetName].push({ row1Based: r + 1, claim, dest, status: status, rowVals: row.slice(), srcHdr: d.hdr });
     }
   });
 
@@ -2682,7 +2769,7 @@ function __relocateOperationalRowsByLastStatusSub06a_(ss, sheetNames) {
     };
   }
 
-  function resetMovedRowFieldsByHeader(rowVals, resetIdx) {
+  function resetMovedRowFieldsByHeader(rowVals, resetIdx, stageAgingValue) {
     const out = Array.isArray(rowVals) ? rowVals.slice() : [];
     if (!resetIdx) return out;
     const keys = ['updateStatus', 'timestamp', 'status', 'remarks'];
@@ -2691,7 +2778,7 @@ function __relocateOperationalRowsByLastStatusSub06a_(ss, sheetNames) {
       if (ix != null && ix >= 0 && ix < out.length) out[ix] = '';
     }
     const idxStageAging = resetIdx.stageAging;
-    if (idxStageAging != null && idxStageAging >= 0 && idxStageAging < out.length) out[idxStageAging] = 0;
+    if (idxStageAging != null && idxStageAging >= 0 && idxStageAging < out.length) out[idxStageAging] = (stageAgingValue === '' || stageAgingValue == null) ? 0 : stageAgingValue;
     return out;
   }
 
@@ -2803,7 +2890,8 @@ function __relocateOperationalRowsByLastStatusSub06a_(ss, sheetNames) {
 
       const aligned = alignRowToTarget(mv.srcHdr, mv.rowVals, tgt.hdr, tgt.lc);
       const resetIdx = getResetColumnIndexesByHeader(tgt.hdr);
-      const alignedAfterReset = resetMovedRowFieldsByHeader(aligned, resetIdx);
+      const stageAgingForMove = __resolveMovedStageAgingSub06a_(mv.claim, mv.dest, (mv.status || ''), mainRawForStageAging, routingIdx, scPolicy);
+      const alignedAfterReset = resetMovedRowFieldsByHeader(aligned, resetIdx, stageAgingForMove);
 
       // If claim already exists in target, MERGE non-empty cells to avoid data loss and avoid duplicates.
       const existing = tgt.map.get(mv.claim) || [];
@@ -2817,7 +2905,7 @@ function __relocateOperationalRowsByLastStatusSub06a_(ss, sheetNames) {
             if (alignedAfterReset[c] !== '' && alignedAfterReset[c] != null) merged[c] = alignedAfterReset[c];
           }
           // Always reset manual workflow columns and Stage Aging after cross-sheet movement.
-          const mergedAfterReset = resetMovedRowFieldsByHeader(merged, resetIdx);
+          const mergedAfterReset = resetMovedRowFieldsByHeader(merged, resetIdx, stageAgingForMove);
           tgt.sh.getRange(keepRow, 1, 1, tgt.lc).setValues([mergedAfterReset]);
           applyRichTextLinksToTarget(srcName, mv.row1Based, mv.srcHdr, tgt.sh, tgt.hdr, keepRow, tgt.lc);
         }
@@ -2843,7 +2931,7 @@ function __relocateOperationalRowsByLastStatusSub06a_(ss, sheetNames) {
           if (srcSh && sameSchema) {
             srcSh.getRange(mv.row1Based, 1, 1, tgt.lc)
               .copyTo(tgt.sh.getRange(appendRow, 1, 1, tgt.lc), SpreadsheetApp.CopyPasteType.PASTE_NORMAL, false);
-            const resetRow = resetMovedRowFieldsByHeader(tgt.sh.getRange(appendRow, 1, 1, tgt.lc).getValues()[0], resetIdx);
+            const resetRow = resetMovedRowFieldsByHeader(tgt.sh.getRange(appendRow, 1, 1, tgt.lc).getValues()[0], resetIdx, stageAgingForMove);
             tgt.sh.getRange(appendRow, 1, 1, tgt.lc).setValues([resetRow]);
           } else {
             tgt.sh.getRange(appendRow, 1, 1, tgt.lc).setValues([alignedAfterReset]);
