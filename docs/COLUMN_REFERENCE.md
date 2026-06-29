@@ -39,12 +39,15 @@ These rules supersede older rows in this reference where legacy columns are stil
 | Expired Claim routing | `CLAIM_EXPIRE` and `CLAIM_EXPIRE_WALKIN` route to sheet `Expired Claim`. |
 | Expired Claim movement | `Expired Claim` stays inside SUB relocation scope, so claims can move out of it when `Last Status` changes to another mapped sheet. |
 | Finance exclusions | `Claim Amount`, `Claim Own Risk Amount`, `Nett Claim Amount`, and `% Approval` are ignored/removed on `Submission`, `Ask Detail`, `Start`, `Finish`, and `Expired Claim`. |
-| Service Type | `Start`, `Finish`, and `Expired Claim` read `device_checkin_option_name`; if missing, configured status fallbacks produce `WALKIN` or `PICKUP`. |
+| Service Type | `Start`, `Finish`, and `Expired Claim` read `device_checkin_option_name`; if missing, configured status fallbacks produce `WALKIN` / `PICKUP`, and `Expired Claim` with `CLAIM_EXPIRE` becomes `Ask Detail`. |
+| IMEI/SN format | `IMEI/SN` is written as plain text and normalized without comma separators. |
+| Store Name | Operational `Store Name` is sourced from `Raw Data.outlet_name` when available. |
 | EV-Bike | Claim numbers containing `VVMAR` are included in `EV-Bike` regardless of last status. SUB also refreshes EV-Bike from `Raw OLD` / `Raw NEW`. |
 | Doss | Sheet `Doss` follows the EV-Bike writer shape but only includes claim numbers containing `DOSS`. |
 | SC - Unmapped exclusion | Claim numbers containing `VVMAR` or `DOSS` are excluded from `SC - Unmapped`; those claims belong to `EV-Bike` / `Doss`. |
 | B2B/EV-Bike/Doss cleanup | `Status Type`, `Start Date`, `End Date`, and `Details` are removed from `B2B`, `EV-Bike`, and `Doss`. |
-| Special Case | `Special Case` is written only by MAIN. SUB/FORM do not process or strict-sync this sheet. `Start Date`, `End Date`, and `Details` remain active for Special Case flag notes. |
+| B2B scope | MAIN writes B2B only when `Raw Data.id_business_partner_category_name` is `B2B Partnership`; SUB only updates existing B2B `Last Status` and `Service Center` by claim number. |
+| Special Case | `Special Case` is written only by MAIN. SUB/FORM do not process or strict-sync this sheet. All flagged claims are retained regardless of done/closed status. `Start Date`, `End Date`, and `Details` remain active for Special Case flag notes. |
 | Migration Policy flag | `Claimed Active Policies.policy_number` is matched to `Raw Data.qoala_policy_number` or SUB `policy_number` sources when available. Migration Policy has highest highlight priority and its note is placed before other flag notes. |
 | Active filters | MAIN/SUB expand active sheet filters to the full used range before write/sort, preserving criteria where possible, so rows outside the current filter range are still processed. |
 
@@ -358,8 +361,8 @@ Detection rule:
 
 | Signal | Meaning |
 | --- | --- |
-| Partner name matches configured B2B partner patterns | Row is a B2B candidate. |
-| `Claim Number` contains `SMR` | Row is a B2B claim candidate even if partner matching is incomplete. |
+| `id_business_partner_category_name = B2B Partnership` | MAIN row is a B2B candidate. |
+| SUB flow | Does not append/rebuild B2B; only updates `Last Status` and `Service Center` for matching existing `Claim Number`. |
 
 Output columns:
 
@@ -368,7 +371,6 @@ Output columns:
 | `Submission Date` | Raw-driven | `claim_submitted_datetime`; legacy fallback `claim_submission_date`. |
 | `Claim Number` | Raw-driven | `claim_number`. |
 | `DB Link` | Raw-driven/derived | `dashboard_link`; fallback built from `Claim Number`. |
-| `DB` | Derived/raw-driven | `source_system_name` or DB classification. |
 | `Partner Name` | Raw-driven | `business_partner_name`. |
 | `Insurance` | Raw-driven/normalized | `insurance_partner_name` / insurance code fallback. |
 | `Device Type` | Raw-driven | `device_type`. |
@@ -380,15 +382,12 @@ Output columns:
 | `Last Status Aging` / `LSA` | Raw-driven | `days_aging_from_last_activity`; legacy fallback `last_status_aging` / `LSA`. |
 | `Activity Log Aging` / `ALA` | Raw-driven | `activity_log_aging` / `ALA`. |
 | `TAT` | Raw-driven | `days_aging_from_submission`. |
-| `Start Date`, `End Date`, `Details` | Manual/restored | Manual tracking fields; schema can be auto-healed if missing. |
 | `Sum Insured Amount` | Raw-driven | `sum_insured_amount`. |
 | `Claim Amount` | Raw-driven | Claim amount / nett amount fallback depending on writer path. |
 | `Claim Own Risk Amount` | Raw-driven | `claim_own_risk_amount`. |
 | `Nett Claim Amount` | Raw-driven | `nett_claim_amount`. |
 | `% Approval` | Derived | Approval ratio when numeric source values support it. |
-| `Status Type` | Derived | Added only when the B2B schema contains `Last Status`. |
-
-B2B can also include fallback candidates from `Submission` when a B2B claim is not present in the current Raw window. That fallback exists so short Raw extracts do not accidentally drop active B2B work.
+Deprecated B2B columns `Status Type`, `Start Date`, `End Date`, and `Details` are removed/ignored. B2B no longer uses partner-pattern or `SMR` fallback detection.
 
 ### Special Case
 
@@ -401,7 +400,6 @@ Output columns:
 | `Submission Date` | Raw-driven | `claim_submitted_datetime`; Special Case uses this as the source of truth. |
 | `Claim Number` | Raw-driven | `claim_number`. |
 | `DB Link` | Raw-driven/derived | `dashboard_link`; fallback built from `Claim Number`. |
-| `DB` | Derived/raw-driven | DB classification from claim token, then source value fallback. |
 | `Partner Name` | Raw-driven | `business_partner_name`. |
 | `Insurance` | Raw-driven/normalized | `insurance_partner_name` / insurance code fallback. |
 | `Device Type` | Raw-driven | `device_type`. |
@@ -423,7 +421,6 @@ Output columns:
 | `Reason` | Derived | Joined flags: `Flex`, `Second-Year (Market Value)`, `First-Month Policy`, `Policy Remaining <= 1 Month`. |
 | `Start Date`, `End Date` | Raw-driven when present | Policy start/end dates used for context and details. |
 | `Details` | Derived when present | Human-readable reason detail; written as a column value and/or claim note depending on layout. |
-| `Status Type` | Derived | Added only when the schema contains `Last Status`. |
 
 Special Case flags:
 
@@ -440,7 +437,7 @@ Special Case write policy:
 | --- | --- |
 | Fixed schema | The sheet is user-managed; missing arbitrary columns are not auto-added. |
 | UPSERT mode | Existing claims are updated instead of duplicating rows. |
-| Excluded status pruning | Claims that become done/closed/excluded can be removed when configured. |
+| Excluded status pruning | Disabled for the current contract; all flagged claims are kept for tracking. |
 | Notes/highlights | Flex can color/note Special Case claim cells; policy-age notes/highlights are primarily applied to operational sheets. |
 
 ### EV-Bike
@@ -461,8 +458,8 @@ Output columns:
 | `Submission Date` | Raw-driven or Submission fallback | `claim_submitted_datetime`; fallback from `Submission.Submission Date` when Raw does not contain the EV-Bike claim yet. |
 | `Claim Number` | Raw-driven or Submission fallback | `claim_number` / `Submission.Claim Number`. |
 | `DB Link` | Raw-driven/derived | `dashboard_link`; fallback from `Submission.DB Link` or built from claim number. |
-| `Owner Name` | Raw-driven or Submission fallback | `customer_name` or `Submission.Owner Name` / `Customer Name`. |
-| `Policy Number` | Raw-driven or Submission fallback | `qoala_policy_number` or Submission policy-number variants. |
+| `Owner Name` | Raw-driven or Submission fallback | `holder_name`; fallback `customer_name` or `Submission.Owner Name` / `Customer Name`. |
+| `Policy Number` | Raw-driven or Submission fallback | `qoala_policy_number`; SUB/raw-new fallback `policy_number` or Submission policy-number variants. |
 | `Partner Name` | Raw-driven or Submission fallback | `business_partner_name` or `Submission.Partner Name`. |
 | `Insurance` | Raw-driven/normalized | `insurance_partner_name` / insurance code fallback. |
 | `Sum Insured` | Raw-driven or Submission fallback | `sum_insured_amount` or `Submission.Sum Insured`. |
@@ -496,7 +493,7 @@ EV-Bike has an overlay behavior: Raw Data rows are the main source, but `Submiss
 
 ### B2B Claim
 
-A claim is treated as B2B when either the partner name matches configured B2B partner patterns or the claim number contains `SMR`.
+A claim is treated as B2B only when MAIN Raw Data has `id_business_partner_category_name = B2B Partnership`. SUB does not create B2B rows; it only updates `Last Status` and `Service Center` for matching existing `Claim Number`.
 
 ### Special Case And Policy-Age Flags
 
@@ -553,7 +550,7 @@ Claim highlighting and notes use configured marker policies:
 | --- | --- | --- |
 | `EXPIRED` | `days_to_end_policies <= 0`. | Existing expired-policy marker. |
 | `FLEX` | Flex rule above. | Can appear in Special Case and operational notes. |
-| `B2B` | B2B partner or `SMR` claim token. | Uses B2B claim note. |
+| `B2B` | Raw Data category `B2B Partnership`. | Uses B2B claim note. |
 | `DUPLICATE` | Duplicate detection result. | Uses duplicate comparison across policy/source/status/submission date. |
 | `SECOND_YEAR` | `month_policy_aging > 12`. | Operational claim-cell note/detail; Special Case reason. |
 | `FIRST_MONTH_POLICY` | Submission date within first 30 days of policy start. | Operational claim-cell note/detail; Special Case reason. |
@@ -574,7 +571,7 @@ Use this quick path when a value looks wrong:
 | Second-Year not flagged | Check `month_policy_aging`; exactly `12` does not qualify, only values greater than `12`. |
 | First-Month / Policy Remaining not flagged | Check parsed `claim_submitted_datetime` plus policy start/end datetime. Invalid dates fail closed. |
 | EV-Bike row missing | Check Raw partner pattern, policy exclusion list, then `Submission` overlay fallback. |
-| B2B row missing | Check partner pattern, `SMR` claim token, excluded last-status filtering, and `Submission` fallback. |
+| B2B row missing | Check `id_business_partner_category_name`, excluded last-status filtering, and whether the flow is MAIN or SUB. SUB does not append B2B rows. |
 
 ## Change Checklist
 

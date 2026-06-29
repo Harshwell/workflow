@@ -665,6 +665,9 @@ function __runSubCore06a_(masterSs, oldBlob, newBlob, opt) {
 
   const relocateSheets = __getSubRelocationSheetNames06a_(opSheets);
   const relocateRes = __relocateOperationalRowsByLastStatusSub06a_(masterSs, relocateSheets);
+  try { __refreshTokenOptionalSheetsFromSubRaw06a_(masterSs, [rawOldName, rawNewName]); } catch (eHiMove) {
+    try { logLine_('SUB_HIGHLIGHT_WARN', 'Post-relocation highlight refresh failed', String(eHiMove), '', 'WARN'); } catch (eHiLog) {}
+  }
   const sortRes = __sortOperationalSheetsSub06a_(masterSs, opSheets, sortSpecs);
 
   // WebApp movement tracking (best effort)
@@ -1354,6 +1357,9 @@ try {
     try { setProgressForFlow_('SUB', 0.80, 'Relocate + sort...', { prefixFlowInStep: true }); } catch (eP9) {}
     const relocateSheets = __getSubRelocationSheetNames06a_(opSheets);
     const relocateRes = __relocateOperationalRowsByLastStatusSub06a_(masterSs, relocateSheets);
+    try { __refreshTokenOptionalSheetsFromSubRaw06a_(masterSs, [rawOldName, rawNewName]); } catch (eHiMove) {
+      try { logLine_('SUB_HIGHLIGHT_WARN', 'Post-relocation highlight refresh failed', String(eHiMove), '', 'WARN'); } catch (eHiLog) {}
+    }
     try {
       if (typeof setLogEventContext_ === 'function') {
         const moved = (relocateRes && relocateRes.moved != null) ? relocateRes.moved : '';
@@ -1842,7 +1848,7 @@ function __buildSubRawIndex06a_(values) {
   const idxInsurance = idxOfAny(['insurance_partner_code', 'insurance', 'insurance_code', 'insurance partner code']);
   const idxDeviceType = idxOfAny(['device_type', 'device type']);
   const idxImei = idxOfAny(['device_imei', 'imei/sn', 'imei', 'sn', 'imei/sn']);
-  const idxStoreName = idxOfAny(['business_partner_name', '3. all transaction - qoala_policy_number → outlet_name', 'outlet_name', 'outlet name', 'store_name', 'store name']);
+  const idxStoreName = idxOfAny(['outlet_name', 'outlet name', '3. all transaction - qoala_policy_number → outlet_name', 'store_name', 'store name']);
   const idxPaName = idxOfAny(['3. all transaction - qoala_policy_number → pa_name', 'pa_name', 'pa name']);
   const idxSpaName = idxOfAny(['3. all transaction - qoala_policy_number → spa_name', 'spa_name', 'spa name']);
 
@@ -2037,6 +2043,7 @@ function __updateOperationalSheetsFromRaw06a_(ss, sheetNames, rawMap, ctx) {
     const idxPaName = idxOfAny(['pa name', 'pa_name']);
     const idxSpaName = idxOfAny(['spa name', 'spa_name']);
     const idxServiceCenterPic = idxOfAny(['service center pic', 'service_center_pic']);
+    const idxBranch = idxOfAny(['branch']);
     const idxUpdateStatus = idxOfAny(['update status']);
     const idxTimestamp = idxOfAny(['timestamp']);
     const idxStatus = idxOfAny(['status']);
@@ -2074,6 +2081,7 @@ function __updateOperationalSheetsFromRaw06a_(ss, sheetNames, rawMap, ctx) {
     const outPaName = idxPaName >= 0 ? new Array(numDataRows) : null;
     const outSpaName = idxSpaName >= 0 ? new Array(numDataRows) : null;
     const outServiceCenterPic = idxServiceCenterPic >= 0 ? new Array(numDataRows) : null;
+    const outBranch = idxBranch >= 0 ? new Array(numDataRows) : null;
     const outUpdateStatus = idxUpdateStatus >= 0 ? new Array(numDataRows) : null;
     const outTimestamp = idxTimestamp >= 0 ? new Array(numDataRows) : null;
     const outStatus = idxStatus >= 0 ? new Array(numDataRows).fill(null) : null;
@@ -2105,6 +2113,7 @@ function __updateOperationalSheetsFromRaw06a_(ss, sheetNames, rawMap, ctx) {
       if (outPaName) outPaName[o] = [row[idxPaName]];
       if (outSpaName) outSpaName[o] = [row[idxSpaName]];
       if (outServiceCenterPic) outServiceCenterPic[o] = [row[idxServiceCenterPic]];
+      if (outBranch) outBranch[o] = [row[idxBranch]];
       if (outUpdateStatus) outUpdateStatus[o] = [row[idxUpdateStatus]];
       if (outTimestamp) outTimestamp[o] = [row[idxTimestamp]];
       if (outStatus) outStatus[o] = null;
@@ -2149,6 +2158,10 @@ function __updateOperationalSheetsFromRaw06a_(ss, sheetNames, rawMap, ctx) {
       if (outServiceCenterPic) {
         const scRaw = isNonEmpty(rec.sc_name) ? rec.sc_name : (idxSc >= 0 ? row[idxSc] : '');
         outServiceCenterPic[o] = [__deriveServiceCenterPicSub06a_(scRaw)];
+      }
+      if (outBranch) {
+        const scRaw = isNonEmpty(rec.sc_name) ? rec.sc_name : (idxSc >= 0 ? row[idxSc] : '');
+        outBranch[o] = [(typeof __getBranchFromServiceCenter06_ === 'function') ? __getBranchFromServiceCenter06_(scRaw) : row[idxBranch]];
       }
 
       if (outLastStatusDate && isNonEmpty(rec.claim_last_updated_datetime)) {
@@ -2200,6 +2213,7 @@ function __updateOperationalSheetsFromRaw06a_(ss, sheetNames, rawMap, ctx) {
       writeCol(idxPaName, outPaName);
       writeCol(idxSpaName, outSpaName);
       writeCol(idxServiceCenterPic, outServiceCenterPic);
+      writeCol(idxBranch, outBranch);
       writeCol(idxUpdateStatus, outUpdateStatus);
       writeCol(idxTimestamp, outTimestamp);
       if (idxStatus >= 0 && outStatus) {
@@ -2547,10 +2561,16 @@ function __relocateOperationalRowsByLastStatusSub06a_(ss, sheetNames) {
       if (scPolicy.sharedStatusSet.has(status)) {
         candidates = scPolicy.scSheets.filter(function (n) { return !!ss.getSheetByName(n); });
       }
+      if (typeof isFinishStatus05a_ === 'function' && isFinishStatus05a_(status) && ss.getSheetByName('Finish')) {
+        candidates = Array.isArray(candidates) ? candidates.slice() : [];
+        if (candidates.indexOf('Finish') === -1) candidates.push('Finish');
+      }
       if (!candidates || !candidates.length) continue;
 
       const scName = (idxSc >= 0) ? row[idxSc] : '';
-      let dest = pickDest(status, scName, candidates);
+      let dest = (typeof isFinishStatus05a_ === 'function' && isFinishStatus05a_(status) && ss.getSheetByName('Finish'))
+        ? 'Finish'
+        : pickDest(status, scName, candidates);
       if (exclusiveTokenClaim && dest === scFallbackSheet) continue;
 
       // [Inference] If a row is already in SC - Farhan but Service Center is outside allowlist, push it to SC - Meilani as a safe default.

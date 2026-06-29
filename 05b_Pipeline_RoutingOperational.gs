@@ -362,6 +362,7 @@ function applyOperationalColumnSchema_(sh, header, startRow, nRows, opts) {
   fmt('Claim Own Risk Amount', __FORMATS.MONEY0, 'right');
   fmt('Nett Claim Amount', __FORMATS.MONEY0, 'right');
   fmt('OR Amount', __FORMATS.MONEY0, 'right');
+  fmt('IMEI/SN', '@', 'left');
 
   // Percent
   fmt('% Approval', '0%', 'right');
@@ -413,8 +414,10 @@ function buildOperationalClaimHighlightSetsFromRaw_(rawValues, headerIndexRaw) {
   const secondYear = new Set();
   const firstMonthPolicy = new Set();
   const remaining1Month = new Set();
+  const expiredDetail = new Map();
   const secondYearDetail = new Map();
   const firstMonthPolicyDetail = new Map();
+  const remaining1MonthDetail = new Map();
 
   if (ixClaim == null) return { expired, flex, b2b, duplicate, secondYear, firstMonthPolicy, remaining1Month };
 
@@ -531,7 +534,14 @@ function buildOperationalClaimHighlightSetsFromRaw_(rawValues, headerIndexRaw) {
 
     // IMPORTANT: avoid treating blank/invalid values as 0 (which would falsely mark everything as EXPIRED).
     const daysToEnd = (ixDaysToEnd != null) ? parseOptionalIntStrict_(r[ixDaysToEnd]) : null;
-    if (daysToEnd != null && daysToEnd <= 0) expired.add(claimKey);
+    if (daysToEnd != null && daysToEnd <= 0) {
+      expired.add(claimKey);
+      expiredDetail.set(claimKey, [
+        'Policy already expired.',
+        '',
+        'End Date Policy : ' + (formatShortDate_((ixPolicyEnd != null) ? r[ixPolicyEnd] : '') || '-')
+      ].join('\n'));
+    }
 
     const isFlex =
       matchesAnyCi_(partner, specialPartners) ||
@@ -582,7 +592,17 @@ function buildOperationalClaimHighlightSetsFromRaw_(rawValues, headerIndexRaw) {
       const dSub = toDateOnly_(r[ixSub]);
       const dEnd = toDateOnly_(r[ixPolicyEnd]);
       const diff = (typeof diffDays_ === 'function') ? diffDays_(dSub, dEnd) : diffDaysLocal_(dSub, dEnd);
-      if (diff != null && diff >= 0 && diff < 30) remaining1Month.add(claimKey);
+      if (diff != null && diff >= 0 && diff < 30) {
+        remaining1Month.add(claimKey);
+        remaining1MonthDetail.set(claimKey, [
+          'Policy Remaining <= 1 Month.',
+          '',
+          'Start Date Policy : ' + (formatShortDate_((ixPolicyStart != null) ? r[ixPolicyStart] : '') || '-'),
+          'End Date Policy : ' + (formatShortDate_(dEnd) || '-'),
+          'Submission Date : ' + (formatShortDate_(dSub) || '-'),
+          'Month Policy Aging : ' + diff + ' days'
+        ].join('\n'));
+      }
     }
 
     if (hasDupInputs) {
@@ -663,7 +683,7 @@ function buildOperationalClaimHighlightSetsFromRaw_(rawValues, headerIndexRaw) {
   return {
     expired, flex, b2b, duplicate, secondYear, firstMonthPolicy, remaining1Month,
     policyByClaim,
-    secondYearDetail, firstMonthPolicyDetail
+    expiredDetail, secondYearDetail, firstMonthPolicyDetail, remaining1MonthDetail
   };
 }
 
@@ -950,7 +970,7 @@ function applyOperationalClaimHighlightsByRaw_(ss, rawValues, headerIndexRaw, pi
     if (!n) return null;
     if (n.indexOf(dupPrefix) === 0) return 'duplicate';
     if (__matchNoteLabel05b_(n, migrationNote) || __matchNoteLabel05b_(n, 'WARNING: Migration Policy') || __matchNoteLabel05b_(n, 'Migration Policy')) return 'migrationPolicy';
-    if (n === expiredNote) return 'expired';
+    if (__matchNoteLabel05b_(n, expiredNote) || __matchNoteLabel05b_(n, 'Policy already expired')) return 'expired';
     if (n === b2bNote) return 'b2b';
     if (__matchNoteLabel05b_(n, secondYearNote) || __matchNoteLabel05b_(n, 'Second-Year (Market Value)')) return 'secondYear';
     if (__matchNoteLabel05b_(n, firstMonthPolicyNote) || __matchNoteLabel05b_(n, 'First-Month Policy')) return 'firstMonthPolicy';
@@ -1044,12 +1064,12 @@ const __setNotes05b__ = (range, matrix, sheetName) => {
 
         const dupNote = (sets.duplicate && typeof sets.duplicate.get === 'function') ? sets.duplicate.get(claimKey) : null;
         if (dupNote) { noteParts.push(dupNote); if (!desiredMarker) desiredMarker = 'duplicate'; }
-        if (sets.expired.has(claimKey)) { noteParts.push(expiredNote); if (!desiredMarker) desiredMarker = 'expired'; }
+        if (sets.expired.has(claimKey)) { noteParts.push((sets.expiredDetail && sets.expiredDetail.get(claimKey)) || expiredNote); if (!desiredMarker) desiredMarker = 'expired'; }
         if (sets.flex.has(claimKey)) { noteParts.push(flexNote); if (!desiredMarker) desiredMarker = 'flex'; }
         if (sets.b2b.has(claimKey)) { noteParts.push(b2bNote); if (!desiredMarker) desiredMarker = 'b2b'; }
         if (sets.secondYear && sets.secondYear.has(claimKey)) { noteParts.push((sets.secondYearDetail && sets.secondYearDetail.get(claimKey)) || secondYearNote); if (!desiredMarker) desiredMarker = 'secondYear'; }
         if (sets.firstMonthPolicy && sets.firstMonthPolicy.has(claimKey)) { noteParts.push((sets.firstMonthPolicyDetail && sets.firstMonthPolicyDetail.get(claimKey)) || firstMonthPolicyNote); if (!desiredMarker) desiredMarker = 'firstMonthPolicy'; }
-        if (sets.remaining1Month && sets.remaining1Month.has(claimKey)) { noteParts.push(remaining1MonthNote); if (!desiredMarker) desiredMarker = 'remaining1Month'; }
+        if (sets.remaining1Month && sets.remaining1Month.has(claimKey)) { noteParts.push((sets.remaining1MonthDetail && sets.remaining1MonthDetail.get(claimKey)) || remaining1MonthNote); if (!desiredMarker) desiredMarker = 'remaining1Month'; }
         desiredNote = noteParts.length ? noteParts.join('\n\n') : null;
       }
 
@@ -1244,7 +1264,9 @@ function buildSheetWriters_(ss, routingMap, headerIndexRaw, pic) {
         }
         // - Device Brand / IMEI
         set('Device Brand', getRawAny(rawRow, [h.deviceBrand, 'device_brand', 'brand']));
-        set('IMEI/SN', getRawAny(rawRow, [h.imeiNumber, h.imei, 'imei_number', 'imei', 'serial_number', 'sn']));
+        set('IMEI/SN', (typeof normalizeImeiSnText_ === 'function')
+          ? normalizeImeiSnText_(getRawAny(rawRow, [h.imeiNumber, h.imei, 'imei_number', 'imei', 'serial_number', 'sn']))
+          : String(getRawAny(rawRow, [h.imeiNumber, h.imei, 'imei_number', 'imei', 'serial_number', 'sn']) || '').replace(/,/g, ''));
 
         // - Activity Log Aging (ALA) & TAT (best-effort)
         const activityLogAgingVal = normalizeInt_(getRawAny(rawRow, [

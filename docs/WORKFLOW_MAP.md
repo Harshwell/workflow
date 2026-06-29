@@ -171,6 +171,13 @@ Perubahan kontrak terbaru:
 - SUB refresh ikut meng-upsert `EV-Bike` dan `Doss` dari `Raw OLD` / `Raw NEW`.
 - MAIN/SUB expand active filters ke full used range sebelum write/sort supaya row yang sedang hidden/out-of-filter tetap ikut update.
 - `Claimed Active Policies` menjadi flag prioritas tertinggi untuk highlight/note claim number.
+- Strict sync `Submission Date` / `Submission by Month` berlaku untuk semua operational/optional sheets aktif; nilai boolean existing tidak dipakai sebagai fallback.
+- `IMEI/SN` dipaksa plain text dan dinormalisasi tanpa separator koma.
+- `Expired Claim` memakai fallback `Service Type = Ask Detail` untuk `CLAIM_EXPIRE` dan ikut autofill `Branch` / `Service Center PIC`.
+- `Store Name` operational bersumber dari `Raw Data.outlet_name`.
+- `B2B` MAIN dibatasi ke `id_business_partner_category_name = B2B Partnership`; SUB tidak rebuild B2B dan hanya update `Last Status` / `Service Center` pada row existing.
+- `Special Case` MAIN memasukkan semua claim yang punya flag, tanpa pruning status done/closed.
+- Service Center Extractor: Samsung Authorized by Unicom Pontianak/Samarinda/Banjarmasin diarahkan ke sheet `Samsung Exclusive`; Deltasindo Sorong/Office diarahkan ke `Deltasindo`.
 
 ### Jika menambah status baru
 Minimal cek:
@@ -273,9 +280,13 @@ Checklist ini fokus ke area yang paling rawan regressions pas perubahan terakhir
   3. verifikasi ke-4 kolom reset/clear sesuai policy.
   4. jalankan SUB lagi tanpa perubahan status, pastikan manual input tidak ikut terhapus.
 
-### 2) B2B fallback dari Submission
-- Scope: claim B2B yang tidak ada di Raw window tetap di-upsert lewat sheet `Submission`.
+### 2) B2B category gate
+- Scope: B2B MAIN hanya berasal dari Raw Data dengan `id_business_partner_category_name = B2B Partnership`; SUB hanya update `Last Status` dan `Service Center` untuk row existing.
 - UAT:
+  1. siapkan 1 row Raw Data kategori `B2B Partnership` dan 1 row non-B2B.
+  2. jalankan MAIN atau FORM (MAIN path) sampai optional sheets diproses.
+  3. verifikasi hanya row kategori B2B yang muncul di sheet `B2B`.
+  4. jalankan SUB dengan perubahan status/service center dan verifikasi hanya dua kolom itu yang berubah.
 
 ---
 
@@ -295,10 +306,6 @@ Untuk 4 kolom manual (`Update Status`, `Timestamp`, `Status`, `Remarks`):
   - kalau claim sudah pernah ada sebelumnya di target sheet yang sama, nilai manual akan dipertahankan;
   - kalau claim baru (belum ada snapshot), default-nya kosong;
   - jika claim awalnya masuk `SC - Unmapped`, manual field di SC owner sheet tetap kosong sampai claim benar-benar diroute ke sheet owner terkait.
-  1. siapkan 1 claim token B2B di `Submission` yang tidak muncul di Raw terkini.
-  2. jalankan MAIN atau FORM (MAIN path) sampai optional sheets diproses.
-  3. verifikasi claim muncul di sheet `B2B`.
-  4. cek log metrik B2B untuk memastikan fallback source dihitung.
 
 ### 3) EV-Bike overlay + TAT derivation
 - Scope: overlay dari `Submission`, plus isi `TAT` ketika raw `days_aging_from_submission` kosong.
