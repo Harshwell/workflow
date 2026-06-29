@@ -1001,7 +1001,9 @@ function enrichOperationalSheetsFromRaw06_(ss, rawValues, headerIndexRaw, pic, o
 
       if (outProduct) outProduct[r] = [ idxProductRaw != null ? rawGet(idxProductRaw) : '' ];
       if (outBrand) outBrand[r] = [ idxBrandRaw != null ? rawGet(idxBrandRaw) : '' ];
-      if (outImei) outImei[r] = [ idxImeiRaw != null ? rawGet(idxImeiRaw) : '' ];
+      if (outImei) outImei[r] = [ idxImeiRaw != null
+        ? ((typeof normalizeImeiSnText_ === 'function') ? normalizeImeiSnText_(rawGet(idxImeiRaw)) : String(rawGet(idxImeiRaw) || '').replace(/,/g, ''))
+        : '' ];
 
       const sumN = idxSumInsuredRaw != null ? toNumber06_(rawGet(idxSumInsuredRaw)) : null;
       const claimN = idxClaimAmtRaw != null ? toNumber06_(rawGet(idxClaimAmtRaw)) : null;
@@ -1080,7 +1082,7 @@ function enrichOperationalSheetsFromRaw06_(ss, rawValues, headerIndexRaw, pic, o
 
     setCol(idxProductOps, outProduct, null);
     setCol(idxBrandOps, outBrand, null);
-    setCol(idxImeiOps, outImei, null);
+    setCol(idxImeiOps, outImei, '@');
     setCol(idxSumOps, outSum, moneyFmt);
     setCol(idxClaimOpsAmt, outClaim, moneyFmt);
     setCol(idxOwnRiskOps, outOwnRisk, moneyFmt);
@@ -1199,7 +1201,11 @@ function applyStrictSubmissionDateAndMonth06b_(ss, rawValues, headerIndexRaw) {
   }
 
   const flowName = String((typeof RUNTIME !== 'undefined' && RUNTIME && RUNTIME.flowName) ? RUNTIME.flowName : 'main').trim().toLowerCase();
-  const targetSheets = ['Submission', 'Ask Detail', 'Start', 'Finish', 'PO', 'B2B'];
+  const targetSheets = [
+    'Submission', 'Ask Detail', 'OR - OLD', 'Start', 'Finish', 'Expired Claim',
+    'SC - Farhan', 'SC - Meilani', 'SC - Meindar', 'SC - Unmapped', 'PO',
+    'Exclusion', 'B2B', 'EV-Bike', 'Doss'
+  ];
   if (flowName === 'main') targetSheets.push('Special Case');
   targetSheets.forEach(function(name) {
     const sh = ss.getSheetByName(name);
@@ -1230,7 +1236,8 @@ function applyStrictSubmissionDateAndMonth06b_(ss, rawValues, headerIndexRaw) {
       const d = coerceDate_(rawVal);
       const validDate = (d && !isNaN(d.getTime())) ? d : null;
       const monthDate = rawMonthVal ? toSubmissionMonthDate06b_(rawMonthVal) : null;
-      const keepDate = (curSubDate && curSubDate[r]) ? curSubDate[r][0] : '';
+      const keepDateRaw = (curSubDate && curSubDate[r]) ? curSubDate[r][0] : '';
+      const keepDate = (typeof keepDateRaw === 'boolean') ? '' : keepDateRaw;
       const keepMonth = (curSubMonth && curSubMonth[r]) ? curSubMonth[r][0] : '';
       if (outSubDate) outSubDate[r] = [validDate || keepDate || ''];
       if (outSubMonth) outSubMonth[r] = [monthDate || (validDate ? toSubmissionMonthDate06b_(validDate) : (keepMonth || ''))];

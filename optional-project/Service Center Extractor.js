@@ -57,7 +57,7 @@ const CONFIG = {
   },
 
   DEST_SHEETS_TO_CLEAR: [
-    "Unicom", "Sitcomtara", "Mitracare", "EzCare", "iBox", "GSI", "Andalas", "Klikcare", "J-Bros",
+    "Samsung Exclusive", "Unicom", "Sitcomtara", "Mitracare", "EzCare", "iBox", "GSI", "Andalas", "Klikcare", "J-Bros",
     "MEA", "MMB", "MDP", "Deltasindo", "Carlcare", "B-Store", "Multikom", "Unmapped"
   ],
   VALID_PICS: new Set(["FARHAN", "MEILANI", "MEINDAR"]),
@@ -160,6 +160,7 @@ const CONFIG = {
     { sheet: "MMB", tokens: ["manado mitra bersama"], regex: /\bmmb\b/ },
     { sheet: "MDP", regex: /\bmdp\b/ },
     { sheet: "Deltasindo", tokens: ["deltasindo"] },
+    { sheet: "Samsung Exclusive", tokens: ["samsung authorized by unicom", "samsung authorized service centre by unicom", "samsung authorized service center by unicom"] },
     { sheet: "Unicom", tokens: ["unicom", "xiaomi", "samsung"] },
     { sheet: "EzCare", tokens: ["ezcare", "ez care"] },
     { sheet: "Carlcare", tokens: ["carlcare"] },
@@ -192,8 +193,15 @@ const CONFIG = {
     "samsung authorized service centre by unicom gorontalo service centre": "Samsung Exclusive",
     "samsung authorized service centre by unicom makassar service center": "Samsung Exclusive",
     "samsung authorized by unicom pontianak service center": "Samsung Exclusive",
+    "samsung authorized by unicom pontianak service centre": "Samsung Exclusive",
     "samsung authorized by unicom samarinda service center": "Samsung Exclusive",
+    "samsung authorized by unicom samarinda service centre": "Samsung Exclusive",
     "samsung authorized service centre by unicom banjarmasin service center": "Samsung Exclusive",
+    "samsung authorized service centre by unicom banjarmasin service centre": "Samsung Exclusive",
+    "samsung authorized service center by unicom banjarmasin service center": "Samsung Exclusive",
+    "samsung authorized service center by unicom banjarmasin service centre": "Samsung Exclusive",
+    "pt deltasindo sagita mandiri sorong papua barat": "Deltasindo",
+    "pt deltasindo sagita mandiri office": "Deltasindo",
   },
 
 };

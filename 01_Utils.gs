@@ -927,6 +927,7 @@ function resolveServiceTypeFromStatus_(sheetName, rawValue, lastStatus) {
     'COURIER_CLAIM_PICKUP_FINISH_DONE'
   ]);
 
+  if (sheet === 'expired claim' && status === 'CLAIM_EXPIRE') return 'Ask Detail';
   if (sheet === 'start' || sheet === 'expired claim') {
     if (startWalkin.has(status)) return 'WALKIN';
     if (startPickup.has(status)) return 'PICKUP';
@@ -936,6 +937,15 @@ function resolveServiceTypeFromStatus_(sheetName, rawValue, lastStatus) {
     if (finishPickup.has(status)) return 'PICKUP';
   }
   return '';
+}
+
+function normalizeImeiSnText_(value) {
+  if (value == null || value === '') return '';
+  if (typeof value === 'number') {
+    if (!isFinite(value)) return '';
+    return Utilities.formatString('%.0f', value);
+  }
+  return String(value).trim().replace(/,/g, '');
 }
 
 function monthDiff_(d1, d2) {

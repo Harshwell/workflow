@@ -18,11 +18,21 @@ Formatnya sengaja sederhana: **Added / Changed / Fixed**. Tidak perlu sok formal
 - SUB cross-sheet relocation mereset `Stage Aging` menjadi `0`; nilai detail aging berikutnya hanya diisi ulang oleh MAIN.
 - Filter range aktif diexpand ke full used range sebelum MAIN/SUB write/sort agar hidden/out-of-filter rows tetap ikut update.
 - Flag `Migration Policy` dari `Claimed Active Policies` menjadi prioritas highlight tertinggi dan digabung dengan note flag lain.
+- `Store Name` operational sekarang diisi dari `Raw Data.outlet_name`.
+- `B2B` MAIN hanya mengambil row dengan `id_business_partner_category_name = B2B Partnership`; SUB hanya memperbarui `Last Status` dan `Service Center` pada claim yang sudah ada.
+- `Special Case` MAIN sekarang memasukkan semua claim yang memiliki flag, termasuk status yang sebelumnya masuk pruning done/closed.
+- `optional-project/Service Center Extractor` menambahkan routing `Samsung Exclusive` untuk Samsung Authorized by Unicom Pontianak/Samarinda/Banjarmasin dan override Deltasindo untuk Sorong/Office.
 
 ### Fixed
 - `Expired Claim` ikut scope operational movement SUB, termasuk saat status berubah keluar dari expired menuju sheet mapping lain.
 - SUB refresh ikut meng-upsert `EV-Bike` dan `Doss` dari `Raw OLD` / `Raw NEW`.
 - `Service Type` untuk `Start`, `Finish`, dan `Expired Claim` memakai `device_checkin_option_name` dengan fallback status ke `WALKIN` / `PICKUP`.
+- `Expired Claim.Service Type` khusus status `CLAIM_EXPIRE` diisi `Ask Detail`.
+- `Expired Claim` ikut autofill `Branch` dan `Service Center PIC` berdasarkan service center mapping yang sama dengan operational sheet lain.
+- `IMEI/SN` ditulis sebagai plain text dan koma ribuan dibuang agar nomor tidak berubah format.
+- Strict sync `Submission Date` diperluas ke operational/optional sheets yang aktif dan mengabaikan nilai boolean existing supaya tidak muncul `TRUE`.
+- SUB refresh re-apply highlight/note setelah relocation agar warna flagging tidak hilang.
+- SUB finish-status relocation memprioritaskan sheet `Finish`, sehingga claim finish tidak terseret kosong/pindah ke SC universe.
 - `SC - Unmapped` tidak lagi menerima/menahan klaim token `VVMAR` atau `DOSS`.
 - Kolom detail `Start Date`, `End Date`, dan `Details` dipulihkan untuk writer `Special Case`.
 

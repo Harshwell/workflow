@@ -1657,6 +1657,7 @@ function enforceOperationalLayout06_(ss) {
     const sh = ss.getSheetByName(name);
     if (!sh) return;
     if (__ensureHeaderAtColumn06_(sh, 'Service Center PIC', 14)) touched++;
+    if (__ensureHeaderAtColumn06_(sh, 'Branch', 15)) touched++;
   });
 
   const deprecatedEverywhere = ['DB', 'Status Type', 'Update Status Asso', 'Timestamp Asso', 'Update Status Admin', 'Timestamp Admin'];
@@ -1689,8 +1690,10 @@ function enforceOperationalLayout06_(ss) {
     touched += __removeHeaderColumns06_(sh, evDossB2bDeprecated, {});
   });
 
-  const start = ss.getSheetByName('Start');
-  if (start) touched += __fillBranchFromServiceCenter06_(start);
+  ['Start', 'Finish', 'Expired Claim'].forEach(function(name) {
+    const sh = ss.getSheetByName(name);
+    if (sh) touched += __fillBranchFromServiceCenter06_(sh);
+  });
 
   return { touched: touched };
 }

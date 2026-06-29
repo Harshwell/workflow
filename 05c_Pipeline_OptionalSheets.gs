@@ -228,21 +228,81 @@ function __setDbLinkRichTextSegments_(sh, colIndex0, rowNums, urlMap) {
  *  ========================= */
 
 /** Optional: B2B — enabled by default. Set RUNTIME.enableB2B = false to disable. */
+function updateB2BStatusServiceCenterFromRaw05c_(sh, rawValues, headerIndexRaw) {
+  if (!sh || !rawValues || !rawValues.length) return 0;
+  const h = CONFIG.headers || {};
+  const idxClaimRaw = (headerIndexRaw[h.claimNumber] != null) ? headerIndexRaw[h.claimNumber] : headerIndexRaw['claim_number'];
+  const idxLastRaw = (headerIndexRaw[h.lastStatus] != null) ? headerIndexRaw[h.lastStatus] : headerIndexRaw['claim_last_status_name'];
+  const idxScRaw =
+    (headerIndexRaw[h.scName] != null) ? headerIndexRaw[h.scName] :
+    (headerIndexRaw[h.serviceCenter] != null) ? headerIndexRaw[h.serviceCenter] :
+    (headerIndexRaw['sc_name'] != null) ? headerIndexRaw['sc_name'] :
+    headerIndexRaw['service_center'];
+  if (idxClaimRaw == null) return 0;
+
+  const byClaim = Object.create(null);
+  for (let i = 0; i < rawValues.length; i++) {
+    const row = rawValues[i] || [];
+    const claim = String(row[idxClaimRaw] || '').trim().toUpperCase();
+    if (!claim) continue;
+    byClaim[claim] = {
+      lastStatus: idxLastRaw != null ? row[idxLastRaw] : '',
+      serviceCenter: idxScRaw != null ? row[idxScRaw] : ''
+    };
+  }
+
+  const lr = sh.getLastRow();
+  const lc = sh.getLastColumn();
+  if (lr < 2 || lc < 1) return 0;
+  const header = sh.getRange(1, 1, 1, lc).getValues()[0].map(v => String(v || '').trim());
+  const idxH = buildHeaderIndex_(header);
+  const idxClaim = idxH['Claim Number'];
+  const idxLast = idxH['Last Status'];
+  const idxSc = idxH['Service Center'] != null ? idxH['Service Center'] : idxH['Service Center Name'];
+  if (idxClaim == null || (idxLast == null && idxSc == null)) return 0;
+
+  const n = lr - 1;
+  const claimVals = sh.getRange(2, idxClaim + 1, n, 1).getValues();
+  const lastVals = idxLast != null ? sh.getRange(2, idxLast + 1, n, 1).getValues() : null;
+  const scVals = idxSc != null ? sh.getRange(2, idxSc + 1, n, 1).getValues() : null;
+  let changed = 0;
+  let lastChanged = false;
+  let scChanged = false;
+  for (let r = 0; r < claimVals.length; r++) {
+    const claim = String(claimVals[r][0] || '').trim().toUpperCase();
+    const rec = claim ? byClaim[claim] : null;
+    if (!rec) continue;
+    if (lastVals && rec.lastStatus !== '' && rec.lastStatus != null) {
+      lastVals[r][0] = rec.lastStatus;
+      lastChanged = true;
+    }
+    if (scVals && rec.serviceCenter !== '' && rec.serviceCenter != null) {
+      scVals[r][0] = rec.serviceCenter;
+      scChanged = true;
+    }
+    changed++;
+  }
+  if (changed && !__isDryRun05c__()) {
+    if (lastChanged) sh.getRange(2, idxLast + 1, n, 1).setValues(lastVals);
+    if (scChanged) sh.getRange(2, idxSc + 1, n, 1).setValues(scVals);
+  }
+  return changed;
+}
+
 function processB2B_(ss, rawValues, headerIndexRaw, pic) { // `pic` kept for backward compatibility
   // Default ON. Only skip when explicitly disabled.
   if (typeof RUNTIME !== 'undefined' && RUNTIME && RUNTIME.enableB2B === false) return 0;
   if (typeof applyRawHeaderAliases_ === 'function') headerIndexRaw = applyRawHeaderAliases_(headerIndexRaw);
+  const flowName = String((typeof RUNTIME !== 'undefined' && RUNTIME && RUNTIME.flowName) ? RUNTIME.flowName : '').trim().toLowerCase();
 
-  const patterns = (CONFIG.patterns.b2bPartners || []).map(s => String(s || '').toLowerCase());
-  const claimToken = String(
-    (typeof B2B_CLAIM_NUMBER_SUBSTRING !== 'undefined' && B2B_CLAIM_NUMBER_SUBSTRING)
-    || (CONFIG && CONFIG.B2B_CLAIM_NUMBER_SUBSTRING)
-    || 'SMR'
-  ).trim().toUpperCase();
   const h = CONFIG.headers;
   const sh = ss.getSheetByName('B2B');
   if (!sh) return 0;
   if (!rawValues || !rawValues.length) return 0;
+
+  if (flowName === 'sub') {
+    return updateB2BStatusServiceCenterFromRaw05c_(sh, rawValues, headerIndexRaw);
+  }
 
   const OPTIONAL_FLAGS = (typeof __OPTIONAL_FLAGS !== 'undefined' && __OPTIONAL_FLAGS) ? __OPTIONAL_FLAGS : {};
   const EXCLUDED_LAST_STATUSES = getSpecialCaseExcludedStatuses_();
@@ -295,6 +355,10 @@ function processB2B_(ss, rawValues, headerIndexRaw, pic) { // `pic` kept for bac
   const idxQL = headerIndexRaw['Q-L (Months)'];
 
   const idxProduct = headerIndexRaw[h.productName];
+  const idxBusinessCategory =
+    (headerIndexRaw['id_business_partner_category_name'] != null) ? headerIndexRaw['id_business_partner_category_name'] :
+    (headerIndexRaw[h.businessPartnerCategoryName] != null) ? headerIndexRaw[h.businessPartnerCategoryName] :
+    headerIndexRaw['Business Category'];
 
   const idxSumInsured = headerIndexRaw[h.sumInsured];
   const idxOwnRisk = headerIndexRaw[h.ownRiskAmount];
@@ -326,16 +390,13 @@ function processB2B_(ss, rawValues, headerIndexRaw, pic) { // `pic` kept for bac
   const dbLinkCol0 = idxH['DB Link'];
   const rows = [];
   const dbUrls = [];
-  const seenClaims = new Set();
   let rawMatchedCount = 0;
-  let submissionFallbackCount = 0;
   let skippedExcludedRawCount = 0;
-  let skippedExcludedSubmissionCount = 0;
 
   for (let i = 0; i < rawValues.length; i++) {
     const row = rawValues[i];
 
-    const partnerLower = String((idxBP != null) ? row[idxBP] : '' || '').toLowerCase();
+    const category = String((idxBusinessCategory != null) ? row[idxBusinessCategory] : '').trim().toLowerCase();
     const claimUp = String((idxClaim != null) ? row[idxClaim] : '' || '').toUpperCase();
     const lastStatus = String((idxLastStatus != null) ? row[idxLastStatus] : '' || '').trim();
     const lastStatusKey = lastStatus.toUpperCase();
@@ -345,16 +406,13 @@ function processB2B_(ss, rawValues, headerIndexRaw, pic) { // `pic` kept for bac
       continue;
     }
 
-    const matchPartner = patterns.some(p => p && partnerLower.indexOf(p) > -1);
-    const matchClaim = claimToken ? (claimUp.indexOf(claimToken) > -1) : false;
-    if (!matchPartner && !matchClaim) continue;
+    if (category !== 'b2b partnership') continue;
 
     const out = new Array(header.length).fill('');
     const set = (k, v) => { const j = idxH[k]; if (j != null) out[j] = v; };
 
     set('Submission Date', buildSubmissionDateCell_(row, headerIndexRaw));
     set('Claim Number', (idxClaim != null) ? row[idxClaim] : '');
-    if (claimUp) seenClaims.add(claimUp);
 
     const dbUrl = ((idxDashboard != null) ? String(row[idxDashboard] || '').trim() : '') || ((typeof buildDashboardLinkFromClaimNumber_ === 'function') ? buildDashboardLinkFromClaimNumber_(claimUp) : '');
     set('DB Link', dbUrl ? 'LINK' : '');
@@ -402,60 +460,6 @@ function processB2B_(ss, rawValues, headerIndexRaw, pic) { // `pic` kept for bac
     rawMatchedCount++;
   }
 
-  // Fallback source: Submission sheet (for claims missing in current Raw pull window).
-  try {
-    const subSh = ss.getSheetByName('Submission');
-    if (subSh && subSh.getLastRow() > 1 && subSh.getLastColumn() > 1) {
-      const subHeader = __getHeaderRow05c_(subSh);
-      const subIdx = buildHeaderIndex_(subHeader);
-      const subVals = subSh.getRange(2, 1, subSh.getLastRow() - 1, subHeader.length).getValues();
-      const sClaim = subIdx['Claim Number'];
-      const sPartner = (subIdx['Partner Name'] != null) ? subIdx['Partner Name'] : subIdx['Partner'];
-      const sSubDate = subIdx['Submission Date'];
-      const sDbLink = subIdx['DB Link'];
-      const sInsurance = subIdx['Insurance'];
-      const sDevice = subIdx['Device Type'];
-      const sSc = (subIdx['Service Center'] != null) ? subIdx['Service Center'] : subIdx['Service Center Name'];
-      const sLastStatus = subIdx['Last Status'];
-
-      if (sClaim != null) {
-        for (let i = 0; i < subVals.length; i++) {
-          const r = subVals[i] || [];
-          const claim = String(r[sClaim] || '').trim();
-          if (!claim) continue;
-          const claimUp = claim.toUpperCase();
-          if (seenClaims.has(claimUp)) continue;
-          const partner = String((sPartner != null) ? r[sPartner] : '').trim().toLowerCase();
-          const lastStatus = String((sLastStatus != null) ? r[sLastStatus] : '').trim();
-          const lastStatusKey = lastStatus.toUpperCase();
-          const matchPartner = patterns.some(p => p && partner.indexOf(p) > -1);
-          const matchClaim = claimToken ? (claimUp.indexOf(claimToken) > -1) : false;
-          if (!matchPartner && !matchClaim) continue;
-          if (OPTIONAL_FLAGS.B2B_SKIP_EXCLUDED_LAST_STATUSES && EXCLUDED_LAST_STATUSES.has(lastStatusKey)) {
-            skippedExcludedSubmissionCount++;
-            continue;
-          }
-
-          const out = new Array(header.length).fill('');
-          const set = (k, v) => { const j = idxH[k]; if (j != null) out[j] = v; };
-          set('Submission Date', (sSubDate != null) ? r[sSubDate] : '');
-          set('Claim Number', claim);
-          set('Partner Name', (sPartner != null) ? r[sPartner] : '');
-          set('Insurance', (sInsurance != null) ? r[sInsurance] : '');
-          set('Device Type', (sDevice != null) ? r[sDevice] : '');
-          set('Service Center', (sSc != null) ? r[sSc] : '');
-          set('Last Status', lastStatus);
-          const dbUrl = (sDbLink != null) ? r[sDbLink] : '';
-          set('DB Link', dbUrl ? 'LINK' : '');
-          dbUrls.push(dbUrl);
-          rows.push(out);
-          seenClaims.add(claimUp);
-          submissionFallbackCount++;
-        }
-      }
-    }
-  } catch (eSub) {}
-
   if (!rows.length) return 0;
   // Rebuild list only when we have replacement rows.
   // Prevent accidental "header-only" sheet when source window is temporarily empty.
@@ -474,9 +478,7 @@ function processB2B_(ss, rawValues, headerIndexRaw, pic) { // `pic` kept for bac
         'B2B_METRICS',
         'rows=' + rows.length
           + ' raw=' + rawMatchedCount
-          + ' sub_fallback=' + submissionFallbackCount
-          + ' skip_excluded_raw=' + skippedExcludedRawCount
-          + ' skip_excluded_sub=' + skippedExcludedSubmissionCount,
+          + ' skip_excluded_raw=' + skippedExcludedRawCount,
         '',
         'INFO'
       );
@@ -670,7 +672,7 @@ function processSpecialCase_(ss, rawValues, headerIndexRaw, pic) { // `pic` kept
     return true;
   })();
 
-  const skipDonePrune = (SPECIAL_RULES) ? !!SPECIAL_RULES.SKIP_EXCLUDED_LAST_STATUSES : true;
+  const skipDonePrune = false;
 
   let deletedExcluded = 0;
   if (pruneOnExcluded && skipDonePrune && SPECIAL_FLAGS.MODE === 'UPSERT' && claimCol0 > -1 && idxLastStatus != null && idxClaim != null && existingRowCount > 0) {
@@ -781,7 +783,7 @@ function processSpecialCase_(ss, rawValues, headerIndexRaw, pic) { // `pic` kept
     if (!claimKey) continue;
 
     const lastStatus = String((idxLastStatus != null) ? row[idxLastStatus] : '' || '').trim();
-    const skipDone = (SPECIAL_RULES) ? !!SPECIAL_RULES.SKIP_EXCLUDED_LAST_STATUSES : true;
+    const skipDone = false;
     if (skipDone && excluded && excluded.has && excluded.has(lastStatus)) { skippedDoneStatus++; continue; }
 
     if (SPECIAL_FLAGS.MODE === 'APPEND_NEW_ONLY' && existingClaims.has(claimKey)) { skippedExisting++; continue; }
@@ -1120,8 +1122,8 @@ function processEVBike_(ss, rawValues, headerIndexRaw, pic, opts) { // `pic` kep
   const EXCLUDED_LAST_STATUSES = getSpecialCaseExcludedStatuses_();
 
   const idxBP = headerIndexRaw[h.businessPartner];
-  const idxOwner = headerIndexRaw['customer_name'];
-  const idxPolicyNum = headerIndexRaw['qoala_policy_number'];
+  const idxOwner = (headerIndexRaw['holder_name'] != null) ? headerIndexRaw['holder_name'] : headerIndexRaw['customer_name'];
+  const idxPolicyNum = (headerIndexRaw['qoala_policy_number'] != null) ? headerIndexRaw['qoala_policy_number'] : headerIndexRaw['policy_number'];
   const idxSumInsured = (headerIndexRaw[h.sumInsured] != null) ? headerIndexRaw[h.sumInsured] : headerIndexRaw['sum_insured_amount'];
   const excludedPolicySet = (typeof getEvBikeExcludedPolicyNumberSet_ === 'function') ? getEvBikeExcludedPolicyNumberSet_() : new Set(['GODA-20250729-4SHFZ','GODA-20250729-X97UC','GODA-20250729-KESB4']);
 

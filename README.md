@@ -23,6 +23,13 @@ Update kontrak MAIN/SUB/FORM:
 - SUB relocation mereset `Stage Aging` menjadi `0` saat klaim pindah sheet; MAIN yang mengisi ulang aging detail.
 - filter aktif diexpand ke full used range sebelum MAIN/SUB write/sort agar row yang sedang hidden/out-of-filter tetap ikut update.
 - flag `Migration Policy` dari `Claimed Active Policies` menjadi prioritas warna tertinggi dan note-nya digabung dengan flag lain.
+- `Submission Date` strict-sync diperluas ke operational/optional sheets aktif dan nilai boolean existing tidak dipertahankan, supaya tidak ada output `TRUE`.
+- `IMEI/SN` ditulis sebagai plain text tanpa koma ribuan.
+- `Expired Claim` mendapat fallback `Service Type = Ask Detail` untuk `CLAIM_EXPIRE`, serta ikut autofill `Branch` dan `Service Center PIC`.
+- `Store Name` operational diisi dari `Raw Data.outlet_name`.
+- `B2B` MAIN hanya dari `id_business_partner_category_name = B2B Partnership`; SUB hanya update `Last Status` dan `Service Center` pada claim existing.
+- `Special Case` MAIN menampung semua claim yang punya flag; status done/closed tidak lagi otomatis dipruning dari sheet ini.
+- `optional-project/Service Center Extractor` menambahkan sheet routing `Samsung Exclusive` untuk Samsung Authorized by Unicom Pontianak/Samarinda/Banjarmasin dan override Deltasindo untuk Sorong/Office.
 
 ---
 
@@ -115,7 +122,7 @@ Perubahan terbaru yang sudah masuk ke script:
 - perbaikan mapping `Submission Date` (MAIN + SUB) agar lebih toleran pada variasi header source
 - SUB reset workflow columns (`Update Status`, `Timestamp`, `Status`, `Remarks`) saat `Last Status` berubah
 - optional sheet schema self-heal untuk `B2B` dan `EV-Bike` pada kolom `Claim Number`, `Start Date`, `End Date`, `Details`
-- tambah final pass hardening check di `runSelfCheck_` untuk area UAT Part 9 (manual reset, B2B fallback, EV-Bike overlay, Report Base sync)
+- tambah final pass hardening check di `runSelfCheck_` untuk area UAT Part 9 (manual reset, B2B category gate, EV-Bike overlay, Report Base sync)
 - tambah UAT checklist MAIN/SUB/FORM Part 9 di `docs/WORKFLOW_MAP.md`
 
 ---
