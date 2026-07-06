@@ -125,6 +125,7 @@ const BRANCH_KEYWORDS = Object.freeze({
   'Sitcomtara': ['sitcomtara'],
   'iBox': ['ibox'],
   'GSI': ['gsi'],
+  'Rejeki Seluler': ['rejeki seluler', 'rejeki seluller'],
   'Andalas': ['andalas'],
   'Klikcare': ['klikcare'],
   'J-Bros': ['j-bros', 'jbros'],
@@ -154,80 +155,6 @@ const MASTER_SPREADSHEET_ID = getPropString_(
   '1zRlYrSRssv9LVcPKEq90CmmvTRsZoN_TqfIg2pNufbc'
 );
 const MASTER_RAW_SHEET_NAME = getPropString_('MASTER_RAW_SHEET_NAME', 'Raw Data');
-
-/** =========================
- * WebApp Project (movement tracking)
- * =========================
- * Snapshot baseline MUST live in the WebApp Project spreadsheet (NOT Raw OLD/NEW).
- */
-const WEBAPP_PROJECT_SPREADSHEET_ID = getPropString_(
-  'WEBAPP_PROJECT_SPREADSHEET_ID',
-  '1anPGHYa8Ej19jZJMC3bKyReZ-O6Qki2WBvtRl6rNTTk'
-);
-
-const WEBAPP_MOVEMENT_POLICY = Object.freeze({
-  ENABLE: getPropBool_('WEBAPP_MOVEMENT_ENABLE', false),
-  SPREADSHEET_ID: WEBAPP_PROJECT_SPREADSHEET_ID,
-
-  /**
-   * Snapshot sheets live in the WebApp Project spreadsheet.
-   * Flow contract:
-   * - Before SUB starts: copy Overview Claim -> Raw OLD/NEW into SNAPSHOT_PREV_OLD/NEW
-   * - After  SUB ends:   copy Overview Claim -> Raw OLD/NEW into SNAPSHOT_CURR_OLD/NEW
-   */
-  SHEETS: Object.freeze({
-    DAILY: 'Daily',
-    PAST: 'Past',
-
-    SNAPSHOT_PREV_OLD: 'SNAPSHOT_PREV_OLD',
-    SNAPSHOT_CURR_OLD: 'SNAPSHOT_CURR_OLD',
-
-    SNAPSHOT_PREV_NEW: 'SNAPSHOT_PREV_NEW',
-    SNAPSHOT_CURR_NEW: 'SNAPSHOT_CURR_NEW'
-  }),
-
-  // Column names MUST match snapshot headers (WebApp Project)
-  SNAPSHOT_COLUMNS: Object.freeze([
-    'Claim Number',
-    'Last Status',
-    'Last Update Datetime',
-    'Activity Log',
-    'Activity Log Datetime',
-    'Service Center Name',
-    'Branch',
-    'Position',
-    'Status Type'
-  ]),
-
-  // Column names MUST match Daily/Past headers (WebApp Project)
-  DAILY_COLUMNS: Object.freeze([
-    'Timestamp',
-    'DB',
-    'Claim Number',
-    'Change Type',
-
-    'Last Status (Before)',
-    'Last Update Datetime (Before)',
-    'Last Status (After)',
-    'Last Update Datetime (After)',
-    'Gap Time Status (Minutes)',
-    'Gap Time Status',
-
-    'Activity Log',
-    'Activity Log Datetime',
-
-    'Service Center Name',
-    'Branch',
-    'Position',
-    'Status Type',
-
-    'Event ID'
-  ]),
-
-  // Existing Event-ID lookup for Past uses recent rows only (performance guard).
-  PAST_EVENT_SCAN_MAX_ROWS: getPropInt_('WEBAPP_PAST_EVENT_SCAN_MAX_ROWS', 5000)
-});
-
 
 /**
  * Second-Year (Market Value) detection policy.
@@ -1990,10 +1917,6 @@ const CONFIG = Object.freeze({
   detailsLogPolicy: DETAILS_LOG_POLICY,
   mappingErrorLogPolicy: MAPPING_ERROR_LOG_POLICY,
   logPolicy: LOG_POLICY,
-
-  // WebApp movement tracking
-  webappProjectSpreadsheetId: WEBAPP_PROJECT_SPREADSHEET_ID,
-  webappMovement: WEBAPP_MOVEMENT_POLICY,
 
   // Status type mapping (mandatory operational column)
   statusTypeByLastStatus: STATUS_TYPE_BY_LAST_STATUS,

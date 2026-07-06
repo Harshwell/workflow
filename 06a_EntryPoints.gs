@@ -1669,7 +1669,7 @@ function __coerceSubDatetimeColumnsFromDisplay06a_(values, displayValues) {
     return -1;
   }
 
-  // Datetime columns we care about (SUB + WebApp movement tracking).
+  // Datetime columns used by SUB updates.
   const idxs = [];
   idxs.push(idxOfAny(['claim_last_updated_datetime', 'claim last updated datetime']));
   idxs.push(idxOfAny(['activity_log_timestamp', 'activity log timestamp', 'activity_log_datetime', 'activity log datetime', 'last_activity_log_datetime', 'last activity log datetime']));
