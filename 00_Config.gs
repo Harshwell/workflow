@@ -67,7 +67,7 @@ const DRY_RUN = false;
 const CONFIG_SECTION_INDEX = Object.freeze({
   foundation: Object.freeze(['App.Registry', 'APP_VERSION', 'SCHEMA_VERSION', 'DRY_RUN']),
   ingestion: Object.freeze(['EMAIL_INGEST_POLICY', 'SUB_EMAIL_INGEST_POLICY', 'SUB_FLOW_SPEC', 'FORM_INGEST_POLICY']),
-  workbook: Object.freeze(['MASTER_SPREADSHEET_ID', 'MASTER_RAW_SHEET_NAME', 'WEBAPP_MOVEMENT_POLICY', 'WORKBOOK_PROFILES']),
+  workbook: Object.freeze(['MASTER_SPREADSHEET_ID', 'MASTER_RAW_SHEET_NAME', 'WORKBOOK_PROFILES']),
   routing: Object.freeze(['OPS_ROUTING_POLICY', 'STATUS_TYPE_BY_LAST_STATUS', 'POSITION_BY_LAST_STATUS', 'FINISH_STATUSES']),
   validationAndPresentation: Object.freeze(['VALIDATION_POLICY', 'VALIDATION_FALLBACKS', 'CHECKBOX_POLICY', 'LINK_POLICY', 'COLUMN_TYPES', 'COLUMN_ALIGNMENT']),
   optionalSheets: Object.freeze(['SPECIAL_CASE_WRITER_POLICY', 'EVBIKE_POLICY', 'EXCLUSION_TAT_POLICY', 'OPTIONAL_SHEETS_FLAGS']),
@@ -125,6 +125,7 @@ const BRANCH_KEYWORDS = Object.freeze({
   'Sitcomtara': ['sitcomtara'],
   'iBox': ['ibox'],
   'GSI': ['gsi'],
+  'Rejeki Seluler': ['rejeki seluler', 'rejeki seluller'],
   'Andalas': ['andalas'],
   'Klikcare': ['klikcare'],
   'J-Bros': ['j-bros', 'jbros'],
@@ -154,80 +155,6 @@ const MASTER_SPREADSHEET_ID = getPropString_(
   '1zRlYrSRssv9LVcPKEq90CmmvTRsZoN_TqfIg2pNufbc'
 );
 const MASTER_RAW_SHEET_NAME = getPropString_('MASTER_RAW_SHEET_NAME', 'Raw Data');
-
-/** =========================
- * WebApp Project (movement tracking)
- * =========================
- * Snapshot baseline MUST live in the WebApp Project spreadsheet (NOT Raw OLD/NEW).
- */
-const WEBAPP_PROJECT_SPREADSHEET_ID = getPropString_(
-  'WEBAPP_PROJECT_SPREADSHEET_ID',
-  '1anPGHYa8Ej19jZJMC3bKyReZ-O6Qki2WBvtRl6rNTTk'
-);
-
-const WEBAPP_MOVEMENT_POLICY = Object.freeze({
-  ENABLE: getPropBool_('WEBAPP_MOVEMENT_ENABLE', true),
-  SPREADSHEET_ID: WEBAPP_PROJECT_SPREADSHEET_ID,
-
-  /**
-   * Snapshot sheets live in the WebApp Project spreadsheet.
-   * Flow contract:
-   * - Before SUB starts: copy Overview Claim -> Raw OLD/NEW into SNAPSHOT_PREV_OLD/NEW
-   * - After  SUB ends:   copy Overview Claim -> Raw OLD/NEW into SNAPSHOT_CURR_OLD/NEW
-   */
-  SHEETS: Object.freeze({
-    DAILY: 'Daily',
-    PAST: 'Past',
-
-    SNAPSHOT_PREV_OLD: 'SNAPSHOT_PREV_OLD',
-    SNAPSHOT_CURR_OLD: 'SNAPSHOT_CURR_OLD',
-
-    SNAPSHOT_PREV_NEW: 'SNAPSHOT_PREV_NEW',
-    SNAPSHOT_CURR_NEW: 'SNAPSHOT_CURR_NEW'
-  }),
-
-  // Column names MUST match snapshot headers (WebApp Project)
-  SNAPSHOT_COLUMNS: Object.freeze([
-    'Claim Number',
-    'Last Status',
-    'Last Update Datetime',
-    'Activity Log',
-    'Activity Log Datetime',
-    'Service Center Name',
-    'Branch',
-    'Position',
-    'Status Type'
-  ]),
-
-  // Column names MUST match Daily/Past headers (WebApp Project)
-  DAILY_COLUMNS: Object.freeze([
-    'Timestamp',
-    'DB',
-    'Claim Number',
-    'Change Type',
-
-    'Last Status (Before)',
-    'Last Update Datetime (Before)',
-    'Last Status (After)',
-    'Last Update Datetime (After)',
-    'Gap Time Status (Minutes)',
-    'Gap Time Status',
-
-    'Activity Log',
-    'Activity Log Datetime',
-
-    'Service Center Name',
-    'Branch',
-    'Position',
-    'Status Type',
-
-    'Event ID'
-  ]),
-
-  // Existing Event-ID lookup for Past uses recent rows only (performance guard).
-  PAST_EVENT_SCAN_MAX_ROWS: getPropInt_('WEBAPP_PAST_EVENT_SCAN_MAX_ROWS', 5000)
-});
-
 
 /**
  * Second-Year (Market Value) detection policy.
@@ -354,6 +281,7 @@ const SUB_FLOW_SPEC = Object.freeze({
     'PO',
     'Exclusion',
     'Expired Claim',
+    'Reject Claim',
     'B2B',
     'EV-Bike',
     'Doss'
@@ -1419,6 +1347,7 @@ const OPS_ROUTING_POLICY = Object.freeze({
     START: 'Start',
     FINISH: 'Finish',
     CLAIM_EXPIRED: 'Expired Claim',
+    REJECT_CLAIM: 'Reject Claim',
     SC_FARHAN: 'SC - Farhan',
     SC_MEILANI: 'SC - Meilani',
     SC_IVAN: 'SC - Meindar',
@@ -1470,6 +1399,8 @@ const OPS_ROUTING_POLICY = Object.freeze({
       'CLAIM_EXPIRE',
       'CLAIM_EXPIRE_WALKIN'
     ]),
+
+    'Reject Claim': Object.freeze([]),
 
     // SC universe (shared by Farhan/Meilani; split via sc_name keyword)
     '__SC_SHARED__': Object.freeze([
@@ -1572,7 +1503,8 @@ const OPS_ROUTING_POLICY = Object.freeze({
       'Mitracare',
       'Sitcomtara',
       'iBox',
-      'GSI'
+      'Rejeki Seluler',
+      'Rejeki Seluller'
     ]),
     'SC - Meindar': Object.freeze([
       'Klikcare',
@@ -1598,7 +1530,8 @@ const OPS_ROUTING_POLICY = Object.freeze({
       'Samsung Authorized Service Center by Unicom',
       'Xiaomi Authorized',
       'Samsung Exclusive',
-      'Carlcare'
+      'Carlcare',
+      'GSI'
     ])
   }),
 
@@ -1985,10 +1918,6 @@ const CONFIG = Object.freeze({
   mappingErrorLogPolicy: MAPPING_ERROR_LOG_POLICY,
   logPolicy: LOG_POLICY,
 
-  // WebApp movement tracking
-  webappProjectSpreadsheetId: WEBAPP_PROJECT_SPREADSHEET_ID,
-  webappMovement: WEBAPP_MOVEMENT_POLICY,
-
   // Status type mapping (mandatory operational column)
   statusTypeByLastStatus: STATUS_TYPE_BY_LAST_STATUS,
   positionByLastStatus: POSITION_BY_LAST_STATUS,
@@ -2060,6 +1989,7 @@ const CONFIG = Object.freeze({
         OPS_ROUTING_POLICY.SHEETS.START,
         OPS_ROUTING_POLICY.SHEETS.FINISH,
         OPS_ROUTING_POLICY.SHEETS.CLAIM_EXPIRED,
+        OPS_ROUTING_POLICY.SHEETS.REJECT_CLAIM,
         OPS_ROUTING_POLICY.SHEETS.SC_FARHAN,
         OPS_ROUTING_POLICY.SHEETS.SC_MEILANI,
         OPS_ROUTING_POLICY.SHEETS.SC_IVAN,
@@ -2077,6 +2007,7 @@ const CONFIG = Object.freeze({
         OPS_ROUTING_POLICY.SHEETS.START,
         OPS_ROUTING_POLICY.SHEETS.FINISH,
         OPS_ROUTING_POLICY.SHEETS.CLAIM_EXPIRED,
+        OPS_ROUTING_POLICY.SHEETS.REJECT_CLAIM,
         OPS_ROUTING_POLICY.SHEETS.SC_FARHAN,
         OPS_ROUTING_POLICY.SHEETS.SC_MEILANI,
         OPS_ROUTING_POLICY.SHEETS.SC_IVAN,
@@ -2101,6 +2032,7 @@ const CONFIG = Object.freeze({
       OPS_ROUTING_POLICY.SHEETS.START,
       OPS_ROUTING_POLICY.SHEETS.FINISH,
       OPS_ROUTING_POLICY.SHEETS.CLAIM_EXPIRED,
+      OPS_ROUTING_POLICY.SHEETS.REJECT_CLAIM,
       OPS_ROUTING_POLICY.SHEETS.SC_FARHAN,
       OPS_ROUTING_POLICY.SHEETS.SC_MEILANI,
       OPS_ROUTING_POLICY.SHEETS.SC_IVAN,
@@ -2114,6 +2046,7 @@ const CONFIG = Object.freeze({
       OPS_ROUTING_POLICY.SHEETS.START,
       OPS_ROUTING_POLICY.SHEETS.FINISH,
       OPS_ROUTING_POLICY.SHEETS.CLAIM_EXPIRED,
+      OPS_ROUTING_POLICY.SHEETS.REJECT_CLAIM,
       OPS_ROUTING_POLICY.SHEETS.SC_FARHAN,
       OPS_ROUTING_POLICY.SHEETS.SC_MEILANI,
       OPS_ROUTING_POLICY.SHEETS.SC_IVAN,
@@ -2152,6 +2085,7 @@ const CONFIG = Object.freeze({
     [OPS_ROUTING_POLICY.SHEETS.START]: OPS_ROUTING_POLICY.LAST_STATUS_BY_SHEET['Start'],
     [OPS_ROUTING_POLICY.SHEETS.FINISH]: OPS_ROUTING_POLICY.LAST_STATUS_BY_SHEET['Finish'],
     [OPS_ROUTING_POLICY.SHEETS.CLAIM_EXPIRED]: OPS_ROUTING_POLICY.LAST_STATUS_BY_SHEET['Expired Claim'],
+    [OPS_ROUTING_POLICY.SHEETS.REJECT_CLAIM]: OPS_ROUTING_POLICY.LAST_STATUS_BY_SHEET['Reject Claim'],
     [OPS_ROUTING_POLICY.SHEETS.SC_FARHAN]: OPS_ROUTING_POLICY.LAST_STATUS_BY_SHEET['__SC_SHARED__'],
     [OPS_ROUTING_POLICY.SHEETS.SC_MEILANI]: OPS_ROUTING_POLICY.LAST_STATUS_BY_SHEET['__SC_SHARED__'],
     [OPS_ROUTING_POLICY.SHEETS.SC_IVAN]: OPS_ROUTING_POLICY.LAST_STATUS_BY_SHEET['__SC_SHARED__'],
@@ -2167,6 +2101,7 @@ const CONFIG = Object.freeze({
     [OPS_ROUTING_POLICY.SHEETS.START]: OPS_ROUTING_POLICY.LAST_STATUS_BY_SHEET['Start'],
     [OPS_ROUTING_POLICY.SHEETS.FINISH]: OPS_ROUTING_POLICY.LAST_STATUS_BY_SHEET['Finish'],
     [OPS_ROUTING_POLICY.SHEETS.CLAIM_EXPIRED]: OPS_ROUTING_POLICY.LAST_STATUS_BY_SHEET['Expired Claim'],
+    [OPS_ROUTING_POLICY.SHEETS.REJECT_CLAIM]: OPS_ROUTING_POLICY.LAST_STATUS_BY_SHEET['Reject Claim'],
     [OPS_ROUTING_POLICY.SHEETS.SC_FARHAN]: OPS_ROUTING_POLICY.LAST_STATUS_BY_SHEET['__SC_SHARED__'],
     [OPS_ROUTING_POLICY.SHEETS.SC_MEILANI]: OPS_ROUTING_POLICY.LAST_STATUS_BY_SHEET['__SC_SHARED__'],
     [OPS_ROUTING_POLICY.SHEETS.SC_IVAN]: OPS_ROUTING_POLICY.LAST_STATUS_BY_SHEET['__SC_SHARED__'],
@@ -2388,8 +2323,7 @@ function healthCheck_() {
     checkedAt: new Date().toISOString(),
     ok: true,
     master: { ok: false, error: '' },
-    log: { ok: false, error: '' },
-    webapp: { ok: false, error: '' }
+    log: { ok: false, error: '' }
   };
 
   // Master
@@ -2414,19 +2348,7 @@ function healthCheck_() {
     res.log.error = String(eL && eL.message ? eL.message : eL);
   }
 
-  // WebApp Project
-  try {
-    const ss = SpreadsheetApp.openById(String(CONFIG.webappProjectSpreadsheetId));
-    const daily = ss.getSheetByName(WEBAPP_MOVEMENT_POLICY.SHEETS.DAILY);
-    const past = ss.getSheetByName(WEBAPP_MOVEMENT_POLICY.SHEETS.PAST);
-    res.webapp.ok = !!(daily && past);
-    if (!res.webapp.ok) res.webapp.error = 'Missing Daily/Past sheet(s) in WebApp Project';
-  } catch (eW) {
-    res.webapp.ok = false;
-    res.webapp.error = String(eW && eW.message ? eW.message : eW);
-  }
-
-  res.ok = !!(res.master.ok && res.log.ok && res.webapp.ok);
+  res.ok = !!(res.master.ok && res.log.ok);
   try { Logger.log(JSON.stringify(res)); } catch (e0) {}
   return res;
 }

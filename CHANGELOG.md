@@ -5,6 +5,26 @@ Formatnya sengaja sederhana: **Added / Changed / Fixed**. Tidak perlu sok formal
 
 ---
 
+
+## 2026-07-06
+
+### Added
+- Sheet operasional `Reject Claim` untuk klaim dengan `Last Status` mengandung keyword `reject` dan `days_aging_from_last_activity` atau `last_update_datetime` masih `<= 30` hari.
+
+### Changed
+- Mapping GSI dipindahkan ke Meilani di routing SC, Service Center PIC, Service Center Extractor, dan Salvage; Rejeki Seluler/Rejeki Seluller tetap diarahkan ke Farhan.
+- WebApp Movement Tracking dihapus dari runtime dan health check pipeline. Daily/Weekly Report Base tetap dipertahankan.
+- Strict sync kedua setelah optional processors dibatasi ke optional sheets untuk mengurangi scan/write operational sheets berulang.
+- `Submission.TAT` diformat decimal 1 digit; sheet lain tetap integer.
+- Dokumentasi workflow/column contract diperbarui untuk Reject Claim, SC mapping, dan perubahan runtime.
+
+### Fixed
+- SUB relocation sekarang dapat memindahkan klaim existing ke `Reject Claim` saat status berubah menjadi reject dan masih dalam window 30 hari.
+- Branch/PIC mapping mengenali Rejeki Seluler agar tidak jatuh ke unknown/unmapped.
+- Salvage tidak lagi menulis Last Update Timestamp ke F1; timestamp run hanya mengisi `D1:E1`.
+
+---
+
 ## 2026-06-29
 
 ### Changed

@@ -151,7 +151,7 @@ const CONFIG = {
     { sheet: "Mitracare", tokens: ["mitracare", "digimap"] },
     { sheet: "Sitcomtara", tokens: ["sitcomtara", "sitcom tara"] },
     { sheet: "iBox", tokens: ["ibox", "i box"] },
-    { sheet: "GSI", tokens: ["gsi"] },
+    { sheet: "Meilani", tokens: ["gsi"] },
     { sheet: "Multikom", tokens: ["multikom"] },
     { sheet: "Andalas", tokens: ["andalas"] },
     { sheet: "Klikcare", tokens: ["klikcare"] },
