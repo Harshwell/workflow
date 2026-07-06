@@ -1374,8 +1374,8 @@ function __getMiddlePicFromServiceCenter06_(serviceCenter) {
   if (!sc) return 'Unknown';
 
   const map = [
-    ['Farhan', ['mitracare', 'sitcomtara', 'ibox', 'gsi']],
-    ['Meilani', ['unicom', 'xiaomi authorized', 'samsung exclusive', 'carlcare', 'andalas']],
+    ['Farhan', ['mitracare', 'sitcomtara', 'ibox', 'rejeki seluler', 'rejeki seluller']],
+    ['Meilani', ['unicom', 'xiaomi authorized', 'samsung exclusive', 'carlcare', 'andalas', 'gsi']],
     ['Meindar', ['klikcare', 'j-bros', 'makmur era abadi', 'manado mitra bersama', 'cv kayu awet sejahtera', 'gh store', 'mdp', 'deltasindo', 'ezcare', 'ez care', 'b-store']],
   ];
 
@@ -1462,7 +1462,7 @@ function __getReportBaseSourceSheets06_(ss) {
   const seen = Object.create(null);
   const base = (CONFIG && CONFIG.sheetsByPic && Array.isArray(CONFIG.sheetsByPic.adminOperational))
     ? CONFIG.sheetsByPic.adminOperational.slice()
-    : ['Submission','Ask Detail','OR - OLD','Start','Finish','SC - Farhan','SC - Meilani','SC - Meindar','PO','Exclusion'];
+    : ['Submission','Ask Detail','OR - OLD','Start','Finish','Reject Claim','SC - Farhan','SC - Meilani','SC - Meindar','PO','Exclusion'];
   const extras = ['SC - Unmapped', 'B2B', 'EV-Bike', 'Special Case'];
   const all = base.concat(extras);
   for (let i = 0; i < all.length; i++) {
@@ -1645,7 +1645,7 @@ function enforceOperationalLayout06_(ss) {
     const newExpired = ss.getSheetByName('Expired Claim');
     if (oldExpired && !newExpired) oldExpired.setName('Expired Claim');
   } catch (eRenameExpired) {}
-  const monthSheets = ['Submission', 'Ask Detail', 'Start', 'SC - Farhan', 'SC - Meilani', 'SC - Meindar', 'Finish', 'Expired Claim', 'PO', 'Exclusion'];
+  const monthSheets = ['Submission', 'Ask Detail', 'Start', 'SC - Farhan', 'SC - Meilani', 'SC - Meindar', 'Finish', 'Expired Claim', 'Reject Claim', 'PO', 'Exclusion'];
   let touched = 0;
   for (let i = 0; i < monthSheets.length; i++) {
     const sh = ss.getSheetByName(monthSheets[i]);
@@ -1653,7 +1653,7 @@ function enforceOperationalLayout06_(ss) {
     if (__ensureHeaderAtColumn06_(sh, 'Submission by Month', 2)) touched++;
     touched += __normalizeSubmissionByMonthColumn06_(sh);
   }
-  ['Start', 'Finish', 'Expired Claim'].forEach(name => {
+  ['Start', 'Finish', 'Expired Claim', 'Reject Claim'].forEach(name => {
     const sh = ss.getSheetByName(name);
     if (!sh) return;
     if (__ensureHeaderAtColumn06_(sh, 'Service Center PIC', 14)) touched++;
@@ -1669,7 +1669,7 @@ function enforceOperationalLayout06_(ss) {
     'Aging Post': 'Stage Aging'
   };
 
-  const allCleanupSheets = ['Submission', 'Ask Detail', 'OR - OLD', 'Start', 'Finish', 'Expired Claim', 'SC - Farhan', 'SC - Meilani', 'SC - Meindar', 'SC - Unmapped', 'PO', 'Exclusion', 'B2B', 'EV-Bike', 'Doss', 'Special Case'];
+  const allCleanupSheets = ['Submission', 'Ask Detail', 'OR - OLD', 'Start', 'Finish', 'Expired Claim', 'Reject Claim', 'SC - Farhan', 'SC - Meilani', 'SC - Meindar', 'SC - Unmapped', 'PO', 'Exclusion', 'B2B', 'EV-Bike', 'Doss', 'Special Case'];
   allCleanupSheets.forEach(function(name) {
     const sh = ss.getSheetByName(name);
     if (!sh) return;
@@ -1677,7 +1677,7 @@ function enforceOperationalLayout06_(ss) {
     touched += __renameHeaderColumns06_(sh, stageRename);
   });
 
-  ['Submission', 'Ask Detail', 'Start', 'Finish', 'Expired Claim'].forEach(function(name) {
+  ['Submission', 'Ask Detail', 'Start', 'Finish', 'Expired Claim', 'Reject Claim'].forEach(function(name) {
     const sh = ss.getSheetByName(name);
     if (!sh) return;
     touched += __removeHeaderColumns06_(sh, financeExcluded, {});
@@ -1690,7 +1690,7 @@ function enforceOperationalLayout06_(ss) {
     touched += __removeHeaderColumns06_(sh, evDossB2bDeprecated, {});
   });
 
-  ['Start', 'Finish', 'Expired Claim'].forEach(function(name) {
+  ['Start', 'Finish', 'Expired Claim', 'Reject Claim'].forEach(function(name) {
     const sh = ss.getSheetByName(name);
     if (sh) touched += __fillBranchFromServiceCenter06_(sh);
   });
