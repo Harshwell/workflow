@@ -345,6 +345,7 @@ function applyOperationalColumnSchema_(sh, header, startRow, nRows, opts) {
 
   opts = opts || {};
   const orIsMoney = !!opts.orIsMoney;
+  const sheetName = String(opts.sheetName || (sh && typeof sh.getName === 'function' ? sh.getName() : '') || '').trim();
 
   const idx = buildHeaderIndex_(header);
   const fmt = (colName, numberFormat, align) => {
@@ -1746,7 +1747,7 @@ function routeRawToOperationalSheetsInMemory_(ss, rawValues, headerIndexRaw, pic
     }
 
     // Column formatting minimal (does not touch data validations)
-    applyOperationalColumnSchema_(sh, header, startRow, n, { orIsMoney: false });
+    applyOperationalColumnSchema_(sh, header, startRow, n, { orIsMoney: false, sheetName: sheetName });
 
     // DB Link RichText if supported
     if (typeof applyDbLinkRichTextFromWriter_ === 'function') {
