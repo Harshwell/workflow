@@ -227,6 +227,17 @@ function __setDbLinkRichTextSegments_(sh, colIndex0, rowNums, urlMap) {
  *  Optional sheets
  *  ========================= */
 
+
+function getB2BExcludedStatuses05c_() {
+  const base = (typeof getSpecialCaseExcludedStatuses_ === 'function')
+    ? getSpecialCaseExcludedStatuses_()
+    : new Set();
+  const out = new Set();
+  try { base.forEach(function(v) { out.add(String(v || '').trim().toUpperCase()); }); } catch (e) {}
+  ['DONE_EXPIRED', 'CLAIM_EXPIRE', 'CLAIM_EXPIRE_WALKIN'].forEach(function(v) { out.add(v); });
+  return out;
+}
+
 /** Optional: B2B — enabled by default. Set RUNTIME.enableB2B = false to disable. */
 function __getB2BStatusRouteBucket05c_(status) {
   const s = String(status || '').trim().toUpperCase();
@@ -358,7 +369,7 @@ function processB2B_(ss, rawValues, headerIndexRaw, pic) { // `pic` kept for bac
   }
 
   const OPTIONAL_FLAGS = (typeof __OPTIONAL_FLAGS !== 'undefined' && __OPTIONAL_FLAGS) ? __OPTIONAL_FLAGS : {};
-  const EXCLUDED_LAST_STATUSES = getSpecialCaseExcludedStatuses_();
+  const EXCLUDED_LAST_STATUSES = getB2BExcludedStatuses05c_();
 
   const idxBP = headerIndexRaw[h.businessPartner];
   const idxClaim = headerIndexRaw[h.claimNumber];

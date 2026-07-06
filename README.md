@@ -19,6 +19,7 @@ Hard revise runtime + mapping terbaru:
 - WebApp Movement Tracking dihapus dari runtime MAIN/SUB dan health check agar tidak menambah call spreadsheet eksternal.
 - Re-sync `Submission Date` / `Submission by Month` pasca optional processor sekarang dibatasi ke optional sheets yang baru tersentuh, bukan semua operational sheets lagi.
 - `Submission.TAT` memakai format decimal 1 digit; sheet lain tetap integer.
+- `B2B` mengecualikan status `DONE_EXPIRED`, `CLAIM_EXPIRE`, dan `CLAIM_EXPIRE_WALKIN`.
 - Salvage: row baru tetap default `Remarks = Unit belum ada`, mapping GSI mengikuti Meilani, Rejeki Seluler mengikuti Farhan, dan timestamp run tidak lagi menulis ke F1.
 
 ---

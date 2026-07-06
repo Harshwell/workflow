@@ -50,7 +50,7 @@ These rules supersede older rows in this reference where legacy columns are stil
 | Doss | Sheet `Doss` follows the EV-Bike writer shape but only includes claim numbers containing `DOSS`. |
 | SC - Unmapped exclusion | Claim numbers containing `VVMAR` or `DOSS` are excluded from `SC - Unmapped`; those claims belong to `EV-Bike` / `Doss`. |
 | B2B/EV-Bike/Doss cleanup | `Status Type`, `Start Date`, `End Date`, and `Details` are removed from `B2B`, `EV-Bike`, and `Doss`. |
-| B2B scope | MAIN writes B2B only when `Raw Data.id_business_partner_category_name` is `B2B Partnership`; SUB updates existing B2B `Last Status`, `Last Status Aging`, `Stage Aging`, and `Service Center` by claim number. |
+| B2B scope | MAIN writes B2B only when `Raw Data.id_business_partner_category_name` is `B2B Partnership`; SUB updates existing B2B `Last Status`, `Last Status Aging`, `Stage Aging`, and `Service Center` by claim number. B2B excludes `DONE_EXPIRED`, `CLAIM_EXPIRE`, and `CLAIM_EXPIRE_WALKIN` in addition to the common closed/rejected status set. |
 | Special Case | `Special Case` is written only by MAIN. SUB/FORM do not process or strict-sync this sheet. All flagged claims are retained regardless of done/closed status. `Start Date`, `End Date`, and `Details` remain active for Special Case flag notes. |
 | Migration Policy flag | `Claimed Active Policies.policy_number` is matched to `Raw Data.qoala_policy_number` or SUB `policy_number` sources when available. Migration Policy has highest highlight priority and its note is placed before other flag notes. |
 | Active filters | MAIN/SUB expand active sheet filters to the full used range before write/sort, preserving criteria where possible, so rows outside the current filter range are still processed. |

@@ -21,6 +21,7 @@ Formatnya sengaja sederhana: **Added / Changed / Fixed**. Tidak perlu sok formal
 ### Fixed
 - SUB relocation sekarang dapat memindahkan klaim existing ke `Reject Claim` saat status berubah menjadi reject dan masih dalam window 30 hari.
 - Branch/PIC mapping mengenali Rejeki Seluler agar tidak jatuh ke unknown/unmapped.
+- B2B sekarang mengecualikan status `DONE_EXPIRED`, `CLAIM_EXPIRE`, dan `CLAIM_EXPIRE_WALKIN`.
 - Salvage tidak lagi menulis Last Update Timestamp ke F1; timestamp run hanya mengisi `D1:E1`.
 
 ---
