@@ -553,6 +553,7 @@ function runSubFromFormDrive06a_(req, runId) {
     'PO',
     'Exclusion',
     'Expired Claim',
+    'Reject Claim',
     'B2B',
     'EV-Bike',
     'Doss'
@@ -622,18 +623,6 @@ function __runSubCore06a_(masterSs, oldBlob, newBlob, opt) {
   const doTrashFlush = !!o.doTrashFlush;
 
   const startedAt = new Date();
-  try { setProgressForFlow_('SUB', 0.05, 'Snapshot PREV...', { prefixFlowInStep: true }); } catch (e0) {}
-  try { setProgressForFlow_('SUB', 0.05, 'Snapshot PREV…', { prefixFlowInStep: true }); } catch (e0) {}
-
-  // WebApp snapshots (best effort)
-  try {
-    if (typeof webappMovementSnapshotPrevForSub06c_ === 'function') {
-      webappMovementSnapshotPrevForSub06c_(masterSs, rawOldName, rawNewName);
-    }
-  } catch (eWp0) {
-    try { logLine_('WEBAPP_SNAP_PREV_ERR', 'Snapshot PREV failed (non-fatal)', String(eWp0), '', 'WARN'); } catch (eWp2) {}
-  }
-
   try { setProgressForFlow_('SUB', 0.20, 'Process OLD...', { prefixFlowInStep: true }); } catch (e1) {}
   try { setProgressForFlow_('SUB', 0.20, 'Process OLD…', { prefixFlowInStep: true }); } catch (e1) {}
 
@@ -670,14 +659,6 @@ function __runSubCore06a_(masterSs, oldBlob, newBlob, opt) {
   }
   const sortRes = __sortOperationalSheetsSub06a_(masterSs, opSheets, sortSpecs);
 
-  // WebApp movement tracking (best effort)
-  try {
-    if (typeof webappMovementSnapshotCurrAndTrackForSub06c_ === 'function') {
-      webappMovementSnapshotCurrAndTrackForSub06c_(masterSs, rawOldName, rawNewName);
-    }
-  } catch (eWp4) {
-    try { logLine_('WEBAPP_MOVE_ERR', 'Movement tracking failed (non-fatal)', String(eWp4), '', 'WARN'); } catch (eWp5) {}
-  }
 
   // Trash uploaded files only after successful SUB
   if (doTrashFlush) {
@@ -821,7 +802,7 @@ function ensureMasterSheets_(ss) {
 
   const mustHave = [
     // Operational
-    'Submission', 'Ask Detail', 'OR - OLD', 'Start', 'Finish', 'Expired Claim', 'SC - Farhan', 'SC - Meilani', 'SC - Meindar', 'SC - Unmapped', 'PO', 'Exclusion',
+    'Submission', 'Ask Detail', 'OR - OLD', 'Start', 'Finish', 'Expired Claim', 'Reject Claim', 'SC - Farhan', 'SC - Meilani', 'SC - Meindar', 'SC - Unmapped', 'PO', 'Exclusion',
     // Optional
     'B2B', 'EV-Bike', 'Doss', 'Special Case'
   ];
@@ -1251,6 +1232,7 @@ function runSubEmailIngest(maxThreads) {
       'PO',
       'Exclusion',
       'Expired Claim',
+      'Reject Claim',
       'B2B',
       'EV-Bike',
       'Doss'
@@ -1298,17 +1280,6 @@ function runSubEmailIngest(maxThreads) {
 
 
 
-
-// WebApp Project (Movement Claim Tracking): take PREV snapshots BEFORE SUB overwrites Raw.
-try { setProgressForFlow_('SUB', 0.25, 'Snapshot PREV...', { prefixFlowInStep: true }); } catch (eP4) {}
-try {
-  if (typeof webappMovementSnapshotPrevForSub06c_ === 'function') {
-    const snapPrev = webappMovementSnapshotPrevForSub06c_(masterSs, rawOldName, rawNewName);
-    try { logLine_('WEBAPP_SNAP_PREV', 'Snapshot PREV (Raw->WebApp)', JSON.stringify(snapPrev || {}), '', 'INFO'); } catch (eWp1) {}
-  }
-} catch (eWp0) {
-  try { logLine_('WEBAPP_SNAP_PREV_ERR', 'Snapshot PREV failed (non-fatal)', String(eWp0), '', 'WARN'); } catch (eWp2) {}
-}
 
     // Process available attachment(s). Allow SUB to run with only 1 XLSX.
     let rOld = null;
@@ -1387,17 +1358,6 @@ try {
     } catch (eTr) { try { logLine_('SUB_TEMP_RESTORE_WARN', 'MAIN temp restore failed (non-fatal)', String(eTr), '', 'WARN'); } catch (eTr3) {} }
 
 
-
-// WebApp Project (Movement Claim Tracking): take CURR snapshots AFTER SUB, then emit Daily events (dedup by Event ID).
-try { setProgressForFlow_('SUB', 0.92, 'Snapshot CURR + movement...', { prefixFlowInStep: true }); } catch (eP10) {}
-try {
-  if (typeof webappMovementSnapshotCurrAndTrackForSub06c_ === 'function') {
-    const snapCurr = webappMovementSnapshotCurrAndTrackForSub06c_(masterSs, rawOldName, rawNewName);
-    try { logLine_('WEBAPP_MOVE', 'Movement tracking emitted to Daily', JSON.stringify(snapCurr || {}), '', 'INFO'); } catch (eWp3) {}
-  }
-} catch (eWp4) {
-  try { logLine_('WEBAPP_MOVE_ERR', 'Movement tracking failed (non-fatal)', String(eWp4), '', 'WARN'); } catch (eWp5) {}
-}
 
     // Cleanup email thread after both succeeded.
     try {
@@ -1709,7 +1669,7 @@ function __coerceSubDatetimeColumnsFromDisplay06a_(values, displayValues) {
     return -1;
   }
 
-  // Datetime columns we care about (SUB + WebApp movement tracking).
+  // Datetime columns used by SUB updates.
   const idxs = [];
   idxs.push(idxOfAny(['claim_last_updated_datetime', 'claim last updated datetime']));
   idxs.push(idxOfAny(['activity_log_timestamp', 'activity log timestamp', 'activity_log_datetime', 'activity log datetime', 'last_activity_log_datetime', 'last activity log datetime']));
@@ -2590,7 +2550,8 @@ function __relocateOperationalRowsByLastStatusSub06a_(ss, sheetNames) {
     const idxClaim = idxOfAny(norm, ['claim number', 'claim_number', 'claim no', 'claim_no']);
     const idxStatus = idxOfAny(norm, ['last status', 'claim_last_status_name', 'last_status']);
     const idxSc = idxOfAny(norm, ['service center', 'repairer_location_store_name', 'sc_name', 'service_center']);
-    const idxLsd = idxOfAny(norm, ['last status date', 'claim_last_updated_datetime', 'claim last updated datetime']);
+    const idxLsd = idxOfAny(norm, ['last status date', 'claim_last_updated_datetime', 'claim last updated datetime', 'last update datetime', 'last_update_datetime']);
+    const idxLsa = idxOfAny(norm, ['last status aging', 'days_aging_from_last_activity', 'last_status_aging', 'lsa']);
 
     if (idxClaim < 0 || idxStatus < 0) {
       res.sheets[sheetName] = { skipped: 'missing Claim Number or Last Status' };
@@ -2653,6 +2614,9 @@ function __relocateOperationalRowsByLastStatusSub06a_(ss, sheetNames) {
       if (!status) continue;
 
       let candidates = routingIdx[status] || null;
+      if (typeof isRejectClaimTarget05b_ === 'function' && isRejectClaimTarget05b_(status, idxLsa >= 0 ? row[idxLsa] : '', idxLsd >= 0 ? row[idxLsd] : '')) {
+        candidates = ss.getSheetByName('Reject Claim') ? ['Reject Claim'] : candidates;
+      }
       // Force SC-universe statuses to be routed by SC keyword split, even if routing map is stale/misaligned.
       if (scPolicy.sharedStatusSet.has(status)) {
         candidates = scPolicy.scSheets.filter(function (n) { return !!ss.getSheetByName(n); });
@@ -3086,9 +3050,9 @@ function __getScSheetAllowlistsSub06a_() {
   } catch (e1) {}
 
   // 3) hard fallback (should rarely be used)
-  if (!out['SC - Farhan'] || !out['SC - Farhan'].length) out['SC - Farhan'] = ['mitracare', 'sitcomtara', 'gsi', 'ibox'].map(norm);
+  if (!out['SC - Farhan'] || !out['SC - Farhan'].length) out['SC - Farhan'] = ['mitracare', 'sitcomtara', 'ibox', 'rejeki seluler', 'rejeki seluller'].map(norm);
   if (!out['SC - Meindar'] || !out['SC - Meindar'].length) out['SC - Meindar'] = [].map(norm);
-  if (!out['SC - Meilani'] || !out['SC - Meilani'].length) out['SC - Meilani'] = [].map(norm);
+  if (!out['SC - Meilani'] || !out['SC - Meilani'].length) out['SC - Meilani'] = ['gsi'].map(norm);
 
   return out;
 }

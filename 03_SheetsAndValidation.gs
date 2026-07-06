@@ -348,7 +348,7 @@ const SV03_OPTIONAL_SHEETS_DEFAULT = Object.freeze(['B2B', 'EV-Bike', 'Doss', 'S
 // If headers change, user will adjust them manually.
 const SV03_FIXED_SCHEMA_SHEETS = new Set(['Special Case', 'Exclusion']);
 // Sheets that have specific Update Status/Timestamp columns (Asso/Admin) and must NOT receive generic ones.
-const SV03_WORKFLOW_SHEETS = new Set(['Ask Detail', 'Start', 'Finish', 'Expired Claim']);
+const SV03_WORKFLOW_SHEETS = new Set(['Ask Detail', 'Start', 'Finish', 'Expired Claim', 'Reject Claim']);
 
 
 function sv03_isFixedSchemaSheet_(name) {
@@ -581,6 +581,10 @@ function ensurePicSheets_(ss, pic) {
     (spec.optional || []).forEach(name => {
       if (!sv03_isOptionalSheetEnabledForPic_(pic, name)) return;
 
+      if (name === 'Reject Claim' && SV03_TEMPLATES.OPS_PIC_WORKFLOW) {
+        sv03_ensureSheetWithHeader_(ss, 'Reject Claim', SV03_TEMPLATES.OPS_PIC_WORKFLOW, pic);
+        return;
+      }
       if (name === 'B2B') {
         sv03_ensureSheetWithHeader_(ss, 'B2B', SV03_TEMPLATES.B2B, pic);
         return;

@@ -465,7 +465,7 @@ function runPipeline_(pic, fileIds, opts) {
 
   // Re-apply strict Submission Date/Month after optional sheet processors
   // so newly rebuilt rows (e.g. B2B on FORM - MAIN) are not left blank.
-  try { applyStrictSubmissionDateAndMonth06b_(ss, rawValues, headerIndexRaw); } catch (eSubFix2) { try { logLine_('WARN', 'Submission date/month strict re-sync failed', '', String(eSubFix2), 'WARN'); } catch (e2) {} }
+  try { applyStrictSubmissionDateAndMonth06b_(ss, rawValues, headerIndexRaw, { sheets: ['B2B', 'EV-Bike', 'Doss', 'Special Case'] }); } catch (eSubFix2) { try { logLine_('WARN', 'Submission date/month strict re-sync failed', '', String(eSubFix2), 'WARN'); } catch (e2) {} }
 
   // Defensive sanitizer for known validation regressions:
   // - Submission Date turning into checkbox
@@ -1180,7 +1180,7 @@ function shouldRunWeeklyReportBaseForSub06b_() {
 }
 
 
-function applyStrictSubmissionDateAndMonth06b_(ss, rawValues, headerIndexRaw) {
+function applyStrictSubmissionDateAndMonth06b_(ss, rawValues, headerIndexRaw, opts) {
   if (!ss || !rawValues || !rawValues.length || !headerIndexRaw) return;
   if (typeof applyRawHeaderAliases_ === 'function') headerIndexRaw = applyRawHeaderAliases_(headerIndexRaw);
 
@@ -1201,12 +1201,12 @@ function applyStrictSubmissionDateAndMonth06b_(ss, rawValues, headerIndexRaw) {
   }
 
   const flowName = String((typeof RUNTIME !== 'undefined' && RUNTIME && RUNTIME.flowName) ? RUNTIME.flowName : 'main').trim().toLowerCase();
-  const targetSheets = [
-    'Submission', 'Ask Detail', 'OR - OLD', 'Start', 'Finish', 'Expired Claim',
+  let targetSheets = (opts && Array.isArray(opts.sheets) && opts.sheets.length) ? opts.sheets.slice() : [
+    'Submission', 'Ask Detail', 'OR - OLD', 'Start', 'Finish', 'Expired Claim', 'Reject Claim',
     'SC - Farhan', 'SC - Meilani', 'SC - Meindar', 'SC - Unmapped', 'PO',
     'Exclusion', 'B2B', 'EV-Bike', 'Doss'
   ];
-  if (flowName === 'main') targetSheets.push('Special Case');
+  if (flowName === 'main' && targetSheets.indexOf('Special Case') === -1 && !(opts && Array.isArray(opts.sheets))) targetSheets.push('Special Case');
   targetSheets.forEach(function(name) {
     const sh = ss.getSheetByName(name);
     if (!sh) return;

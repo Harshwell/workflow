@@ -8,6 +8,22 @@ Dokumen ini sengaja dibuat tetap ramping. Untuk self-project, dokumentasi yang e
 
 ---
 
+
+## Update implementasi terbaru (2026-07-06)
+
+Hard revise runtime + mapping terbaru:
+
+- `Reject Claim` menjadi operational sheet resmi untuk claim dengan `Last Status` mengandung keyword `reject` dan aging/update `<= 30` hari; claim reject yang lebih tua tetap masuk jalur exclusion biasa.
+- SUB relocation ikut memindahkan claim existing dari sheet lain ke `Reject Claim` saat status berubah menjadi reject.
+- Mapping GSI dipindahkan ke `SC - Meilani` / PIC `Meilani`; service center yang mengandung `Rejeki Seluler` tetap masuk `SC - Farhan` / PIC `Farhan`.
+- WebApp Movement Tracking dihapus dari runtime MAIN/SUB dan health check agar tidak menambah call spreadsheet eksternal.
+- Re-sync `Submission Date` / `Submission by Month` pasca optional processor sekarang dibatasi ke optional sheets yang baru tersentuh, bukan semua operational sheets lagi.
+- `Submission.TAT` memakai format decimal 1 digit; sheet lain tetap integer.
+- `B2B` mengecualikan status `DONE_EXPIRED`, `CLAIM_EXPIRE`, dan `CLAIM_EXPIRE_WALKIN`.
+- Salvage: row baru tetap default `Remarks = Unit belum ada`, mapping GSI mengikuti Meilani, Rejeki Seluler mengikuti Farhan, dan timestamp run tidak lagi menulis ke F1.
+
+---
+
 ## Update implementasi terbaru (2026-06-29)
 
 Update kontrak MAIN/SUB/FORM:

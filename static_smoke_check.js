@@ -204,6 +204,8 @@ function runSmoke() {
       days_aging_from_last_activity: 3
     });
     const b2bRow = b2b.data[1];
+    const b2bExcludeSet = (typeof getB2BExcludedStatuses05c_ === 'function') ? getB2BExcludedStatuses05c_() : new Set();
+    const b2bExcludeOk = b2bExcludeSet.has('DONE_EXPIRED') && b2bExcludeSet.has('CLAIM_EXPIRE') && b2bExcludeSet.has('CLAIM_EXPIRE_WALKIN');
     const b2bOk = b2bChanged === 1
       && b2bRow[1] === 'SERVICE_CENTER_CLAIM_WAITING_PICKUP_FINISH'
       && b2bRow[2] === 'New SC'
@@ -357,7 +359,24 @@ function runSmoke() {
       && stageMissingRaw === 0
       && stageBlankRaw === 0;
 
-    return { ok: b2bOk && highlightOk && finishCloneOk && submissionDateOk && strictSyncOk && smartStageAgingOk, b2bOk, highlightOk, finishCloneOk, submissionDateOk, strictSyncOk, smartStageAgingOk, stageSameBucket, stageChangedBucket, stageMissingRaw, stageBlankRaw, strictVal: String(strictVal), validationCleared: strictSheet.validationCleared, b2bRow: b2bRow, bg: highlightSheet.bgs[0][0], note: highlightSheet.notes[0][0] };
+    const formatSheet = {
+      name: 'Submission',
+      formats: {},
+      aligns: {},
+      getName: function () { return this.name; },
+      getRange: function (row, col) {
+        const sh = this;
+        return {
+          setNumberFormat: function (fmt) { sh.formats[col] = fmt; return this; },
+          setHorizontalAlignment: function (align) { sh.aligns[col] = align; return this; },
+          clearDataValidations: function () { return this; }
+        };
+      }
+    };
+    applyOperationalColumnSchema_(formatSheet, ['Submission Date', 'TAT'], 2, 1, {});
+    const schemaFormatOk = formatSheet.formats[2] === '#,##0.0';
+
+    return { ok: b2bOk && b2bExcludeOk && highlightOk && finishCloneOk && submissionDateOk && strictSyncOk && smartStageAgingOk && schemaFormatOk, b2bOk, b2bExcludeOk, highlightOk, finishCloneOk, submissionDateOk, strictSyncOk, smartStageAgingOk, schemaFormatOk, stageSameBucket, stageChangedBucket, stageMissingRaw, stageBlankRaw, strictVal: String(strictVal), validationCleared: strictSheet.validationCleared, b2bRow: b2bRow, bg: highlightSheet.bgs[0][0], note: highlightSheet.notes[0][0] };
   })()`, ctx);
   if (!workflowGuard || workflowGuard.ok !== true) {
     throw new Error('MAIN/SUB workflow regression guard failed: ' + JSON.stringify(workflowGuard || {}, null, 2));

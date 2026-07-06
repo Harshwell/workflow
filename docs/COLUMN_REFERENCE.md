@@ -21,7 +21,7 @@ When a column is renamed, added, or removed, update `00_Config.gs`, `03_SheetsAn
 | Flow | Source sheet | Main destination sheets | Notes |
 | --- | --- | --- | --- |
 | MAIN | `Raw Data` | Operational sheets, optional sheets, logs/details, overview outputs | Uses canonical raw headers from `CONFIG.headers` and destination templates from `SV03_TEMPLATES`. |
-| SUB | `Raw OLD`, `Raw NEW` | `Submission`, `Ask Detail`, `OR - OLD`, `SC - Farhan`, `SC - Meilani`, `SC - Meindar`, `Start`, `Finish`, `PO`, `Exclusion`, `B2B`, `EV-Bike`, `Doss` | Uses `SUB_FLOW_SPEC` and raw row builders in `06a_EntryPoints.gs`. `Special Case` is MAIN-only. |
+| SUB | `Raw OLD`, `Raw NEW` | `Submission`, `Ask Detail`, `OR - OLD`, `SC - Farhan`, `SC - Meilani`, `SC - Meindar`, `Start`, `Finish`, `Expired Claim`, `Reject Claim`, `PO`, `Exclusion`, `B2B`, `EV-Bike`, `Doss` | Uses `SUB_FLOW_SPEC` and raw row builders in `06a_EntryPoints.gs`. `Special Case` is MAIN-only. |
 
 ## Current Contract Updates
 
@@ -39,15 +39,18 @@ These rules supersede older rows in this reference where legacy columns are stil
 | Finish duplication | Finish-status claims remain in their SC Universe sheet and are also cloned into `Finish`; matching headers are copied, and Finish-specific columns are filled when available. |
 | Expired Claim routing | `CLAIM_EXPIRE` and `CLAIM_EXPIRE_WALKIN` route to sheet `Expired Claim`. |
 | Expired Claim movement | `Expired Claim` stays inside SUB relocation scope, so claims can move out of it when `Last Status` changes to another mapped sheet. |
-| Finance exclusions | `Claim Amount`, `Claim Own Risk Amount`, `Nett Claim Amount`, and `% Approval` are ignored/removed on `Submission`, `Ask Detail`, `Start`, `Finish`, and `Expired Claim`. |
-| Service Type | `Start`, `Finish`, and `Expired Claim` read `device_checkin_option_name`; if missing, configured status fallbacks produce `WALKIN` / `PICKUP`, and `Expired Claim` with `CLAIM_EXPIRE` becomes `Ask Detail`. |
+| Reject Claim routing | `Reject Claim` uses the same workflow-style structure as `Expired Claim`. MAIN routes rows when `Last Status` contains `reject` and `days_aging_from_last_activity` or `last_update_datetime` is `<= 30` days. SUB relocation applies the same rule for existing rows that change status. |
+| SC GSI / Rejeki mapping | `GSI` is owned by `SC - Meilani` / PIC `Meilani`. `Rejeki Seluler` and `Rejeki Seluller` are owned by `SC - Farhan` / PIC `Farhan`. |
+| Runtime optimization | The second strict `Submission Date` / `Submission by Month` sync after optional processors is scoped to optional sheets only. WebApp Movement Tracking is no longer part of MAIN/SUB runtime. |
+| Finance exclusions | `Claim Amount`, `Claim Own Risk Amount`, `Nett Claim Amount`, and `% Approval` are ignored/removed on `Submission`, `Ask Detail`, `Start`, `Finish`, `Expired Claim`, and `Reject Claim`. |
+| Service Type | `Start`, `Finish`, `Expired Claim`, and `Reject Claim` read `device_checkin_option_name`; if missing, configured status fallbacks produce `WALKIN` / `PICKUP`, and `Expired Claim` with `CLAIM_EXPIRE` becomes `Ask Detail`. |
 | IMEI/SN format | `IMEI/SN` is written as plain text and normalized without comma separators. |
 | Store Name | Operational `Store Name` is sourced from `Raw Data.outlet_name` when available. |
 | EV-Bike | Claim numbers containing `VVMAR` are included in `EV-Bike` regardless of last status. SUB adds missing token claims from `Raw OLD` / `Raw NEW`, but existing rows only refresh `Last Status` and `Last Status Aging`. |
 | Doss | Sheet `Doss` follows the EV-Bike writer shape but only includes claim numbers containing `DOSS`. |
 | SC - Unmapped exclusion | Claim numbers containing `VVMAR` or `DOSS` are excluded from `SC - Unmapped`; those claims belong to `EV-Bike` / `Doss`. |
 | B2B/EV-Bike/Doss cleanup | `Status Type`, `Start Date`, `End Date`, and `Details` are removed from `B2B`, `EV-Bike`, and `Doss`. |
-| B2B scope | MAIN writes B2B only when `Raw Data.id_business_partner_category_name` is `B2B Partnership`; SUB updates existing B2B `Last Status`, `Last Status Aging`, `Stage Aging`, and `Service Center` by claim number. |
+| B2B scope | MAIN writes B2B only when `Raw Data.id_business_partner_category_name` is `B2B Partnership`; SUB updates existing B2B `Last Status`, `Last Status Aging`, `Stage Aging`, and `Service Center` by claim number. B2B excludes `DONE_EXPIRED`, `CLAIM_EXPIRE`, and `CLAIM_EXPIRE_WALKIN` in addition to the common closed/rejected status set. |
 | Special Case | `Special Case` is written only by MAIN. SUB/FORM do not process or strict-sync this sheet. All flagged claims are retained regardless of done/closed status. `Start Date`, `End Date`, and `Details` remain active for Special Case flag notes. |
 | Migration Policy flag | `Claimed Active Policies.policy_number` is matched to `Raw Data.qoala_policy_number` or SUB `policy_number` sources when available. Migration Policy has highest highlight priority and its note is placed before other flag notes. |
 | Active filters | MAIN/SUB expand active sheet filters to the full used range before write/sort, preserving criteria where possible, so rows outside the current filter range are still processed. |
@@ -352,7 +355,7 @@ Operational routing and reset rules:
 | `buildSheetWriters_` | Converts one Raw row into each destination sheet row using only columns that exist in that sheet. |
 | `applyOperationalClaimHighlightsByRaw_` | Applies claim-cell highlights and notes from Raw-driven flags after template formatting. |
 | `enrichOperationalSheetsFromRaw06_` | Fills post-route enrichment such as `Activity Log`, `Last Status Date`, `Status Type`, `LSA`, `ALA`, and `TAT`. |
-| `applyStrictSubmissionDateAndMonth06b_` | Re-syncs `Submission Date` and `Submission by Month` after optional processors to avoid stale values. |
+| `applyStrictSubmissionDateAndMonth06b_` | Re-syncs `Submission Date` and `Submission by Month`; the post-optional pass is scoped to optional sheets only for runtime efficiency. |
 
 ### B2B
 

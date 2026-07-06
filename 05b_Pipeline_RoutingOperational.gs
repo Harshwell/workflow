@@ -174,6 +174,17 @@ function uniq05a_(arr) {
  *  Routing core
  *  ========================= */
 
+
+function isRejectClaimTarget05b_(statusVal, lastActivityAgingVal, lastUpdateVal) {
+  const status = String(statusVal || '').toLowerCase();
+  if (status.indexOf('reject') === -1) return false;
+  const aging = (typeof normalizeInt_ === 'function') ? normalizeInt_(lastActivityAgingVal) : Number(lastActivityAgingVal);
+  if (aging != null && !isNaN(aging)) return aging <= 30;
+  const d = (typeof coerceDateTime_ === 'function') ? coerceDateTime_(lastUpdateVal) : (lastUpdateVal instanceof Date ? lastUpdateVal : null);
+  if (!d || isNaN(d.getTime())) return false;
+  return ((new Date().getTime() - d.getTime()) / 86400000) <= 30;
+}
+
 function compileRoutingIndex_(routingMap) {
   const idx = {};
   Object.keys(routingMap).forEach(sheetName => {
@@ -334,6 +345,7 @@ function applyOperationalColumnSchema_(sh, header, startRow, nRows, opts) {
 
   opts = opts || {};
   const orIsMoney = !!opts.orIsMoney;
+  const sheetName = String(opts.sheetName || (sh && typeof sh.getName === 'function' ? sh.getName() : '') || '').trim();
 
   const idx = buildHeaderIndex_(header);
   const fmt = (colName, numberFormat, align) => {
@@ -366,7 +378,7 @@ function applyOperationalColumnSchema_(sh, header, startRow, nRows, opts) {
   fmt('Last Status Aging', __FORMATS.INT, 'right');
   fmt('ALA', __FORMATS.INT, 'right');
   fmt('Activity Log Aging', __FORMATS.INT, 'right');
-  fmt('TAT', __FORMATS.INT, 'right');
+  fmt('TAT', sheetName === 'Submission' ? (__FORMATS.DECIMAL1 || '#,##0.0') : __FORMATS.INT, 'right');
   fmt('Q-L (Months)', __FORMATS.INT, 'right');
   fmt('M-L (Months)', __FORMATS.INT, 'right');
   fmt('M-Q (Months)', __FORMATS.INT, 'right');
@@ -1592,6 +1604,8 @@ function routeRawToOperationalSheetsInMemory_(ss, rawValues, headerIndexRaw, pic
   const idxClaim = headerIndexRaw[h.claimNumber];
   const idxLastStatus = headerIndexRaw[h.lastStatus];
   const idxDaysAging = headerIndexRaw[h.daysAgingFromSubmission];
+  const idxLastActivityAging = (headerIndexRaw[h.lastStatusAging] != null) ? headerIndexRaw[h.lastStatusAging] : headerIndexRaw['days_aging_from_last_activity'];
+  const idxLastUpdate = (headerIndexRaw[h.lastUpdateDatetime] != null) ? headerIndexRaw[h.lastUpdateDatetime] : ((headerIndexRaw['last_update_datetime'] != null) ? headerIndexRaw['last_update_datetime'] : headerIndexRaw['claim_last_updated_datetime']);
   const idxPartnerName = headerIndexRaw[h.businessPartner];
   const idxScName = headerIndexRaw[h.scName];
 
@@ -1618,8 +1632,12 @@ function routeRawToOperationalSheetsInMemory_(ss, rawValues, headerIndexRaw, pic
 
     let targets = (routingIndex[statusVal] || []).slice();
 
+    if (isRejectClaimTarget05b_(statusVal, idxLastActivityAging != null ? rawRow[idxLastActivityAging] : '', idxLastUpdate != null ? rawRow[idxLastUpdate] : '')) {
+      targets = ['Reject Claim'];
+    }
+
     // Patch B1: force Finish statuses into SC routing.
-    if (isFinishStatus05a_(statusVal)) {
+    if (targets.indexOf('Reject Claim') === -1 && isFinishStatus05a_(statusVal)) {
       targets = uniq05a_(targets.concat([scFarhanName, scMeilaniName, scIvanName, scFallbackName]));
     }
 
@@ -1729,7 +1747,7 @@ function routeRawToOperationalSheetsInMemory_(ss, rawValues, headerIndexRaw, pic
     }
 
     // Column formatting minimal (does not touch data validations)
-    applyOperationalColumnSchema_(sh, header, startRow, n, { orIsMoney: false });
+    applyOperationalColumnSchema_(sh, header, startRow, n, { orIsMoney: false, sheetName: sheetName });
 
     // DB Link RichText if supported
     if (typeof applyDbLinkRichTextFromWriter_ === 'function') {

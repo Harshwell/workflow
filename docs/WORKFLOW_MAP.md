@@ -35,7 +35,7 @@ flowchart TD
     M --> N
     N --> O[Optional Sheets]
     N --> P[Log / Details / Overview]
-    N --> Q[WebApp Movement Tracking]
+    N --> Q[Daily / Weekly Report Base]
 ```
 
 ---
@@ -154,6 +154,18 @@ Kalau ingin mengubah flow manual/form:
 
 ## Change impact map
 
+
+### Update MAIN/SUB/FORM 2026-07-06
+
+Perubahan kontrak terbaru:
+
+- `Reject Claim` masuk operational flow. MAIN mengisi sheet ini untuk claim dengan `Last Status` mengandung `reject` dan `days_aging_from_last_activity` / `last_update_datetime` masih `<= 30` hari.
+- SUB relocation memindahkan claim existing dari `Submission`, `Start`, SC universe, `Expired Claim`, atau sheet operasional lain ke `Reject Claim` jika status terbaru berubah menjadi reject dan masih dalam window 30 hari.
+- Claim reject dengan aging/update `> 30` hari tidak dipaksa ke `Reject Claim`; claim tersebut mengikuti mapping exclusion/closed biasa.
+- Mapping GSI pindah ke `SC - Meilani` dan `Service Center PIC = Meilani`. Keyword `Rejeki Seluler` / `Rejeki Seluller` masuk `SC - Farhan` dan `Service Center PIC = Farhan`.
+- WebApp Movement Tracking sudah dikeluarkan dari runtime MAIN/SUB. `Daily Report Base` dan `Weekly Report Base` tetap aktif.
+- Untuk efisiensi runtime, strict sync kedua setelah optional processors dibatasi hanya ke optional sheets yang baru ditulis (`B2B`, `EV-Bike`, `Doss`, `Special Case`).
+
 ### Update MAIN/SUB/FORM 2026-06-29
 
 Perubahan kontrak terbaru:
@@ -214,12 +226,12 @@ Minimal cek:
 - schema fixed vs non-fixed
 - apakah sheet itu boleh auto-heal atau harus diperlakukan manual
 
-### Jika mengubah movement tracking WebApp
+### Jika mengubah Daily / Weekly Report Base
 Minimal cek:
-- `WEBAPP_MOVEMENT_POLICY` (termasuk batas scan histori `Past`)
-- helper load existing event id (`__loadExistingEventIds06c_`)
-- urutan snapshot PREV/CURR dan dedup Event ID
-- dampak performa saat jumlah baris histori besar
+- `refreshReportBaseFromOperational06_` dan `fillWeeklyReportBase` di `06c_PostProcessAndUtils.gs`
+- source sheet list operational termasuk `Reject Claim`
+- gate SUB untuk weekly refresh agar runtime hourly tetap ringan
+- dampak filter aktif dan jumlah row historis saat full rewrite report base
 
 ---
 
@@ -307,7 +319,22 @@ Untuk 4 kolom manual (`Update Status`, `Timestamp`, `Status`, `Remarks`):
   - kalau claim baru (belum ada snapshot), default-nya kosong;
   - jika claim awalnya masuk `SC - Unmapped`, manual field di SC owner sheet tetap kosong sampai claim benar-benar diroute ke sheet owner terkait.
 
-### 3) EV-Bike overlay + TAT derivation
+
+### 3) Reject Claim routing
+- Scope: MAIN initial routing dan SUB relocation.
+- UAT:
+  1. siapkan claim dengan `Last Status` mengandung `reject` dan `days_aging_from_last_activity <= 30`.
+  2. jalankan MAIN dan verifikasi row masuk `Reject Claim`.
+  3. ubah claim existing di sheet lain via SUB menjadi status reject dengan aging <=30, lalu verifikasi row pindah ke `Reject Claim`.
+  4. ulangi dengan aging >30 dan pastikan tidak masuk `Reject Claim`.
+
+### 4) SC mapping GSI / Rejeki Seluler
+- Scope: MAIN routing, SUB relocation, Service Center PIC, optional project extractor/salvage.
+- UAT:
+  1. service center mengandung `GSI` harus masuk `SC - Meilani` dan PIC `Meilani`.
+  2. service center mengandung `Rejeki Seluler` harus masuk `SC - Farhan` dan PIC `Farhan`.
+
+### 5) EV-Bike overlay + TAT derivation
 - Scope: overlay dari `Submission`, plus isi `TAT` ketika raw `days_aging_from_submission` kosong.
 - UAT:
   1. siapkan 1 claim EV-Bike di `Submission` dengan `Submission Date` valid.
