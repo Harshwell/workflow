@@ -67,7 +67,7 @@ const DRY_RUN = false;
 const CONFIG_SECTION_INDEX = Object.freeze({
   foundation: Object.freeze(['App.Registry', 'APP_VERSION', 'SCHEMA_VERSION', 'DRY_RUN']),
   ingestion: Object.freeze(['EMAIL_INGEST_POLICY', 'SUB_EMAIL_INGEST_POLICY', 'SUB_FLOW_SPEC', 'FORM_INGEST_POLICY']),
-  workbook: Object.freeze(['MASTER_SPREADSHEET_ID', 'MASTER_RAW_SHEET_NAME', 'WEBAPP_MOVEMENT_POLICY', 'WORKBOOK_PROFILES']),
+  workbook: Object.freeze(['MASTER_SPREADSHEET_ID', 'MASTER_RAW_SHEET_NAME', 'WORKBOOK_PROFILES']),
   routing: Object.freeze(['OPS_ROUTING_POLICY', 'STATUS_TYPE_BY_LAST_STATUS', 'POSITION_BY_LAST_STATUS', 'FINISH_STATUSES']),
   validationAndPresentation: Object.freeze(['VALIDATION_POLICY', 'VALIDATION_FALLBACKS', 'CHECKBOX_POLICY', 'LINK_POLICY', 'COLUMN_TYPES', 'COLUMN_ALIGNMENT']),
   optionalSheets: Object.freeze(['SPECIAL_CASE_WRITER_POLICY', 'EVBIKE_POLICY', 'EXCLUSION_TAT_POLICY', 'OPTIONAL_SHEETS_FLAGS']),
@@ -166,7 +166,7 @@ const WEBAPP_PROJECT_SPREADSHEET_ID = getPropString_(
 );
 
 const WEBAPP_MOVEMENT_POLICY = Object.freeze({
-  ENABLE: getPropBool_('WEBAPP_MOVEMENT_ENABLE', true),
+  ENABLE: getPropBool_('WEBAPP_MOVEMENT_ENABLE', false),
   SPREADSHEET_ID: WEBAPP_PROJECT_SPREADSHEET_ID,
 
   /**
@@ -354,6 +354,7 @@ const SUB_FLOW_SPEC = Object.freeze({
     'PO',
     'Exclusion',
     'Expired Claim',
+    'Reject Claim',
     'B2B',
     'EV-Bike',
     'Doss'
@@ -1419,6 +1420,7 @@ const OPS_ROUTING_POLICY = Object.freeze({
     START: 'Start',
     FINISH: 'Finish',
     CLAIM_EXPIRED: 'Expired Claim',
+    REJECT_CLAIM: 'Reject Claim',
     SC_FARHAN: 'SC - Farhan',
     SC_MEILANI: 'SC - Meilani',
     SC_IVAN: 'SC - Meindar',
@@ -1470,6 +1472,8 @@ const OPS_ROUTING_POLICY = Object.freeze({
       'CLAIM_EXPIRE',
       'CLAIM_EXPIRE_WALKIN'
     ]),
+
+    'Reject Claim': Object.freeze([]),
 
     // SC universe (shared by Farhan/Meilani; split via sc_name keyword)
     '__SC_SHARED__': Object.freeze([
@@ -1572,7 +1576,8 @@ const OPS_ROUTING_POLICY = Object.freeze({
       'Mitracare',
       'Sitcomtara',
       'iBox',
-      'GSI'
+      'Rejeki Seluler',
+      'Rejeki Seluller'
     ]),
     'SC - Meindar': Object.freeze([
       'Klikcare',
@@ -1598,7 +1603,8 @@ const OPS_ROUTING_POLICY = Object.freeze({
       'Samsung Authorized Service Center by Unicom',
       'Xiaomi Authorized',
       'Samsung Exclusive',
-      'Carlcare'
+      'Carlcare',
+      'GSI'
     ])
   }),
 
@@ -2060,6 +2066,7 @@ const CONFIG = Object.freeze({
         OPS_ROUTING_POLICY.SHEETS.START,
         OPS_ROUTING_POLICY.SHEETS.FINISH,
         OPS_ROUTING_POLICY.SHEETS.CLAIM_EXPIRED,
+        OPS_ROUTING_POLICY.SHEETS.REJECT_CLAIM,
         OPS_ROUTING_POLICY.SHEETS.SC_FARHAN,
         OPS_ROUTING_POLICY.SHEETS.SC_MEILANI,
         OPS_ROUTING_POLICY.SHEETS.SC_IVAN,
@@ -2077,6 +2084,7 @@ const CONFIG = Object.freeze({
         OPS_ROUTING_POLICY.SHEETS.START,
         OPS_ROUTING_POLICY.SHEETS.FINISH,
         OPS_ROUTING_POLICY.SHEETS.CLAIM_EXPIRED,
+        OPS_ROUTING_POLICY.SHEETS.REJECT_CLAIM,
         OPS_ROUTING_POLICY.SHEETS.SC_FARHAN,
         OPS_ROUTING_POLICY.SHEETS.SC_MEILANI,
         OPS_ROUTING_POLICY.SHEETS.SC_IVAN,
@@ -2101,6 +2109,7 @@ const CONFIG = Object.freeze({
       OPS_ROUTING_POLICY.SHEETS.START,
       OPS_ROUTING_POLICY.SHEETS.FINISH,
       OPS_ROUTING_POLICY.SHEETS.CLAIM_EXPIRED,
+      OPS_ROUTING_POLICY.SHEETS.REJECT_CLAIM,
       OPS_ROUTING_POLICY.SHEETS.SC_FARHAN,
       OPS_ROUTING_POLICY.SHEETS.SC_MEILANI,
       OPS_ROUTING_POLICY.SHEETS.SC_IVAN,
@@ -2114,6 +2123,7 @@ const CONFIG = Object.freeze({
       OPS_ROUTING_POLICY.SHEETS.START,
       OPS_ROUTING_POLICY.SHEETS.FINISH,
       OPS_ROUTING_POLICY.SHEETS.CLAIM_EXPIRED,
+      OPS_ROUTING_POLICY.SHEETS.REJECT_CLAIM,
       OPS_ROUTING_POLICY.SHEETS.SC_FARHAN,
       OPS_ROUTING_POLICY.SHEETS.SC_MEILANI,
       OPS_ROUTING_POLICY.SHEETS.SC_IVAN,
@@ -2152,6 +2162,7 @@ const CONFIG = Object.freeze({
     [OPS_ROUTING_POLICY.SHEETS.START]: OPS_ROUTING_POLICY.LAST_STATUS_BY_SHEET['Start'],
     [OPS_ROUTING_POLICY.SHEETS.FINISH]: OPS_ROUTING_POLICY.LAST_STATUS_BY_SHEET['Finish'],
     [OPS_ROUTING_POLICY.SHEETS.CLAIM_EXPIRED]: OPS_ROUTING_POLICY.LAST_STATUS_BY_SHEET['Expired Claim'],
+    [OPS_ROUTING_POLICY.SHEETS.REJECT_CLAIM]: OPS_ROUTING_POLICY.LAST_STATUS_BY_SHEET['Reject Claim'],
     [OPS_ROUTING_POLICY.SHEETS.SC_FARHAN]: OPS_ROUTING_POLICY.LAST_STATUS_BY_SHEET['__SC_SHARED__'],
     [OPS_ROUTING_POLICY.SHEETS.SC_MEILANI]: OPS_ROUTING_POLICY.LAST_STATUS_BY_SHEET['__SC_SHARED__'],
     [OPS_ROUTING_POLICY.SHEETS.SC_IVAN]: OPS_ROUTING_POLICY.LAST_STATUS_BY_SHEET['__SC_SHARED__'],
@@ -2167,6 +2178,7 @@ const CONFIG = Object.freeze({
     [OPS_ROUTING_POLICY.SHEETS.START]: OPS_ROUTING_POLICY.LAST_STATUS_BY_SHEET['Start'],
     [OPS_ROUTING_POLICY.SHEETS.FINISH]: OPS_ROUTING_POLICY.LAST_STATUS_BY_SHEET['Finish'],
     [OPS_ROUTING_POLICY.SHEETS.CLAIM_EXPIRED]: OPS_ROUTING_POLICY.LAST_STATUS_BY_SHEET['Expired Claim'],
+    [OPS_ROUTING_POLICY.SHEETS.REJECT_CLAIM]: OPS_ROUTING_POLICY.LAST_STATUS_BY_SHEET['Reject Claim'],
     [OPS_ROUTING_POLICY.SHEETS.SC_FARHAN]: OPS_ROUTING_POLICY.LAST_STATUS_BY_SHEET['__SC_SHARED__'],
     [OPS_ROUTING_POLICY.SHEETS.SC_MEILANI]: OPS_ROUTING_POLICY.LAST_STATUS_BY_SHEET['__SC_SHARED__'],
     [OPS_ROUTING_POLICY.SHEETS.SC_IVAN]: OPS_ROUTING_POLICY.LAST_STATUS_BY_SHEET['__SC_SHARED__'],
@@ -2388,8 +2400,7 @@ function healthCheck_() {
     checkedAt: new Date().toISOString(),
     ok: true,
     master: { ok: false, error: '' },
-    log: { ok: false, error: '' },
-    webapp: { ok: false, error: '' }
+    log: { ok: false, error: '' }
   };
 
   // Master
@@ -2414,19 +2425,7 @@ function healthCheck_() {
     res.log.error = String(eL && eL.message ? eL.message : eL);
   }
 
-  // WebApp Project
-  try {
-    const ss = SpreadsheetApp.openById(String(CONFIG.webappProjectSpreadsheetId));
-    const daily = ss.getSheetByName(WEBAPP_MOVEMENT_POLICY.SHEETS.DAILY);
-    const past = ss.getSheetByName(WEBAPP_MOVEMENT_POLICY.SHEETS.PAST);
-    res.webapp.ok = !!(daily && past);
-    if (!res.webapp.ok) res.webapp.error = 'Missing Daily/Past sheet(s) in WebApp Project';
-  } catch (eW) {
-    res.webapp.ok = false;
-    res.webapp.error = String(eW && eW.message ? eW.message : eW);
-  }
-
-  res.ok = !!(res.master.ok && res.log.ok && res.webapp.ok);
+  res.ok = !!(res.master.ok && res.log.ok);
   try { Logger.log(JSON.stringify(res)); } catch (e0) {}
   return res;
 }
