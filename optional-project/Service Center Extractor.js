@@ -58,9 +58,10 @@ const CONFIG = {
 
   DEST_SHEETS_TO_CLEAR: [
     "Samsung Exclusive", "Unicom", "Sitcomtara", "Mitracare", "EzCare", "iBox", "GSI", "Andalas", "Klikcare", "J-Bros",
-    "MEA", "MMB", "MDP", "Deltasindo", "Carlcare", "B-Store", "Multikom", "Unmapped"
+    "MEA", "MMB", "MDP", "Deltasindo", "Carlcare", "B-Store", "Multikom", "CV Berkah", "Rejeki Seluler", "Unmapped"
   ],
   VALID_PICS: new Set(["FARHAN", "MEILANI", "MEINDAR"]),
+  AUTO_MANAGED_DEST_SHEETS: new Set(["CV Berkah", "Rejeki Seluler"]),
   PHASES: Object.freeze({
     START: "START",
     MIDDLE: "MIDDLE",
@@ -123,6 +124,7 @@ const CONFIG = {
     lastStatus: ["Last Status", "Status Terakhir"],
     lastStatusDate: ["Last Status Date", "Status Date", "Last Update", "Last Updated"],
     lastStatusAging: ["Last Status Aging", "Last Status Aging (days)", "Status Aging", "Aging", "Aging (days)"],
+    submissionDate: ["Submission Date", "Claim Submitted Datetime", "Submitted Datetime"],
     remarks: ["Remarks", "Remark", "Notes", "Note"],
     dashboardLink: ["Dashboard Link", "DB Link", "Link"],
   },
@@ -137,6 +139,7 @@ const CONFIG = {
     lastStatus: ["Last Status"],
     lastStatusDate: ["Last Status Date", "Status Date", "Last Update", "Last Updated"],
     lastStatusAging: ["Last Status Aging", "Last Status Aging (days)", "Status Aging", "Aging", "Aging (days)"],
+    submissionDate: ["Submission Date", "Claim Submitted Datetime", "Submitted Datetime"],
     remarks: ["Remarks", "Remark", "Note", "Notes"],
     dbLink: ["DB Link", "Dashboard Link", "Link"],
   },
@@ -977,6 +980,7 @@ function _collectEligibleRowsFromSource_(sheet, controls) {
       lastStatus: idx.lastStatus == null ? "" : row[idx.lastStatus],
       lastStatusDate: idx.lastStatusDate == null ? "" : row[idx.lastStatusDate],
       lastStatusAging: idx.lastStatusAging == null ? "" : row[idx.lastStatusAging],
+      submissionDate: idx.submissionDate == null ? "" : row[idx.submissionDate],
       remarks: rawRemarks,
       dashboardUrl: _buildDashboardUrl_(claimNumber),
     });
@@ -1010,6 +1014,7 @@ function _dedupeAndBucketRows_(ctx, rows) {
   for (var i = 0; i < rows.length; i++) {
     var row = rows[i];
     var resolved = _resolveDestByMapping_(ctx, row.serviceCenterName);
+    resolved.pic = _resolvePicOverride_(row, resolved.pic);
     if (resolved.isMapped && ctx.controls && ctx.controls.selectedPic && resolved.pic !== ctx.controls.selectedPic) {
       skippedByPic += 1;
       continue;
@@ -1297,6 +1302,14 @@ function _ensureDestSheet_(ctx, requestedSheetName) {
   var existing = ctx.destRegistry.byName[requestedSheetName];
   if (existing) return existing;
 
+  if (CONFIG.AUTO_MANAGED_DEST_SHEETS && CONFIG.AUTO_MANAGED_DEST_SHEETS.has(requestedSheetName)) {
+    var managedSheet = ctx.destSS.insertSheet(requestedSheetName);
+    _initializeFallbackSheet_(managedSheet);
+    ctx.destRegistry.byName[requestedSheetName] = managedSheet;
+    ctx.destRegistry.sheetNames.push(requestedSheetName);
+    return managedSheet;
+  }
+
   ctx.fallbackRequested.add(requestedSheetName);
   var fallbackName = CONFIG.UNMAPPED_SHEET_NAME;
   var fallbackSheet = ctx.destRegistry.byName[fallbackName];
@@ -1571,6 +1584,8 @@ function _resolveDestByMapping_(ctx, serviceCenterName) {
   var mappingRows = (ctx && ctx.mappingAllRows) ? ctx.mappingAllRows : [];
   var normalizedSc = _norm_(serviceCenterName);
   var compactSc = _compactNorm_(serviceCenterName);
+  var special = _resolveSpecialDestination_(compactSc);
+  if (special) return { sheetName: special.sheetName, pic: special.pic, isMapped: true };
   if (!mappingRows.length || !normalizedSc) {
     return { sheetName: CONFIG.UNMAPPED_SHEET_NAME, pic: "", isMapped: false };
   }
@@ -1618,12 +1633,29 @@ function _resolveDestByMapping_(ctx, serviceCenterName) {
   };
 }
 
+function _resolveSpecialDestination_(compactSc) {
+  var sc = String(compactSc || "");
+  if (sc.indexOf("cvberkah") >= 0) return { sheetName: "CV Berkah", pic: "FARHAN" };
+  if (sc.indexOf("rejekiseluler") >= 0 || sc.indexOf("rejekiseluller") >= 0) return { sheetName: "Rejeki Seluler", pic: "FARHAN" };
+  return null;
+}
+
 function _resolveAliasMappingTarget_(normalizedSc, compactSc) {
   var s = String(normalizedSc || "");
   var c = String(compactSc || "");
   if (s.indexOf("ez care") >= 0 || c.indexOf("ezcare") >= 0) return "ezcare";
   if (s.indexOf("deltasindo") >= 0 || c.indexOf("deltasindo") >= 0) return "deltasindo";
   return "";
+}
+
+function _resolvePicOverride_(row, mappedPic) {
+  var sc = _compactNorm_(row && row.serviceCenterName);
+  if (sc.indexOf("cvberkah") >= 0 || sc.indexOf("rejekiseluler") >= 0 || sc.indexOf("rejekiseluller") >= 0) return "FARHAN";
+  var isEzCare = sc.indexOf("ezcare") >= 0;
+  var isApple = /apple/i.test(String((row && row.deviceBrand) || "")) || /apple/i.test(String((row && row.deviceType) || ""));
+  var submitted = new Date((row && row.submissionDate) || "");
+  if (isEzCare && isApple && !isNaN(submitted.getTime()) && submitted.getTime() >= new Date(2026, 6, 15).getTime()) return "FARHAN";
+  return String(mappedPic || "").trim().toUpperCase();
 }
 
 function _resolveBranchForSheet_(serviceCenterName, destSheetName) {

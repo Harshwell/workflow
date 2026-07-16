@@ -1498,7 +1498,12 @@ function normalizeServiceCenterKey_(value) {
   return normalizeKey_(value).replace(/[^a-z0-9]/g, '');
 }
 
-function resolvePicByBranch_(branchValue) {
+function resolvePicByBranch_(branchValue, serviceCenterValue, deviceBrandValue, deviceTypeValue, submissionDateValue) {
+  var scKey = normalizeServiceCenterKey_(serviceCenterValue);
+  if (scKey.indexOf('cvberkah') >= 0 || scKey.indexOf('rejekiseluler') >= 0 || scKey.indexOf('rejekiseluller') >= 0) return 'Farhan';
+  var submitted = new Date(submissionDateValue || '');
+  var isApple = /apple/i.test(String(deviceBrandValue || '')) || /apple/i.test(String(deviceTypeValue || ''));
+  if (scKey.indexOf('ezcare') >= 0 && isApple && !isNaN(submitted.getTime()) && submitted.getTime() >= new Date(2026, 6, 15).getTime()) return 'Farhan';
   const branchKey = normalizeKey_(branchValue);
   if (!branchKey) return '';
 
@@ -1506,6 +1511,8 @@ function resolvePicByBranch_(branchValue) {
     gsi: 'Meilani',
     rejekiseluler: 'Farhan',
     rejekiseluller: 'Farhan',
+    cvberkah: 'Farhan',
+    cvberkahathallah: 'Farhan',
     ibox: 'Farhan',
     mitracare: 'Farhan',
     sitcomtara: 'Farhan',
@@ -1617,7 +1624,7 @@ function syncTargetSheet_(sourceSnapshot, precheckedTargetSnapshot) {
 
     if (targetColumnMap['PIC'] && targetColumnMap['Branch']) {
       const branchValue = values[rowIndex][targetColumnMap['Branch'] - 1];
-      values[rowIndex][targetColumnMap['PIC'] - 1] = resolvePicByBranch_(branchValue);
+      values[rowIndex][targetColumnMap['PIC'] - 1] = resolvePicByBranch_(branchValue, record['Service Center'], record['Device Brand'], record['Device Type'], record['Submission Date']);
     }
 
     if (isInsert && remarksCol) {
@@ -1643,7 +1650,7 @@ function syncTargetSheet_(sourceSnapshot, precheckedTargetSnapshot) {
 
       row[branchCol - 1] = resolvedBranch;
       if (targetColumnMap['PIC']) {
-        row[targetColumnMap['PIC'] - 1] = resolvePicByBranch_(resolvedBranch);
+        row[targetColumnMap['PIC'] - 1] = resolvePicByBranch_(resolvedBranch, row[targetColumnMap['Service Center'] - 1], row[targetColumnMap['Device Brand'] ? targetColumnMap['Device Brand'] - 1 : -1], row[targetColumnMap['Device Type'] ? targetColumnMap['Device Type'] - 1 : -1], row[targetColumnMap['Submission Date'] ? targetColumnMap['Submission Date'] - 1 : -1]);
       }
     });
   }
