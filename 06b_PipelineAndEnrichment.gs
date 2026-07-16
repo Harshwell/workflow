@@ -1760,7 +1760,7 @@ function runMainPipelineStage2_() {
     const profile = state.profile || 'Master';
     setProgress_(0.55, 'Execution 2: clearing operational sheets…');
     logLine_('MAIN_STAGE2_CLEAR', 'Clear operational sheets', 'rows=' + rows.length, '', 'INFO');
-    clearOperationalSheets_(ss, profile);
+    clearOperationalSheets_(ss, profile, { skipManualSnapshot: true });
     setProgress_(0.65, 'Execution 2: routing claims…');
     logLine_('MAIN_STAGE2_ROUTE', 'Route Raw Data to operational sheets', '', '', 'INFO');
     const route = routeRawToOperationalSheetsInMemory_(ss, rows, index, profile);

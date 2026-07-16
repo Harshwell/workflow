@@ -546,3 +546,4 @@ Kalau repo ini terus tumbuh, jangan buru-buru menambah file dokumentasi. Biasany
 - Formula pada enam kolom manual operational (`Update Status`, `Timestamp`, `Status`, `Remarks`, `AWB`, `Timestamp AWB`) ikut disnapshot dan di-restore setelah routing sehingga formula tetap aktif/recalculate.
 - Progress MAIN dua tahap bersifat kumulatif: execution 1 selesai pada 50%, execution 2 berjalan 55–100% dan menulis checkpoint clear/route/restore/enrich/finalize ke Log - Main.
 - Stage 2 MAIN membaca tetapi tidak menghapus `_OPS_MAIN_SUB_TEMP`; hanya SUB window 09:00 yang menghapus snapshot handoff tersebut setelah restore.
+- Untuk mencegah stage 2 tersangkut sebelum routing, snapshot manual hanya dibuat di stage 1; stage 2 memakai snapshot durable yang sama dan tidak membaca ulang seluruh operational sheet sebelum clear.

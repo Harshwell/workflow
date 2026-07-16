@@ -1486,7 +1486,8 @@ function buildSheetWriters_(ss, routingMap, headerIndexRaw, pic) {
   return writers;
 }
 
-function clearOperationalSheets_(ss, pic) {
+function clearOperationalSheets_(ss, pic, opts) {
+  opts = opts || {};
   const __MANUAL_HEADERS = ['Update Status', 'Timestamp', 'Status', 'Remarks'];
   if (typeof globalThis.__OPS_MANUAL_SNAPSHOT05B === 'undefined') globalThis.__OPS_MANUAL_SNAPSHOT05B = null;
 
@@ -1498,34 +1499,37 @@ function clearOperationalSheets_(ss, pic) {
     if (ss.getSheetByName('SC - Unmapped') && sheets.indexOf('SC - Unmapped') === -1) sheets.push('SC - Unmapped');
   } catch (e) {}
 
-  // Snapshot manual operational columns before clear.
-  const snapshot = Object.create(null);
-  sheets.forEach(name => {
-    const sh = ss.getSheetByName(name);
-    if (!sh) return;
-    const lr = sh.getLastRow();
-    const lc = sh.getLastColumn();
-    if (lr < 2 || lc < 1) return;
-    const header = sh.getRange(1, 1, 1, lc).getValues()[0].map(v => String(v || '').trim());
-    const idx = buildHeaderIndex_(header);
-    const idxClaim = (idx['Claim Number'] != null) ? idx['Claim Number'] : -1;
-    if (idxClaim < 0) return;
-    const rows = sh.getRange(2, 1, lr - 1, lc).getValues();
-    const byClaim = Object.create(null);
-    for (let r = 0; r < rows.length; r++) {
-      const row = rows[r] || [];
-      const claim = String(row[idxClaim] || '').trim().toUpperCase();
-      if (!claim) continue;
-      if (!byClaim[claim]) byClaim[claim] = {};
-      for (let i = 0; i < __MANUAL_HEADERS.length; i++) {
-        const h = __MANUAL_HEADERS[i];
-        const c = idx[h];
-        byClaim[claim][h] = (c != null) ? row[c] : '';
+  // The normal one-stage pipeline needs this lightweight snapshot. MAIN stage 2 already
+  // has a durable snapshot from stage 1, so repeating full-sheet reads here wastes runtime.
+  if (!opts.skipManualSnapshot) {
+    const snapshot = Object.create(null);
+    sheets.forEach(name => {
+      const sh = ss.getSheetByName(name);
+      if (!sh) return;
+      const lr = sh.getLastRow();
+      const lc = sh.getLastColumn();
+      if (lr < 2 || lc < 1) return;
+      const header = sh.getRange(1, 1, 1, lc).getValues()[0].map(v => String(v || '').trim());
+      const idx = buildHeaderIndex_(header);
+      const idxClaim = (idx['Claim Number'] != null) ? idx['Claim Number'] : -1;
+      if (idxClaim < 0) return;
+      const rows = sh.getRange(2, 1, lr - 1, lc).getValues();
+      const byClaim = Object.create(null);
+      for (let r = 0; r < rows.length; r++) {
+        const row = rows[r] || [];
+        const claim = String(row[idxClaim] || '').trim().toUpperCase();
+        if (!claim) continue;
+        if (!byClaim[claim]) byClaim[claim] = {};
+        for (let i = 0; i < __MANUAL_HEADERS.length; i++) {
+          const h = __MANUAL_HEADERS[i];
+          const c = idx[h];
+          byClaim[claim][h] = (c != null) ? row[c] : '';
+        }
       }
-    }
-    snapshot[name] = byClaim;
-  });
-  globalThis.__OPS_MANUAL_SNAPSHOT05B = snapshot;
+      snapshot[name] = byClaim;
+    });
+    globalThis.__OPS_MANUAL_SNAPSHOT05B = snapshot;
+  }
 
   sheets.forEach(name => {
     const sh = ss.getSheetByName(name);

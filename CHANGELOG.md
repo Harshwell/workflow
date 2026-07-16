@@ -1,4 +1,5 @@
 # Unreleased
+- MAIN stage 2 melewati snapshot manual duplikat sebelum clear karena snapshot durable sudah dibuat stage 1, mengurangi read Spreadsheet API yang menyebabkan execution tersangkut.
 - Stage 2 MAIN tidak lagi menghapus temp snapshot agar handoff restore SUB 09:00 tetap tersedia.
 - Log stage 2 MAIN sekarang selalu append setelah log stage 1; progress kumulatif 50%→100% dan checkpoint detail ditulis untuk clear/route/restore/enrich/finalize.
 - Backup/restore enam kolom manual (`Update Status`, `Timestamp`, `Status`, `Remarks`, `AWB`, `Timestamp AWB`) kini menyimpan formula dan mengembalikannya setelah routing agar formula dihitung ulang pada row hasil restore.
