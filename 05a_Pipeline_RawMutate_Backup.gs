@@ -1076,6 +1076,9 @@ function backupOpsToRawFull_(ss, rawSheet, rawValues, headerIndexRaw, pic) {
     } catch (e) {}
   }
 
+  // AWB fields are user-managed in Start and must be retained even when absent from MAIN exports.
+  try { backupNamedOpsColumnsToRaw05a_(ss, rawSheet, workingRawValues, headerIndexRaw, pic, ['AWB', 'Timestamp AWB']); } catch (eAwb) {}
+
   // Write back changed raw columns (batch per contiguous block)
   const colsToWrite = [];
   if (idxRawOR != null) colsToWrite.push(idxRawOR);
@@ -1146,4 +1149,33 @@ function writeRawColumns_(rawSheet, rawValues, colIdxList0based) {
     }
     safeSetValues_(rawSheet.getRange(2, startCol1, rawValues.length, width), out);
   }
+}
+
+/** Backup additional operational fields that must survive a MAIN rebuild (e.g. AWB).
+ * Values are matched by Claim Number and written in one column batch per field.
+ */
+function backupNamedOpsColumnsToRaw05a_(ss, rawSheet, rawValues, headerIndexRaw, pic, names) {
+  const idxClaimRaw = headerIndexRaw[CONFIG.headers.claimNumber];
+  if (idxClaimRaw == null || !rawValues || !rawValues.length) return 0;
+  const rawMap = Object.create(null);
+  rawValues.forEach(function(row, i) { const k = String(row[idxClaimRaw] || '').trim().toUpperCase(); if (k) rawMap[k] = i; });
+  const fields = (names || []).map(function(name) {
+    return { name: name, rawIdx: headerIndexRaw[name] != null ? headerIndexRaw[name] : -1 };
+  }).filter(function(x) { return x.rawIdx !== -1; });
+  const ops = getOperationalSheetsForBackup_(pic);
+  let touched = 0;
+  ops.forEach(function(sheetName) {
+    const sh = ss.getSheetByName(sheetName); if (!sh || sh.getLastRow() < 2) return;
+    const hdr = sh.getRange(1, 1, 1, sh.getLastColumn()).getValues()[0];
+    const iClaim = __findHeaderIndex05a_(hdr, 'Claim Number'); if (iClaim === -1) return;
+    const idxs = fields.map(function(f) { return __findHeaderIndex05a_(hdr, f.name); });
+    if (idxs.every(function(i) { return i === -1; })) return;
+    const rows = sh.getRange(2, 1, sh.getLastRow() - 1, sh.getLastColumn()).getValues();
+    rows.forEach(function(row) {
+      const key = String(row[iClaim] || '').trim().toUpperCase(); const ri = rawMap[key]; if (!key || ri == null) return;
+      idxs.forEach(function(oi, fi) { if (oi !== -1 && row[oi] !== '' && row[oi] != null && (rawValues[ri][fields[fi].rawIdx] === '' || rawValues[ri][fields[fi].rawIdx] == null)) { rawValues[ri][fields[fi].rawIdx] = row[oi]; touched++; } });
+    });
+  });
+  fields.forEach(function(f) { if (f.rawIdx >= 0) safeSetValues_(rawSheet.getRange(2, f.rawIdx + 1, rawValues.length, 1), rawValues.map(function(r) { return [r[f.rawIdx]]; })); });
+  return touched;
 }

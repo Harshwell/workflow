@@ -100,6 +100,8 @@ function createContext() {
         const sheets = {
           'Raw Data': sheetStub,
           'Log': sheetStub,
+          'Log - Main': sheetStub,
+          'Log - Sub': sheetStub,
           'Daily': sheetStub,
           'Past': sheetStub
         };

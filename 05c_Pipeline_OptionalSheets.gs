@@ -1558,19 +1558,21 @@ function processEVBike_(ss, rawValues, headerIndexRaw, pic, opts) { // `pic` kep
     }
   } catch (eDvEv) {}
 
-  // Never overwrite manual Status dropdown column on EV-Bike.
-  // Write left/right segments around "Status" when column exists.
-  const idxStatus = (idxH['Status'] != null) ? idxH['Status'] : -1;
-  if (idxStatus === -1) {
-    safeSetValues_(sh.getRange(2, 1, values.length, header.length), values);
-  } else {
-    if (idxStatus > 0) {
-      const left = values.map(r => r.slice(0, idxStatus));
-      safeSetValues_(sh.getRange(2, 1, values.length, idxStatus), left);
-    }
-    if (idxStatus < header.length - 1) {
-      const right = values.map(r => r.slice(idxStatus + 1));
-      safeSetValues_(sh.getRange(2, idxStatus + 2, values.length, header.length - idxStatus - 1), right);
+  // SUB optional refresh is an overlay only: never touch user-managed/dropdown columns.
+  // This prevents source Last Status from being written into an Update Status validation column.
+  const protectedHeaders = new Set(['Status', 'Update Status', 'Timestamp', 'Timestamp Status', 'Remarks']);
+  const writable = [];
+  for (let c = 0; c < header.length; c++) {
+    if (!protectedHeaders.has(String(header[c] || '').trim())) writable.push(c);
+  }
+  let start = -1;
+  for (let i = 0; i <= writable.length; i++) {
+    const col = i < writable.length ? writable[i] : null;
+    if (start === -1 && col != null) { start = col; continue; }
+    if (start !== -1 && (col == null || col !== writable[i - 1] + 1)) {
+      const width = writable[i - 1] - start + 1;
+      safeSetValues_(sh.getRange(2, start + 1, values.length, width), values.map(r => r.slice(start, start + width)));
+      start = col == null ? -1 : col;
     }
   }
 
