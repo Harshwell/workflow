@@ -1270,7 +1270,7 @@ function buildSheetWriters_(ss, routingMap, headerIndexRaw, pic) {
         set('Partner Name', getRaw(rawRow, h.businessPartner));
         set('Insurance', normalizeInsuranceShort05b_(getRawAny(rawRow, [h.insuranceName, h.insurance, 'insurance_name', 'insurance'])));
         set('Device Type', getRawAny(rawRow, [h.deviceType, 'device_type', 'deviceType']));
-        set('Store Name', getRawAny(rawRow, ['3. All Transaction - qoala_policy_number → outlet_name', 'outlet_name', 'store_name', 'Store Name']));
+        set('Store Name', getRawAny(rawRow, ['3. All Transaction - qoala_policy_number → outlet_name', 'outlet_name', 'outlet name']));
         set('PA Name', getRawAny(rawRow, ['3. All Transaction - qoala_policy_number → pa_name', 'pa_name', 'PA Name']));
         set('SPA Name', getRawAny(rawRow, ['3. All Transaction - qoala_policy_number → spa_name', 'spa_name', 'SPA Name']));
         set('Service Center', getRawAny(rawRow, [h.serviceCenter, h.serviceCenterName, h.scName, 'service_center', 'service_center_name', 'sc_name']));
@@ -1286,11 +1286,13 @@ function buildSheetWriters_(ss, routingMap, headerIndexRaw, pic) {
           set('Aging Position', agingPostRaw);
           set('Aging Post.', agingPostRaw);
         }
-        if (idxH['Service Type'] != null) {
+        if (idxH['Claim Type'] != null || idxH['Service Type'] != null) {
           const serviceTypeRaw = (sheetName === 'Start' || sheetName === 'Finish' || sheetName === 'Expired Claim')
             ? getRawAny(rawRow, [h.deviceCheckinOptionName, 'device_checkin_option_name'])
             : '';
-          set('Service Type', (typeof resolveServiceTypeFromStatus_ === 'function') ? resolveServiceTypeFromStatus_(sheetName, serviceTypeRaw, lastStatusVal) : serviceTypeRaw);
+          const claimType = (sheetName === 'Reject Claim' && typeof REJECT_CLAIM_TYPE_BY_LAST_STATUS !== 'undefined') ? (REJECT_CLAIM_TYPE_BY_LAST_STATUS[String(lastStatusVal || '').trim()] || '') : ((typeof resolveServiceTypeFromStatus_ === 'function') ? resolveServiceTypeFromStatus_(sheetName, serviceTypeRaw, lastStatusVal) : serviceTypeRaw);
+          set('Claim Type', claimType);
+          set('Service Type', claimType);
         }
         // - Device Brand / IMEI
         set('Device Brand', getRawAny(rawRow, [h.deviceBrand, 'device_brand', 'brand']));
@@ -1484,7 +1486,8 @@ function buildSheetWriters_(ss, routingMap, headerIndexRaw, pic) {
   return writers;
 }
 
-function clearOperationalSheets_(ss, pic) {
+function clearOperationalSheets_(ss, pic, opts) {
+  opts = opts || {};
   const __MANUAL_HEADERS = ['Update Status', 'Timestamp', 'Status', 'Remarks'];
   if (typeof globalThis.__OPS_MANUAL_SNAPSHOT05B === 'undefined') globalThis.__OPS_MANUAL_SNAPSHOT05B = null;
 
@@ -1496,34 +1499,37 @@ function clearOperationalSheets_(ss, pic) {
     if (ss.getSheetByName('SC - Unmapped') && sheets.indexOf('SC - Unmapped') === -1) sheets.push('SC - Unmapped');
   } catch (e) {}
 
-  // Snapshot manual operational columns before clear.
-  const snapshot = Object.create(null);
-  sheets.forEach(name => {
-    const sh = ss.getSheetByName(name);
-    if (!sh) return;
-    const lr = sh.getLastRow();
-    const lc = sh.getLastColumn();
-    if (lr < 2 || lc < 1) return;
-    const header = sh.getRange(1, 1, 1, lc).getValues()[0].map(v => String(v || '').trim());
-    const idx = buildHeaderIndex_(header);
-    const idxClaim = (idx['Claim Number'] != null) ? idx['Claim Number'] : -1;
-    if (idxClaim < 0) return;
-    const rows = sh.getRange(2, 1, lr - 1, lc).getValues();
-    const byClaim = Object.create(null);
-    for (let r = 0; r < rows.length; r++) {
-      const row = rows[r] || [];
-      const claim = String(row[idxClaim] || '').trim().toUpperCase();
-      if (!claim) continue;
-      if (!byClaim[claim]) byClaim[claim] = {};
-      for (let i = 0; i < __MANUAL_HEADERS.length; i++) {
-        const h = __MANUAL_HEADERS[i];
-        const c = idx[h];
-        byClaim[claim][h] = (c != null) ? row[c] : '';
+  // The normal one-stage pipeline needs this lightweight snapshot. MAIN stage 2 already
+  // has a durable snapshot from stage 1, so repeating full-sheet reads here wastes runtime.
+  if (!opts.skipManualSnapshot) {
+    const snapshot = Object.create(null);
+    sheets.forEach(name => {
+      const sh = ss.getSheetByName(name);
+      if (!sh) return;
+      const lr = sh.getLastRow();
+      const lc = sh.getLastColumn();
+      if (lr < 2 || lc < 1) return;
+      const header = sh.getRange(1, 1, 1, lc).getValues()[0].map(v => String(v || '').trim());
+      const idx = buildHeaderIndex_(header);
+      const idxClaim = (idx['Claim Number'] != null) ? idx['Claim Number'] : -1;
+      if (idxClaim < 0) return;
+      const rows = sh.getRange(2, 1, lr - 1, lc).getValues();
+      const byClaim = Object.create(null);
+      for (let r = 0; r < rows.length; r++) {
+        const row = rows[r] || [];
+        const claim = String(row[idxClaim] || '').trim().toUpperCase();
+        if (!claim) continue;
+        if (!byClaim[claim]) byClaim[claim] = {};
+        for (let i = 0; i < __MANUAL_HEADERS.length; i++) {
+          const h = __MANUAL_HEADERS[i];
+          const c = idx[h];
+          byClaim[claim][h] = (c != null) ? row[c] : '';
+        }
       }
-    }
-    snapshot[name] = byClaim;
-  });
-  globalThis.__OPS_MANUAL_SNAPSHOT05B = snapshot;
+      snapshot[name] = byClaim;
+    });
+    globalThis.__OPS_MANUAL_SNAPSHOT05B = snapshot;
+  }
 
   sheets.forEach(name => {
     const sh = ss.getSheetByName(name);
@@ -1639,6 +1645,19 @@ function routeRawToOperationalSheetsInMemory_(ss, rawValues, headerIndexRaw, pic
     // Patch B1: force Finish statuses into SC routing.
     if (targets.indexOf('Reject Claim') === -1 && isFinishStatus05a_(statusVal)) {
       targets = uniq05a_(targets.concat([scFarhanName, scMeilaniName, scIvanName, scFallbackName]));
+    }
+
+    // EzCare Apple project: from 15 Jul 2026 (inclusive), Apple device brand/type is Farhan;
+    // all other EzCare claims retain the existing Meindar mapping.
+    const scNameForOverride = (idxScName != null) ? String(rawRow[idxScName] || '') : '';
+    const isEzCare = /ez\s*care/i.test(scNameForOverride);
+    const subDateIdx = headerIndexRaw[h.claimSubmissionDate] != null ? headerIndexRaw[h.claimSubmissionDate] : headerIndexRaw['claim_submission_date'];
+    const brandIdx = headerIndexRaw[h.deviceBrand] != null ? headerIndexRaw[h.deviceBrand] : headerIndexRaw['device_brand'];
+    const typeIdx = headerIndexRaw[h.deviceType] != null ? headerIndexRaw[h.deviceType] : headerIndexRaw['device_type'];
+    const subDate = subDateIdx != null ? coerceDateOnly_(rawRow[subDateIdx]) : null;
+    const isApple = /apple/i.test(String((brandIdx != null ? rawRow[brandIdx] : '') || '')) || /apple/i.test(String((typeIdx != null ? rawRow[typeIdx] : '') || ''));
+    if (isEzCare && isApple && subDate && subDate.getTime() >= new Date(2026, 6, 15).getTime()) {
+      targets = targets.filter(x => x !== scMeilaniName && x !== scIvanName && x !== scFallbackName).concat([scFarhanName]);
     }
 
     // SC sheet split by sc_name keywords (only if targets include SC sheets)

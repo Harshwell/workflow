@@ -1,3 +1,15 @@
+# Unreleased
+- MAIN stage 2 melewati snapshot manual duplikat sebelum clear karena snapshot durable sudah dibuat stage 1, mengurangi read Spreadsheet API yang menyebabkan execution tersangkut.
+- Stage 2 MAIN tidak lagi menghapus temp snapshot agar handoff restore SUB 09:00 tetap tersedia.
+- Log stage 2 MAIN sekarang selalu append setelah log stage 1; progress kumulatif 50%→100% dan checkpoint detail ditulis untuk clear/route/restore/enrich/finalize.
+- Backup/restore enam kolom manual (`Update Status`, `Timestamp`, `Status`, `Remarks`, `AWB`, `Timestamp AWB`) kini menyimpan formula dan mengembalikannya setelah routing agar formula dihitung ulang pada row hasil restore.
+- SUB optional refresh EV-Bike/Doss tidak lagi menulis kolom manual/dropdown; handoff backup MAIN→SUB hanya diproses pada window 09:00.
+- Optional project Service Center Extractor, Salvage, dan Outstanding sekarang mengikuti override Farhan untuk CV Berkah/Rejeki Seluler serta EzCare Apple sejak 15 Jul 2026; Extractor otomatis membuat/menulis tab CV Berkah dan Rejeki Seluler tanpa mapping manual.
+- MAIN sekarang menggunakan continuation dua tahap dengan Script Properties token + one-shot trigger untuk memisahkan ingest/backup dari clear/route/restore; Log - Main berlanjut dengan RunID sama tanpa reset pada transisi stage.
+- Memisahkan audit log MAIN (`Log - Main`) dan SUB (`Log - Sub`) dengan lazy migration yang aman.
+- Menambahkan backup AWB/Timestamp AWB, mapping Claim Type Reject Claim, SC CV Berkah/Rejeki Seluler, dan split EzCare Apple per 15 Jul 2026.
+- Mengganti Service Type menjadi Claim Type dan menambahkan Service Center PIC di PO.
+
 # Changelog
 
 Repo ini memakai changelog ringan yang fokus ke perubahan yang benar-benar relevan buat maintainer.
