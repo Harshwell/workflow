@@ -1015,7 +1015,7 @@ function runEmailIngest(maxThreads) {
         tmpFileId = conv.fileId;
 
         setProgress_(0.35, 'Processing pipeline...');
-        const res = runPipeline_('Master', [tmpFileId], { flow: 'main', source: 'EMAIL_MAIN', subject: msg.getSubject() });
+        const res = runPipeline_('Master', [tmpFileId], { flow: 'main', source: 'EMAIL_MAIN', subject: msg.getSubject(), deferRouting: true });
         try {
           if (typeof setLogEventContext_ === 'function' && res) {
             setLogEventContext_({
@@ -1808,7 +1808,7 @@ function __buildSubRawIndex06a_(values) {
   const idxInsurance = idxOfAny(['insurance_partner_code', 'insurance', 'insurance_code', 'insurance partner code']);
   const idxDeviceType = idxOfAny(['device_type', 'device type']);
   const idxImei = idxOfAny(['device_imei', 'imei/sn', 'imei', 'sn', 'imei/sn']);
-  const idxStoreName = idxOfAny(['outlet_name', 'outlet name', '3. all transaction - qoala_policy_number → outlet_name', 'store_name', 'store name']);
+  const idxStoreName = idxOfAny(['outlet_name', 'outlet name', '3. all transaction - qoala_policy_number → outlet_name']);
   const idxPaName = idxOfAny(['3. all transaction - qoala_policy_number → pa_name', 'pa_name', 'pa name']);
   const idxSpaName = idxOfAny(['3. all transaction - qoala_policy_number → spa_name', 'spa_name', 'spa name']);
 
@@ -1999,7 +1999,7 @@ function __updateOperationalSheetsFromRaw06a_(ss, sheetNames, rawMap, ctx) {
     const idxType = isScSheet ? idxOfAny(['type']) : -1;
     const idxSubmissionDate = idxOfAny(['submission date', 'claim_submitted_datetime', 'claim_submission_date', 'claim submitted datetime', 'submission_date']);
     const idxSubmissionMonth = idxOfAny(['submission by month', 'submission_month']);
-    const idxStoreName = idxOfAny(['store name', 'outlet_name', 'outlet name', 'store_name']);
+    const idxStoreName = idxOfAny(['outlet_name', 'outlet name']);
     const idxPaName = idxOfAny(['pa name', 'pa_name']);
     const idxSpaName = idxOfAny(['spa name', 'spa_name']);
     const idxServiceCenterPic = idxOfAny(['service center pic', 'service_center_pic']);

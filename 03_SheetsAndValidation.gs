@@ -221,6 +221,7 @@ const SV03_TEMPLATES = Object.freeze({
     'Nett Claim Amount',
     '% Approval',
     'OR',
+    'Service Center PIC',
     'Update Status',
     'Timestamp',
     'Status',

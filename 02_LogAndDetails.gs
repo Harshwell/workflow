@@ -415,7 +415,11 @@ function getLogSpreadsheet_() {
 function getLogSheet_() {
   if (CACHE.log.sh) return CACHE.log.sh;
   const ss = getLogSpreadsheet_();
-  const sh = ss.getSheetByName(CONFIG.logSheetName) || ss.getSheets()[0];
+  const flow = getLogFlow_();
+  const configured = flow === 'SUB' ? CONFIG.logSheetNameSub : (flow === 'MAIN' ? CONFIG.logSheetNameMain : CONFIG.logSheetName);
+  const name = String(configured || CONFIG.logSheetName || 'Log').trim();
+  // Create the separated log lazily; this makes the migration deploy-safe.
+  const sh = ss.getSheetByName(name) || ss.insertSheet(name);
   CACHE.log.ss = ss;
   CACHE.log.sh = sh;
   if (!CACHE.log.ensured) {
