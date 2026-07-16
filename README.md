@@ -41,7 +41,7 @@ Update kontrak MAIN/SUB/FORM:
 - flag `Migration Policy` dari `Claimed Active Policies` menjadi prioritas warna tertinggi dan note-nya digabung dengan flag lain.
 - `Submission Date` strict-sync diperluas ke operational/optional sheets aktif dan nilai boolean existing tidak dipertahankan, supaya tidak ada output `TRUE`.
 - `IMEI/SN` ditulis sebagai plain text tanpa koma ribuan.
-- `Expired Claim` mendapat fallback `Service Type = Ask Detail` untuk `CLAIM_EXPIRE`, serta ikut autofill `Branch` dan `Service Center PIC`.
+- `Expired Claim` mendapat fallback `Claim Type = Ask Detail` untuk `CLAIM_EXPIRE`, serta ikut autofill `Branch` dan `Service Center PIC`.
 - `Store Name` operational diisi dari `Raw Data.outlet_name`.
 - `B2B` MAIN hanya dari `id_business_partner_category_name = B2B Partnership`; SUB hanya update `Last Status` dan `Service Center` pada claim existing.
 - `Special Case` MAIN menampung semua claim yang punya flag; status done/closed tidak lagi otomatis dipruning dari sheet ini.
@@ -531,3 +531,14 @@ Prioritas paling masuk akal setelah dokumentasi ini:
 ## Maintenance note
 
 Kalau repo ini terus tumbuh, jangan buru-buru menambah file dokumentasi. Biasanya masalahnya bukan kurang file, tapi kurang disiplin menjaga dua file utama tetap hidup.
+
+## 2026-07 operational reliability update
+
+- Log dipisah otomatis menjadi `Log - Main` dan `Log - Sub`, sehingga run tidak saling menghapus/interleave audit trail.
+- `Claim Type` menggantikan `Service Type`; `Reject Claim` diisi dari mapping status reject.
+- Backup Raw menahan AWB/Timestamp AWB serta field manual existing sebelum reset MAIN.
+- `COURIER_PICKUP_START_DONE` tampil di Start dan SC yang sesuai; CV Berkah dan Rejeki Seluler dipetakan ke Farhan.
+
+- MAIN email sekarang dua tahap: tahap 1 menyelesaikan ingest/Raw snapshot lalu menjadwalkan trigger one-shot; tahap 2 memakai RunID yang sama dan menambahkan log `pending execution 2`/`execution 2 started` tanpa reset `Log - Main`, lalu menjalankan clear, route, restore, optional sheets, sorting, serta Report Base.
+- Mapping service-center yang sama kini diterapkan juga pada optional project Service Center Extractor, Salvage, dan Outstanding.
+- Service Center Extractor otomatis membuat tab `CV Berkah` dan `Rejeki Seluler` bila belum ada; operator tidak perlu menambahkan mapping destination manual.

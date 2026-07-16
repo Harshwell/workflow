@@ -404,7 +404,7 @@ function persistOpsManualTempForSub06c_(ss, pic) {
   const header = ['Backup Timestamp','PIC','Source Sheet','Claim Number','Service Center','Update Status','Timestamp','Status','Remarks'];
   const rows = [header];
   const now = new Date();
-  const richJobs = [];
+  const copyJobs = [];
 
   for (let si = 0; si < sheetNames.length; si++) {
     const srcName = sheetNames[si];
@@ -432,47 +432,39 @@ function persistOpsManualTempForSub06c_(ss, pic) {
 
     if (idxUpd === -1 && idxTs === -1 && idxSt === -1 && idxRem === -1) continue;
 
+    // Keep a row-for-row block in the temp sheet. This permits four bulk copyTo calls
+    // per source sheet instead of four calls per claim, which avoids MAIN timeouts.
     const vals = src.getRange(2, 1, lr - 1, lc).getValues();
+    const tempStartRow = rows.length + 1;
     for (let r = 0; r < vals.length; r++) {
       const row = vals[r] || [];
-      const claim = String(row[idxClaim] || '').trim();
-      if (!claim) continue;
       rows.push([
         now,
         String(pic || ''),
         srcName,
-        claim,
+        String(row[idxClaim] || '').trim(),
         idxSc !== -1 ? row[idxSc] : '',
         idxUpd !== -1 ? row[idxUpd] : '',
         idxTs !== -1 ? row[idxTs] : '',
         idxSt !== -1 ? row[idxSt] : '',
         idxRem !== -1 ? row[idxRem] : ''
       ]);
-      const tempRowNo = rows.length; // 1-based row index in temp sheet
-      richJobs.push({
-        src: src,
-        srcRowNo: r + 2,
-        idxUpd: idxUpd,
-        idxTs: idxTs,
-        idxSt: idxSt,
-        idxRem: idxRem,
-        tempRowNo: tempRowNo
-      });
     }
+    copyJobs.push({ src: src, srcStartRow: 2, tempStartRow: tempStartRow, rows: vals.length,
+      idxUpd: idxUpd, idxTs: idxTs, idxSt: idxSt, idxRem: idxRem });
   }
 
   sh.clearContents();
   sh.getRange(1, 1, rows.length, header.length).setValues(rows);
   try { sh.getRange(1, 1, 1, header.length).setFontWeight('bold'); } catch (e1) {}
 
-  // Preserve per-cell style 1:1 (rich text, colors, number format, wrap, DV) for manual columns.
-  for (let i = 0; i < richJobs.length; i++) {
-    const j = richJobs[i];
-    try { if (j.idxUpd !== -1) j.src.getRange(j.srcRowNo, j.idxUpd + 1).copyTo(sh.getRange(j.tempRowNo, 6), { contentsOnly: false }); } catch (eU) {}
-    try { if (j.idxTs !== -1) j.src.getRange(j.srcRowNo, j.idxTs + 1).copyTo(sh.getRange(j.tempRowNo, 7), { contentsOnly: false }); } catch (eT) {}
-    try { if (j.idxSt !== -1) j.src.getRange(j.srcRowNo, j.idxSt + 1).copyTo(sh.getRange(j.tempRowNo, 8), { contentsOnly: false }); } catch (eS) {}
-    try { if (j.idxRem !== -1) j.src.getRange(j.srcRowNo, j.idxRem + 1).copyTo(sh.getRange(j.tempRowNo, 9), { contentsOnly: false }); } catch (eR) {}
-  }
+  // Preserve styles in bulk (rich text, colors, number format, wrap, DV).
+  copyJobs.forEach(function(j) {
+    try { if (j.idxUpd !== -1) j.src.getRange(j.srcStartRow, j.idxUpd + 1, j.rows, 1).copyTo(sh.getRange(j.tempStartRow, 6, j.rows, 1), { contentsOnly: false }); } catch (eU) {}
+    try { if (j.idxTs !== -1) j.src.getRange(j.srcStartRow, j.idxTs + 1, j.rows, 1).copyTo(sh.getRange(j.tempStartRow, 7, j.rows, 1), { contentsOnly: false }); } catch (eT) {}
+    try { if (j.idxSt !== -1) j.src.getRange(j.srcStartRow, j.idxSt + 1, j.rows, 1).copyTo(sh.getRange(j.tempStartRow, 8, j.rows, 1), { contentsOnly: false }); } catch (eS) {}
+    try { if (j.idxRem !== -1) j.src.getRange(j.srcStartRow, j.idxRem + 1, j.rows, 1).copyTo(sh.getRange(j.tempStartRow, 9, j.rows, 1), { contentsOnly: false }); } catch (eR) {}
+  });
 
   return { rows: Math.max(0, rows.length - 1), sheet: name };
 }
@@ -1655,7 +1647,7 @@ function enforceOperationalLayout06_(ss) {
     if (__ensureHeaderAtColumn06_(sh, 'Submission by Month', 2)) touched++;
     touched += __normalizeSubmissionByMonthColumn06_(sh);
   }
-  ['Start', 'Finish', 'Expired Claim', 'Reject Claim'].forEach(name => {
+  ['Start', 'Finish', 'Expired Claim', 'Reject Claim', 'PO'].forEach(name => {
     const sh = ss.getSheetByName(name);
     if (!sh) return;
     if (__ensureHeaderAtColumn06_(sh, 'Service Center PIC', 14)) touched++;
@@ -1666,6 +1658,7 @@ function enforceOperationalLayout06_(ss) {
   const financeExcluded = ['Claim Amount', 'Claim Own Risk Amount', 'Nett Claim Amount', '% Approval'];
   const evDossB2bDeprecated = ['Status Type', 'Start Date', 'End Date', 'Details'];
   const stageRename = {
+    'Service Type': 'Claim Type',
     'Aging Position': 'Stage Aging',
     'Aging Post.': 'Stage Aging',
     'Aging Post': 'Stage Aging'
@@ -3507,3 +3500,28 @@ function runtimePreflight06f_(contextTag) {
   return { ok: false, issues: issues };
 }
 // ---- END MERGED: 06f_RuntimeAssertions.gs ----
+
+/** Restore named Raw backup fields to any operational sheet that exposes them. */
+function restoreNamedOpsFieldsFromRaw06c_(ss, rawSheet, headerIndexRaw, pic, names) {
+  if (DRY_RUN || !ss || !rawSheet) return 0;
+  const idxClaimRaw = headerIndexRaw[CONFIG.headers.claimNumber];
+  if (idxClaimRaw == null) return 0;
+  const n = rawSheet.getLastRow() - 1; if (n < 1) return 0;
+  const raw = rawSheet.getRange(2, 1, n, rawSheet.getLastColumn()).getValues();
+  const map = Object.create(null);
+  raw.forEach(function(row) { const key = __claimKey06_(row[idxClaimRaw]); if (key) map[key] = row; });
+  let restored = 0;
+  getOperationalSheetsForBackup_(pic).forEach(function(name) {
+    const sh = ss.getSheetByName(name); if (!sh || sh.getLastRow() < 2) return;
+    const hdr = sh.getRange(1, 1, 1, sh.getLastColumn()).getValues()[0];
+    const iClaim = __findHeaderIndexFlexible06_(hdr, 'Claim Number'); if (iClaim === -1) return;
+    const count = sh.getLastRow() - 1, rows = sh.getRange(2, 1, count, sh.getLastColumn()).getValues();
+    (names || []).forEach(function(field) {
+      const rawIdx = headerIndexRaw[field], opsIdx = __findHeaderIndexFlexible06_(hdr, field);
+      if (rawIdx == null || opsIdx === -1) return;
+      const out = rows.map(function(row) { const saved = map[__claimKey06_(row[iClaim])]; const v = saved ? saved[rawIdx] : ''; if ((row[opsIdx] === '' || row[opsIdx] == null) && v !== '' && v != null) { restored++; return [v]; } return [row[opsIdx]]; });
+      sh.getRange(2, opsIdx + 1, count, 1).setValues(out);
+    });
+  });
+  return restored;
+}
