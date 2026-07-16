@@ -542,3 +542,4 @@ Kalau repo ini terus tumbuh, jangan buru-buru menambah file dokumentasi. Biasany
 - MAIN email sekarang dua tahap: tahap 1 menyelesaikan ingest/Raw snapshot lalu menjadwalkan trigger one-shot; tahap 2 memakai RunID yang sama dan menambahkan log `pending execution 2`/`execution 2 started` tanpa reset `Log - Main`, lalu menjalankan clear, route, restore, optional sheets, sorting, serta Report Base.
 - Mapping service-center yang sama kini diterapkan juga pada optional project Service Center Extractor, Salvage, dan Outstanding.
 - Service Center Extractor otomatis membuat tab `CV Berkah` dan `Rejeki Seluler` bila belum ada; operator tidak perlu menambahkan mapping destination manual.
+- Refresh SUB untuk EV-Bike/Doss hanya menulis kolom managed dan tidak menyentuh Status/Update Status/Timestamp/Remarks; restore handoff MAIN→SUB hanya berjalan pukul 09:00.

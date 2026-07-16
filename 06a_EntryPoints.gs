@@ -1348,14 +1348,18 @@ function runSubEmailIngest(maxThreads) {
       if (typeof refreshReportBaseFromOperational06_ === 'function') refreshReportBaseFromOperational06_(masterSs);
     } catch (eRb) { try { logLine_('SUB_WARN', 'Report Base refresh failed', String(eRb), '', 'WARN'); } catch (eRb2) {} }
 
-    // One-shot restore from MAIN temp backup (if exists), then delete temp sheet.
-    try {
-      if (typeof restoreOpsManualFromMainTempForSub06c_ === 'function') {
-        const rs = restoreOpsManualFromMainTempForSub06c_(masterSs, 'Master', { deleteAfterRestore: true });
-        const msg = rs && rs.skipped ? ('skip=' + (rs.reason || 'unknown')) : ('restored=' + (rs ? rs.restored : 0) + ' rows=' + (rs ? rs.rows : 0));
-        try { logLine_('SUB_TEMP_RESTORE', 'Restore manual columns from MAIN temp backup', msg, '', (rs && rs.skipped) ? 'INFO' : 'INFO'); } catch (eTr2) {}
-      }
-    } catch (eTr) { try { logLine_('SUB_TEMP_RESTORE_WARN', 'MAIN temp restore failed (non-fatal)', String(eTr), '', 'WARN'); } catch (eTr3) {} }
+    // MAIN→SUB handoff is valid only for the 09:00 SUB window; later hourly SUB runs must not restore it.
+    if (isMainSubHandoffWindow06a_()) {
+      try {
+        if (typeof restoreOpsManualFromMainTempForSub06c_ === 'function') {
+          const rs = restoreOpsManualFromMainTempForSub06c_(masterSs, 'Master', { deleteAfterRestore: true });
+          const msg = rs && rs.skipped ? ('skip=' + (rs.reason || 'unknown')) : ('restored=' + (rs ? rs.restored : 0) + ' rows=' + (rs ? rs.rows : 0));
+          try { logLine_('SUB_TEMP_RESTORE', 'Restore manual columns from MAIN temp backup', msg, '', 'INFO'); } catch (eTr2) {}
+        }
+      } catch (eTr) { try { logLine_('SUB_TEMP_RESTORE_WARN', 'MAIN temp restore failed (non-fatal)', String(eTr), '', 'WARN'); } catch (eTr3) {} }
+    } else {
+      try { logLine_('SUB_TEMP_RESTORE_SKIP', 'Skip MAIN handoff outside 09:00 window', '', '', 'INFO'); } catch (eTrSkip) {}
+    }
 
 
 
@@ -1379,6 +1383,12 @@ function runSubEmailIngest(maxThreads) {
       sorted: sortRes
     });
   });
+}
+
+function isMainSubHandoffWindow06a_(now) {
+  const d = now || new Date();
+  const tz = (typeof getTzSafe_ === 'function') ? getTzSafe_() : Session.getScriptTimeZone();
+  return Number(Utilities.formatDate(d, tz, 'H')) === 9;
 }
 
 function __refreshTokenOptionalSheetsFromSubRaw06a_(ss, rawSheetNames) {
