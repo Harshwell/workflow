@@ -1327,6 +1327,8 @@ const RAW_DATA_CUSTOM_TAIL_HEADERS = Object.freeze([
   'Timestamp',
   'Status',
   'Remarks',
+  'AWB',
+  'Timestamp AWB',
   'Q-L (Months)',
   'M-L (Months)',
   'M-Q (Months)'
@@ -1339,6 +1341,14 @@ const RAW_DATA_CUSTOM_TAIL_HEADERS = Object.freeze([
  * - SC - Farhan, SC - Meilani, and SC - Meindar share the same last_status universe, but are split by sc_name keywords.
  * - "Type" (dropdown) on both SC sheets is filled from last_status categories.
  */
+const REJECT_CLAIM_TYPE_BY_LAST_STATUS = Object.freeze({
+  'QOALA_CLAIM_REJECT': 'Front', 'QOALA_CLAIM_REJECT_PICKUP': 'Front', 'QOALA_CLAIM_REJECT_WALKIN': 'Front',
+  'CUSTOMER_REJECT_PAYMENT_DEDUCTIBLE_EXCESS_FEE_WALKIN': 'Cust - OR', 'CUSTOMER_REJECT_PAYMENT_DEDUCTIBLE_EXCESS_FEE_PICKUP': 'Cust - OR',
+  'INSURANCE_CLAIM_REJECT_WALKIN': 'Insurance', 'INSURANCE_CLAIM_REJECT_PICKUP': 'Insurance',
+  'SERVICE_CENTER_CLAIM_WAITING_WALKIN_REJECT': 'SC - Middle', 'SERVICE_CENTER_CLAIM_DONE_REJECT': 'SC - Middle',
+  'SERVICE_CENTER_CLAIM_WAITING_PICKUP_REJECT': 'SC - Middle', 'COURIER_CLAIM_PICKUP_REJECT': 'SC - Middle', 'COURIER_CLAIM_PICKUP_REJECT_DONE': 'SC - Middle'
+});
+
 const OPS_ROUTING_POLICY = Object.freeze({
   SHEETS: Object.freeze({
     SUBMISSION: 'Submission',
@@ -1406,6 +1416,8 @@ const OPS_ROUTING_POLICY = Object.freeze({
     '__SC_SHARED__': Object.freeze([
       'CLAIM_ADDED_SC',
       'RECEIVED_SC',
+      // Transitional: visible in both Start and the mapped SC universe.
+      'COURIER_PICKUP_START_DONE',
       'ESTIMATE_COST',
       'ON_PROGRESS',
       'DONE_REPAIR',
@@ -1504,7 +1516,9 @@ const OPS_ROUTING_POLICY = Object.freeze({
       'Sitcomtara',
       'iBox',
       'Rejeki Seluler',
-      'Rejeki Seluller'
+      'Rejeki Seluller',
+      'CV Berkah Athallah',
+      'CV Berkah'
     ]),
     'SC - Meindar': Object.freeze([
       'Klikcare',
@@ -1912,7 +1926,10 @@ const CONFIG = Object.freeze({
   mappingSheetName: getPropString_('MAPPING_SHEET_NAME', '[UPDATED] Mapping Team Claim'),
 
   logSpreadsheetId: getPropString_('LOG_SPREADSHEET_ID', '1TC9YjDo6qxWq17zPYEBqIryhaYbUMqGtaSH0F-G8IwE'),
-  logSheetName: getPropString_('LOG_SHEET_NAME', 'Log'),
+  // MAIN/SUB have independent logs so one flow never clears or interleaves the other.
+  logSheetName: getPropString_('LOG_SHEET_NAME', 'Log - Main'),
+  logSheetNameMain: getPropString_('LOG_SHEET_NAME_MAIN', 'Log - Main'),
+  logSheetNameSub: getPropString_('LOG_SHEET_NAME_SUB', 'Log - Sub'),
   detailsSheetName: 'Details',
   detailsLogPolicy: DETAILS_LOG_POLICY,
   mappingErrorLogPolicy: MAPPING_ERROR_LOG_POLICY,

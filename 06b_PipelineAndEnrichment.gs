@@ -330,6 +330,14 @@ function runPipeline_(pic, fileIds, opts) {
   // Ensure required operational column layout (Submission by Month @ B, Service Center PIC @ N on Start/Finish).
   try { if (typeof enforceOperationalLayout06_ === 'function') enforceOperationalLayout06_(ss); } catch (eLay) {}
 
+  // MAIN is intentionally split after the durable Raw/manual snapshots are complete.
+  // The continuation reads Raw Data, so it does not depend on in-memory state from this execution.
+  if (flowName === 'main' && options.deferRouting === true) {
+    const token = scheduleMainPipelineStage2_(profileName, rawSheet.getSheetId(), rawValues.length, getRunId_());
+    setProgress_(0.50, 'Execution 1 complete; pending execution 2.');
+    return { severity: 'INFO', message: 'MAIN stage 1 complete; routing queued.', staged: true, stageToken: token, rawRows: rawValues.length, routedTotal: 0 };
+  }
+
 // Clear operational sheets and route
   setProgress_(0.60, 'Clearing operational sheets…');
   const segClr = startSegment_('CLR', 'Clear operational sheets');
@@ -365,6 +373,7 @@ function runPipeline_(pic, fileIds, opts) {
   // Round-trip restore operational fields from Raw backup AFTER clear+route.
   if (PIPELINE_FLAGS.ENABLE_BACKUP_FROM_OPS && didFullBackup) {
     try { restoreOpsFieldsFromRawBackup_(ss, rawSheet, headerIndexRaw, profileName); } catch (e) {}
+    try { restoreNamedOpsFieldsFromRaw06c_(ss, rawSheet, headerIndexRaw, profileName, ['AWB', 'Timestamp AWB']); } catch (eAwbRestore) {}
   }
 
   // Restore Update Status rich text in operational sheets
@@ -884,7 +893,7 @@ function enrichOperationalSheetsFromRaw06_(ss, rawValues, headerIndexRaw, pic, o
       try { ensureHeadersAtEnd06_(sh, mandatoryFinanceHeaders); } catch (e) {}
     }
     if (sheetName === 'Start' || sheetName === 'Finish' || sheetName === 'Expired Claim') {
-      try { ensureHeadersAtEnd06_(sh, ['Service Type']); } catch (e) {}
+      try { ensureHeadersAtEnd06_(sh, ['Claim Type']); } catch (e) {}
     }
 
     // Re-read header after possible insertions
@@ -924,7 +933,7 @@ function enrichOperationalSheetsFromRaw06_(ss, rawValues, headerIndexRaw, pic, o
     const idxPmOps = resolveOpsColIdx06_(hidx, ['PM Name']);
     const idxApmOps = resolveOpsColIdx06_(hidx, ['APM Name']);
     const idxAgingPostOps = (sheetName === 'Submission') ? -1 : resolveOpsColIdx06_(hidx, ['Stage Aging', 'Aging Position', 'Aging Post.', 'Aging Post']);
-    const idxServiceTypeOps = resolveOpsColIdx06_(hidx, ['Service Type']);
+    const idxServiceTypeOps = resolveOpsColIdx06_(hidx, ['Claim Type', 'Service Type']);
 
 
     const lastStatuses = (idxLastStatusOps !== -1)
@@ -1702,4 +1711,85 @@ function tagOverviewFlow06b_(ss, profileName, flowName) {
   if (DRY_RUN) return false;
   sh.getRange(rowTarget, idxFlow + 1).setValue(flowName);
   return true;
+}
+
+
+/** Durable MAIN continuation. It is deliberately independent of stage-1 memory. */
+function scheduleMainPipelineStage2_(profileName, rawSheetId, rawRows, runId) {
+  const props = PropertiesService.getScriptProperties();
+  // Reuse stage-1 RunID so Log - Main is one continuous audit trail.
+  const token = String(runId || getRunId_() || Utilities.getUuid());
+  props.setProperty('MAIN_PIPELINE_STAGE2', JSON.stringify({ token: token, profile: profileName, rawSheetId: rawSheetId, rawRows: rawRows, createdAt: Date.now() }));
+  ScriptApp.getProjectTriggers().forEach(function(t) {
+    if (t.getHandlerFunction && t.getHandlerFunction() === 'runMainPipelineStage2_') ScriptApp.deleteTrigger(t);
+  });
+  ScriptApp.newTrigger('runMainPipelineStage2_').timeBased().after(60 * 1000).create();
+  try { logLine_('MAIN_STAGE1_PENDING_STAGE2', 'Execution 1 complete; pending execution 2', 'runId=' + token, 'rows=' + rawRows + ' trigger=one-shot', 'INFO'); } catch (e) {}
+  return token;
+}
+
+function runMainPipelineStage2_() {
+  return withLock_(function() {
+    const props = PropertiesService.getScriptProperties();
+    const payload = props.getProperty('MAIN_PIPELINE_STAGE2');
+    if (!payload) return { severity: 'INFO', message: 'No pending MAIN stage 2.' };
+    const state = JSON.parse(payload);
+    const maxAgeMs = 30 * 60 * 1000;
+    if (!state.createdAt || Date.now() - Number(state.createdAt) > maxAgeMs) {
+      props.deleteProperty('MAIN_PIPELINE_STAGE2');
+      throw new Error('Pending MAIN stage 2 expired; refusing stale route.');
+    }
+    // Do not call clearLogSheet_ here: stage 2 must append to stage 1's Log - Main run.
+    resetRunState_();
+    setLogRunContext_('MAIN', state.token);
+    try { if (typeof RUNTIME !== 'undefined' && RUNTIME) RUNTIME.flowName = 'main'; } catch (eFlow) {}
+    try { logLine_('MAIN_STAGE2_START', 'Execution 2 started', 'runId=' + state.token, 'continuing stage 1 log', 'INFO'); } catch (eLogStart) {}
+    const ssId = CONFIG.spreadsheets[resolveSpreadsheetKey_(state.profile || 'Master')];
+    const ss = SpreadsheetApp.openById(ssId);
+    const rawSheet = ss.getSheetByName(CONFIG.masterRawSheetName || 'Raw Data');
+    if (!rawSheet || rawSheet.getSheetId() !== state.rawSheetId) throw new Error('Raw Data changed before MAIN stage 2.');
+    const lr = rawSheet.getLastRow(), lc = rawSheet.getLastColumn();
+    if (lr < 2 || lc < 1) throw new Error('Raw Data is empty before MAIN stage 2.');
+    const header = getRawHeader_(rawSheet);
+    let index = buildHeaderIndex_(header);
+    if (typeof applyRawHeaderAliases_ === 'function') index = applyRawHeaderAliases_(index);
+    const rows = rawSheet.getRange(2, 1, lr - 1, lc).getValues();
+    const pre = preflightRoutableCount_(rows, index, null);
+    if (!pre.total) throw new Error('No routable rows in MAIN stage 2: ' + pre.reason);
+
+    const profile = state.profile || 'Master';
+    setProgress_(0.55, 'Execution 2: clearing operational sheets…');
+    logLine_('MAIN_STAGE2_CLEAR', 'Clear operational sheets', 'rows=' + rows.length, '', 'INFO');
+    clearOperationalSheets_(ss, profile);
+    setProgress_(0.65, 'Execution 2: routing claims…');
+    logLine_('MAIN_STAGE2_ROUTE', 'Route Raw Data to operational sheets', '', '', 'INFO');
+    const route = routeRawToOperationalSheetsInMemory_(ss, rows, index, profile);
+    applyTemplateRowToOperationalSheets_(ss, profile);
+    setProgress_(0.75, 'Execution 2: restoring manual data…');
+    logLine_('MAIN_STAGE2_RESTORE', 'Restore manual values, formulas, and formatting', 'routed=' + route.total, '', 'INFO');
+    restoreOpsFieldsFromRawBackup_(ss, rawSheet, index, profile);
+    restoreNamedOpsFieldsFromRaw06c_(ss, rawSheet, index, profile, ['AWB', 'Timestamp AWB']);
+    applyUpdateStatusRichTextToOperational_(ss, rawSheet, index, profile);
+    applyRemarksRichTextToOperational_(ss, rawSheet, index, profile);
+    // Read (but retain) the stage-1 style snapshot; SUB 09:00 owns its final deletion.
+    restoreOpsManualFromMainTempForSub06c_(ss, profile, { deleteAfterRestore: false });
+    setProgress_(0.85, 'Execution 2: enriching and optional sheets…');
+    logLine_('MAIN_STAGE2_ENRICH', 'Enrich operational and optional sheets', '', '', 'INFO');
+    enrichOperationalSheetsFromRaw06_(ss, rows, index, profile, { flow: 'main' });
+    applyStrictSubmissionDateAndMonth06b_(ss, rows, index);
+    autofillBranchInScSheets06_(ss);
+    applyFinishTypeInScSheets06_(ss);
+    processB2B_(ss, rows, index, profile);
+    processSpecialCase_(ss, rows, index, profile);
+    processEVBike_(ss, rows, index, profile);
+    if (typeof processDoss_ === 'function') processDoss_(ss, rows, index, profile);
+    setProgress_(0.95, 'Execution 2: sorting and refreshing reports…');
+    logLine_('MAIN_STAGE2_FINALIZE', 'Sort sheets and refresh Report Base', '', '', 'INFO');
+    sortOperationalSheetsPreserveFilter06b_(ss, profile);
+    if (typeof refreshReportBaseFromOperational06_ === 'function') refreshReportBaseFromOperational06_(ss);
+    props.deleteProperty('MAIN_PIPELINE_STAGE2');
+    setProgress_(1.0, 'MAIN stage 2 complete.');
+    try { logLine_('MAIN_STAGE2', 'Route/restore complete', 'routed=' + route.total, 'token=' + state.token, 'INFO'); } catch (e) {}
+    return { severity: 'INFO', message: 'MAIN stage 2 complete.', routedTotal: route.total || 0 };
+  });
 }
