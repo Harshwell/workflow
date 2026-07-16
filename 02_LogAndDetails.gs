@@ -141,7 +141,7 @@ const CACHE = {
     mappingKeySet: new Set(),
     // v2 (structured)
     v2Ensured: false,
-    v2NextRow: LOGV2_LAYOUT.START_ROW,
+    v2NextRow: null,
     v2SegNo: 0,
     // run context
     runId: '',
@@ -164,7 +164,7 @@ function resetLogState_() {
   CACHE.log.lastFlushMs = 0;
   // v2
   CACHE.log.v2SegNo = 0;
-  CACHE.log.v2NextRow = LOGV2_LAYOUT.START_ROW;
+  CACHE.log.v2NextRow = null;
   CACHE.log.v2Ensured = false;
   // context (re-initialized per run; generated lazily)
   CACHE.log.runId = '';

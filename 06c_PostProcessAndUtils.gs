@@ -152,6 +152,8 @@ function applyRemarksRichTextToOperational_(ss, rawSheet, headerIndexRaw, pic) {
     const header = sh.getRange(1, 1, 1, lastCol).getValues()[0].map(__normalizeHeaderText06_);
     const idxClaim = __findHeaderIndexFlexible06_(header, 'Claim Number');
     const idxRemarks = __findHeaderIndexFlexible06_(header, 'Remarks');
+    const idxAwb = __findHeaderIndexFlexible06_(header, 'AWB');
+    const idxTimestampAwb = __findHeaderIndexFlexible06_(header, 'Timestamp AWB');
     if (idxClaim === -1 || idxRemarks === -1) continue;
 
     const rows = lastRow - 1;
@@ -220,8 +222,10 @@ function snapshotOpsManualColumnsRich06c_(ss, pic) {
     const idxTs = __findHeaderIndexFlexible06_(header, 'Timestamp');
     const idxStatus = isEvBike ? -1 : __findHeaderIndexFlexible06_(header, 'Status');
     const idxRemarks = __findHeaderIndexFlexible06_(header, 'Remarks');
+    const idxAwb = __findHeaderIndexFlexible06_(header, 'AWB');
+    const idxTimestampAwb = __findHeaderIndexFlexible06_(header, 'Timestamp AWB');
 
-    if (idxUpdate === -1 && idxTs === -1 && idxStatus === -1 && idxRemarks === -1) continue;
+    if (idxUpdate === -1 && idxTs === -1 && idxStatus === -1 && idxRemarks === -1 && idxAwb === -1 && idxTimestampAwb === -1) continue;
 
     const n = lr - 1;
     const claims = sh.getRange(2, idxClaim + 1, n, 1).getValues();
@@ -230,17 +234,28 @@ function snapshotOpsManualColumnsRich06c_(ss, pic) {
     const rngTs = (idxTs !== -1) ? sh.getRange(2, idxTs + 1, n, 1) : null;
     const rngStatus = (idxStatus !== -1) ? sh.getRange(2, idxStatus + 1, n, 1) : null;
     const rngRemarks = (idxRemarks !== -1) ? sh.getRange(2, idxRemarks + 1, n, 1) : null;
+    const rngAwb = (idxAwb !== -1) ? sh.getRange(2, idxAwb + 1, n, 1) : null;
+    const rngTimestampAwb = (idxTimestampAwb !== -1) ? sh.getRange(2, idxTimestampAwb + 1, n, 1) : null;
 
     const updRT = rngUpdate ? rngUpdate.getRichTextValues() : null;
     const updWrap = rngUpdate ? rngUpdate.getWrapStrategies() : null;
+    const updFormula = rngUpdate ? rngUpdate.getFormulas() : null;
 
     const tsVals = rngTs ? rngTs.getValues() : null;
     const tsFmt = rngTs ? rngTs.getNumberFormats() : null;
+    const tsFormula = rngTs ? rngTs.getFormulas() : null;
 
     const stVals = rngStatus ? rngStatus.getValues() : null;
+    const stFormula = rngStatus ? rngStatus.getFormulas() : null;
 
     const remRT = rngRemarks ? rngRemarks.getRichTextValues() : null;
     const remWrap = rngRemarks ? rngRemarks.getWrapStrategies() : null;
+    const remFormula = rngRemarks ? rngRemarks.getFormulas() : null;
+    const awbVals = rngAwb ? rngAwb.getValues() : null;
+    const awbFormula = rngAwb ? rngAwb.getFormulas() : null;
+    const tsAwbVals = rngTimestampAwb ? rngTimestampAwb.getValues() : null;
+    const tsAwbFmt = rngTimestampAwb ? rngTimestampAwb.getNumberFormats() : null;
+    const tsAwbFormula = rngTimestampAwb ? rngTimestampAwb.getFormulas() : null;
 
     for (let i = 0; i < n; i++) {
       const claim = __claimKey06_(claims[i] && claims[i][0]);
@@ -257,7 +272,7 @@ function snapshotOpsManualColumnsRich06c_(ss, pic) {
         const rt = (updRT[i] && updRT[i][0]) ? updRT[i][0] : null;
         const txt = (rt && rt.getText) ? String(rt.getText() || '') : '';
         if (txt !== '') {
-          rec.u = { rt: rt, wrap: (updWrap && updWrap[i] && updWrap[i][0]) ? updWrap[i][0] : null };
+          rec.u = { rt: rt, wrap: (updWrap && updWrap[i] && updWrap[i][0]) ? updWrap[i][0] : null, formula: (updFormula && updFormula[i]) ? updFormula[i][0] : '' };
           any = true;
         }
       }
@@ -265,7 +280,7 @@ function snapshotOpsManualColumnsRich06c_(ss, pic) {
       if (tsVals) {
         const v = tsVals[i] ? tsVals[i][0] : '';
         if (v !== '' && v != null) {
-          rec.t = { v: v, fmt: (tsFmt && tsFmt[i] && tsFmt[i][0]) ? tsFmt[i][0] : null };
+          rec.t = { v: v, fmt: (tsFmt && tsFmt[i] && tsFmt[i][0]) ? tsFmt[i][0] : null, formula: (tsFormula && tsFormula[i]) ? tsFormula[i][0] : '' };
           any = true;
         }
       }
@@ -273,7 +288,7 @@ function snapshotOpsManualColumnsRich06c_(ss, pic) {
       if (stVals) {
         const v = stVals[i] ? stVals[i][0] : '';
         if (v !== '' && v != null) {
-          rec.s = { v: v };
+          rec.s = { v: v, formula: (stFormula && stFormula[i]) ? stFormula[i][0] : '' };
           any = true;
         }
       }
@@ -282,9 +297,20 @@ function snapshotOpsManualColumnsRich06c_(ss, pic) {
         const rt = (remRT[i] && remRT[i][0]) ? remRT[i][0] : null;
         const txt = (rt && rt.getText) ? String(rt.getText() || '') : '';
         if (txt !== '') {
-          rec.r = { rt: rt, wrap: (remWrap && remWrap[i] && remWrap[i][0]) ? remWrap[i][0] : null };
+          rec.r = { rt: rt, wrap: (remWrap && remWrap[i] && remWrap[i][0]) ? remWrap[i][0] : null, formula: (remFormula && remFormula[i]) ? remFormula[i][0] : '' };
           any = true;
         }
+      }
+
+      if (awbVals) {
+        const v = awbVals[i] ? awbVals[i][0] : '';
+        const f = (awbFormula && awbFormula[i]) ? awbFormula[i][0] : '';
+        if (v !== '' || f) { rec.a = { v: v, formula: f }; any = true; }
+      }
+      if (tsAwbVals) {
+        const v = tsAwbVals[i] ? tsAwbVals[i][0] : '';
+        const f = (tsAwbFormula && tsAwbFormula[i]) ? tsAwbFormula[i][0] : '';
+        if (v !== '' || f) { rec.ta = { v: v, fmt: (tsAwbFmt && tsAwbFmt[i]) ? tsAwbFmt[i][0] : null, formula: f }; any = true; }
       }
 
       if (any) {
@@ -663,8 +689,10 @@ function restoreOpsManualColumnsRich06c_(ss, pic, snapshot) {
     const idxTs = __findHeaderIndexFlexible06_(header, 'Timestamp');
     const idxStatus = isEvBike ? -1 : __findHeaderIndexFlexible06_(header, 'Status');
     const idxRemarks = __findHeaderIndexFlexible06_(header, 'Remarks');
+    const idxAwb = __findHeaderIndexFlexible06_(header, 'AWB');
+    const idxTimestampAwb = __findHeaderIndexFlexible06_(header, 'Timestamp AWB');
 
-    if (idxUpdate === -1 && idxTs === -1 && idxStatus === -1 && idxRemarks === -1) continue;
+    if (idxUpdate === -1 && idxTs === -1 && idxStatus === -1 && idxRemarks === -1 && idxAwb === -1 && idxTimestampAwb === -1) continue;
 
     const n = lr - 1;
     const claims = sh.getRange(2, idxClaim + 1, n, 1).getValues();
@@ -683,6 +711,8 @@ function restoreOpsManualColumnsRich06c_(ss, pic, snapshot) {
 
     const rowsStatus = [];
     const mapStatus = Object.create(null);
+    const formulaJobs = { u: { rows: [], map: Object.create(null), idx: idxUpdate }, t: { rows: [], map: Object.create(null), idx: idxTs }, s: { rows: [], map: Object.create(null), idx: idxStatus }, r: { rows: [], map: Object.create(null), idx: idxRemarks }, a: { rows: [], map: Object.create(null), idx: idxAwb }, ta: { rows: [], map: Object.create(null), idx: idxTimestampAwb } };
+    const rowsAwb = [], mapAwb = Object.create(null), rowsTimestampAwb = [], mapTimestampAwb = Object.create(null), mapTimestampAwbFmt = Object.create(null);
 
     for (let i = 0; i < n; i++) {
       const claim = __claimKey06_(claims[i] && claims[i][0]);
@@ -692,6 +722,10 @@ function restoreOpsManualColumnsRich06c_(ss, pic, snapshot) {
       if (!rec) continue;
 
       const rno = i + 2;
+      [['u', rec.u], ['t', rec.t], ['s', rec.s], ['r', rec.r], ['a', rec.a], ['ta', rec.ta]].forEach(function(pair) {
+        const job = formulaJobs[pair[0]], cell = pair[1];
+        if (job.idx !== -1 && cell && cell.formula) { job.rows.push(rno); job.map[rno] = cell.formula; }
+      });
 
       if (idxUpdate !== -1 && rec.u && rec.u.rt) {
         rowsUpdate.push(rno);
@@ -715,6 +749,8 @@ function restoreOpsManualColumnsRich06c_(ss, pic, snapshot) {
         rowsStatus.push(rno);
         mapStatus[rno] = rec.s.v;
       }
+      if (idxAwb !== -1 && rec.a && rec.a.v != null && rec.a.v !== '') { rowsAwb.push(rno); mapAwb[rno] = rec.a.v; }
+      if (idxTimestampAwb !== -1 && rec.ta && rec.ta.v != null && rec.ta.v !== '') { rowsTimestampAwb.push(rno); mapTimestampAwb[rno] = rec.ta.v; if (rec.ta.fmt) mapTimestampAwbFmt[rno] = rec.ta.fmt; }
     }
 
     const applyRichSeg = (idxCol0, rowNums, rowMapObj) => {
@@ -750,6 +786,13 @@ function restoreOpsManualColumnsRich06c_(ss, pic, snapshot) {
       }
     };
 
+    const applyFormulaSeg = (idxCol0, rowNums, rowFormulaObj) => {
+      if (idxCol0 === -1 || !rowNums.length) return;
+      __groupConsecutiveRows_(rowNums).forEach(function(seg) {
+        try { sh.getRange(seg[0], idxCol0 + 1, seg.length, 1).setFormulas(seg.map(rn => [rowFormulaObj[rn]])); } catch (e) {}
+      });
+    };
+
     const applyNumFmtSeg = (idxCol0, rowNums, rowFmtObj) => {
       if (!rowNums.length) return;
       const segs = __groupConsecutiveRows_(rowNums);
@@ -779,6 +822,13 @@ function restoreOpsManualColumnsRich06c_(ss, pic, snapshot) {
     if (idxStatus !== -1) {
       applyValSeg(idxStatus, rowsStatus, mapStatus);
     }
+    if (idxAwb !== -1) applyValSeg(idxAwb, rowsAwb, mapAwb);
+    if (idxTimestampAwb !== -1) { applyValSeg(idxTimestampAwb, rowsTimestampAwb, mapTimestampAwb); if (Object.keys(mapTimestampAwbFmt).length) applyNumFmtSeg(idxTimestampAwb, rowsTimestampAwb, mapTimestampAwbFmt); }
+    // Formula restore is deliberately last: formulas recalculate from the newly routed row.
+    Object.keys(formulaJobs).forEach(function(key) {
+      const job = formulaJobs[key];
+      applyFormulaSeg(job.idx, job.rows, job.map);
+    });
   }
 }
 

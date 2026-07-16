@@ -334,7 +334,7 @@ function runPipeline_(pic, fileIds, opts) {
   // The continuation reads Raw Data, so it does not depend on in-memory state from this execution.
   if (flowName === 'main' && options.deferRouting === true) {
     const token = scheduleMainPipelineStage2_(profileName, rawSheet.getSheetId(), rawValues.length, getRunId_());
-    setProgress_(1.0, 'Raw backup complete; routing queued.');
+    setProgress_(0.50, 'Execution 1 complete; pending execution 2.');
     return { severity: 'INFO', message: 'MAIN stage 1 complete; routing queued.', staged: true, stageToken: token, rawRows: rawValues.length, routedTotal: 0 };
   }
 
@@ -1742,6 +1742,7 @@ function runMainPipelineStage2_() {
     // Do not call clearLogSheet_ here: stage 2 must append to stage 1's Log - Main run.
     resetRunState_();
     setLogRunContext_('MAIN', state.token);
+    try { if (typeof RUNTIME !== 'undefined' && RUNTIME) RUNTIME.flowName = 'main'; } catch (eFlow) {}
     try { logLine_('MAIN_STAGE2_START', 'Execution 2 started', 'runId=' + state.token, 'continuing stage 1 log', 'INFO'); } catch (eLogStart) {}
     const ssId = CONFIG.spreadsheets[resolveSpreadsheetKey_(state.profile || 'Master')];
     const ss = SpreadsheetApp.openById(ssId);
@@ -1756,25 +1757,35 @@ function runMainPipelineStage2_() {
     const pre = preflightRoutableCount_(rows, index, null);
     if (!pre.total) throw new Error('No routable rows in MAIN stage 2: ' + pre.reason);
 
-    setProgress_(0.10, 'MAIN stage 2: clearing operational sheets…');
-    clearOperationalSheets_(ss, state.profile || 'Master');
-    const route = routeRawToOperationalSheetsInMemory_(ss, rows, index, state.profile || 'Master');
-    applyTemplateRowToOperationalSheets_(ss, state.profile || 'Master');
-    restoreOpsFieldsFromRawBackup_(ss, rawSheet, index, state.profile || 'Master');
-    restoreNamedOpsFieldsFromRaw06c_(ss, rawSheet, index, state.profile || 'Master', ['AWB', 'Timestamp AWB']);
-    applyUpdateStatusRichTextToOperational_(ss, rawSheet, index, state.profile || 'Master');
-    applyRemarksRichTextToOperational_(ss, rawSheet, index, state.profile || 'Master');
-    // The temp sheet is the durable style snapshot produced by stage 1.
-    restoreOpsManualFromMainTempForSub06c_(ss, state.profile || 'Master', { deleteAfterRestore: true });
-    enrichOperationalSheetsFromRaw06_(ss, rows, index, state.profile || 'Master', { flow: 'main' });
+    const profile = state.profile || 'Master';
+    setProgress_(0.55, 'Execution 2: clearing operational sheets…');
+    logLine_('MAIN_STAGE2_CLEAR', 'Clear operational sheets', 'rows=' + rows.length, '', 'INFO');
+    clearOperationalSheets_(ss, profile);
+    setProgress_(0.65, 'Execution 2: routing claims…');
+    logLine_('MAIN_STAGE2_ROUTE', 'Route Raw Data to operational sheets', '', '', 'INFO');
+    const route = routeRawToOperationalSheetsInMemory_(ss, rows, index, profile);
+    applyTemplateRowToOperationalSheets_(ss, profile);
+    setProgress_(0.75, 'Execution 2: restoring manual data…');
+    logLine_('MAIN_STAGE2_RESTORE', 'Restore manual values, formulas, and formatting', 'routed=' + route.total, '', 'INFO');
+    restoreOpsFieldsFromRawBackup_(ss, rawSheet, index, profile);
+    restoreNamedOpsFieldsFromRaw06c_(ss, rawSheet, index, profile, ['AWB', 'Timestamp AWB']);
+    applyUpdateStatusRichTextToOperational_(ss, rawSheet, index, profile);
+    applyRemarksRichTextToOperational_(ss, rawSheet, index, profile);
+    // Read (but retain) the stage-1 style snapshot; SUB 09:00 owns its final deletion.
+    restoreOpsManualFromMainTempForSub06c_(ss, profile, { deleteAfterRestore: false });
+    setProgress_(0.85, 'Execution 2: enriching and optional sheets…');
+    logLine_('MAIN_STAGE2_ENRICH', 'Enrich operational and optional sheets', '', '', 'INFO');
+    enrichOperationalSheetsFromRaw06_(ss, rows, index, profile, { flow: 'main' });
     applyStrictSubmissionDateAndMonth06b_(ss, rows, index);
     autofillBranchInScSheets06_(ss);
     applyFinishTypeInScSheets06_(ss);
-    processB2B_(ss, rows, index, state.profile || 'Master');
-    processSpecialCase_(ss, rows, index, state.profile || 'Master');
-    processEVBike_(ss, rows, index, state.profile || 'Master');
-    if (typeof processDoss_ === 'function') processDoss_(ss, rows, index, state.profile || 'Master');
-    sortOperationalSheetsPreserveFilter06b_(ss, state.profile || 'Master');
+    processB2B_(ss, rows, index, profile);
+    processSpecialCase_(ss, rows, index, profile);
+    processEVBike_(ss, rows, index, profile);
+    if (typeof processDoss_ === 'function') processDoss_(ss, rows, index, profile);
+    setProgress_(0.95, 'Execution 2: sorting and refreshing reports…');
+    logLine_('MAIN_STAGE2_FINALIZE', 'Sort sheets and refresh Report Base', '', '', 'INFO');
+    sortOperationalSheetsPreserveFilter06b_(ss, profile);
     if (typeof refreshReportBaseFromOperational06_ === 'function') refreshReportBaseFromOperational06_(ss);
     props.deleteProperty('MAIN_PIPELINE_STAGE2');
     setProgress_(1.0, 'MAIN stage 2 complete.');

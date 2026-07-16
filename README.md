@@ -543,3 +543,6 @@ Kalau repo ini terus tumbuh, jangan buru-buru menambah file dokumentasi. Biasany
 - Mapping service-center yang sama kini diterapkan juga pada optional project Service Center Extractor, Salvage, dan Outstanding.
 - Service Center Extractor otomatis membuat tab `CV Berkah` dan `Rejeki Seluler` bila belum ada; operator tidak perlu menambahkan mapping destination manual.
 - Refresh SUB untuk EV-Bike/Doss hanya menulis kolom managed dan tidak menyentuh Status/Update Status/Timestamp/Remarks; restore handoff MAIN→SUB hanya berjalan pukul 09:00.
+- Formula pada enam kolom manual operational (`Update Status`, `Timestamp`, `Status`, `Remarks`, `AWB`, `Timestamp AWB`) ikut disnapshot dan di-restore setelah routing sehingga formula tetap aktif/recalculate.
+- Progress MAIN dua tahap bersifat kumulatif: execution 1 selesai pada 50%, execution 2 berjalan 55–100% dan menulis checkpoint clear/route/restore/enrich/finalize ke Log - Main.
+- Stage 2 MAIN membaca tetapi tidak menghapus `_OPS_MAIN_SUB_TEMP`; hanya SUB window 09:00 yang menghapus snapshot handoff tersebut setelah restore.
