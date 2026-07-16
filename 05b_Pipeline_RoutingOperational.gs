@@ -1270,7 +1270,7 @@ function buildSheetWriters_(ss, routingMap, headerIndexRaw, pic) {
         set('Partner Name', getRaw(rawRow, h.businessPartner));
         set('Insurance', normalizeInsuranceShort05b_(getRawAny(rawRow, [h.insuranceName, h.insurance, 'insurance_name', 'insurance'])));
         set('Device Type', getRawAny(rawRow, [h.deviceType, 'device_type', 'deviceType']));
-        set('Store Name', getRawAny(rawRow, ['3. All Transaction - qoala_policy_number → outlet_name', 'outlet_name', 'store_name', 'Store Name']));
+        set('Store Name', getRawAny(rawRow, ['3. All Transaction - qoala_policy_number → outlet_name', 'outlet_name', 'outlet name']));
         set('PA Name', getRawAny(rawRow, ['3. All Transaction - qoala_policy_number → pa_name', 'pa_name', 'PA Name']));
         set('SPA Name', getRawAny(rawRow, ['3. All Transaction - qoala_policy_number → spa_name', 'spa_name', 'SPA Name']));
         set('Service Center', getRawAny(rawRow, [h.serviceCenter, h.serviceCenterName, h.scName, 'service_center', 'service_center_name', 'sc_name']));
@@ -1286,11 +1286,13 @@ function buildSheetWriters_(ss, routingMap, headerIndexRaw, pic) {
           set('Aging Position', agingPostRaw);
           set('Aging Post.', agingPostRaw);
         }
-        if (idxH['Service Type'] != null) {
+        if (idxH['Claim Type'] != null || idxH['Service Type'] != null) {
           const serviceTypeRaw = (sheetName === 'Start' || sheetName === 'Finish' || sheetName === 'Expired Claim')
             ? getRawAny(rawRow, [h.deviceCheckinOptionName, 'device_checkin_option_name'])
             : '';
-          set('Service Type', (typeof resolveServiceTypeFromStatus_ === 'function') ? resolveServiceTypeFromStatus_(sheetName, serviceTypeRaw, lastStatusVal) : serviceTypeRaw);
+          const claimType = (sheetName === 'Reject Claim' && typeof REJECT_CLAIM_TYPE_BY_LAST_STATUS !== 'undefined') ? (REJECT_CLAIM_TYPE_BY_LAST_STATUS[String(lastStatusVal || '').trim()] || '') : ((typeof resolveServiceTypeFromStatus_ === 'function') ? resolveServiceTypeFromStatus_(sheetName, serviceTypeRaw, lastStatusVal) : serviceTypeRaw);
+          set('Claim Type', claimType);
+          set('Service Type', claimType);
         }
         // - Device Brand / IMEI
         set('Device Brand', getRawAny(rawRow, [h.deviceBrand, 'device_brand', 'brand']));
@@ -1639,6 +1641,19 @@ function routeRawToOperationalSheetsInMemory_(ss, rawValues, headerIndexRaw, pic
     // Patch B1: force Finish statuses into SC routing.
     if (targets.indexOf('Reject Claim') === -1 && isFinishStatus05a_(statusVal)) {
       targets = uniq05a_(targets.concat([scFarhanName, scMeilaniName, scIvanName, scFallbackName]));
+    }
+
+    // EzCare Apple project: from 15 Jul 2026 (inclusive), Apple device brand/type is Farhan;
+    // all other EzCare claims retain the existing Meindar mapping.
+    const scNameForOverride = (idxScName != null) ? String(rawRow[idxScName] || '') : '';
+    const isEzCare = /ez\s*care/i.test(scNameForOverride);
+    const subDateIdx = headerIndexRaw[h.claimSubmissionDate] != null ? headerIndexRaw[h.claimSubmissionDate] : headerIndexRaw['claim_submission_date'];
+    const brandIdx = headerIndexRaw[h.deviceBrand] != null ? headerIndexRaw[h.deviceBrand] : headerIndexRaw['device_brand'];
+    const typeIdx = headerIndexRaw[h.deviceType] != null ? headerIndexRaw[h.deviceType] : headerIndexRaw['device_type'];
+    const subDate = subDateIdx != null ? coerceDateOnly_(rawRow[subDateIdx]) : null;
+    const isApple = /apple/i.test(String((brandIdx != null ? rawRow[brandIdx] : '') || '')) || /apple/i.test(String((typeIdx != null ? rawRow[typeIdx] : '') || ''));
+    if (isEzCare && isApple && subDate && subDate.getTime() >= new Date(2026, 6, 15).getTime()) {
+      targets = targets.filter(x => x !== scMeilaniName && x !== scIvanName && x !== scFallbackName).concat([scFarhanName]);
     }
 
     // SC sheet split by sc_name keywords (only if targets include SC sheets)

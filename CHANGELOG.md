@@ -1,3 +1,9 @@
+# Unreleased
+- MAIN sekarang menggunakan continuation dua tahap dengan Script Properties token + one-shot trigger untuk memisahkan ingest/backup dari clear/route/restore; Log - Main berlanjut dengan RunID sama tanpa reset pada transisi stage.
+- Memisahkan audit log MAIN (`Log - Main`) dan SUB (`Log - Sub`) dengan lazy migration yang aman.
+- Menambahkan backup AWB/Timestamp AWB, mapping Claim Type Reject Claim, SC CV Berkah/Rejeki Seluler, dan split EzCare Apple per 15 Jul 2026.
+- Mengganti Service Type menjadi Claim Type dan menambahkan Service Center PIC di PO.
+
 # Changelog
 
 Repo ini memakai changelog ringan yang fokus ke perubahan yang benar-benar relevan buat maintainer.
