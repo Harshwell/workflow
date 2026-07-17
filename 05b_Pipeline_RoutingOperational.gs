@@ -203,6 +203,22 @@ function compileRoutingIndex_(routingMap) {
   return idx;
 }
 
+/**
+ * Some statuses intentionally belong to more than one operational queue.
+ * Keep these business-critical fan-out routes explicit so a future routing-map
+ * change cannot silently turn them into a single-destination route.
+ */
+function enforceRequiredMultiDestinationTargets05b_(status, targets, opsPolicy) {
+  const statusKey = String(status || '').trim();
+  const out = Array.isArray(targets) ? targets.slice() : [];
+  if (statusKey !== 'COURIER_PICKUP_START_DONE') return uniq05a_(out);
+
+  const sheets = (opsPolicy && opsPolicy.SHEETS) ? opsPolicy.SHEETS : {};
+  const startSheet = String(sheets.START || 'Start').trim();
+  if (startSheet) out.push(startSheet);
+  return uniq05a_(out);
+}
+
 
 /** =========================
  * SC sheet split + Type dropdown helpers (single master workflow)
@@ -1637,6 +1653,7 @@ function routeRawToOperationalSheetsInMemory_(ss, rawValues, headerIndexRaw, pic
     }
 
     let targets = (routingIndex[statusVal] || []).slice();
+    targets = enforceRequiredMultiDestinationTargets05b_(statusVal, targets, opsPolicy);
 
     if (isRejectClaimTarget05b_(statusVal, idxLastActivityAging != null ? rawRow[idxLastActivityAging] : '', idxLastUpdate != null ? rawRow[idxLastUpdate] : '')) {
       targets = ['Reject Claim'];

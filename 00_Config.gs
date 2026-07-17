@@ -138,6 +138,7 @@ const BRANCH_KEYWORDS = Object.freeze({
   'Xiaomi Authorized': ['xiaomi authorized', 'xiaomi'],
   'Samsung Exclusive': ['samsung exclusive', 'samsung'],
   'Carlcare': ['carlcare'],
+  'CV Berkah': ['cv berkah athallah', 'cv berkah'],
   'B-Store': ['b-store', 'bstore'],
   'EzCare': ['ezcare', 'ez care'],
   'Deltasindo': ['deltasindo'],
