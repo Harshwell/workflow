@@ -892,7 +892,7 @@ function enrichOperationalSheetsFromRaw06_(ss, rawValues, headerIndexRaw, pic, o
     if (!financeExcludedSheets.has(sheetName)) {
       try { ensureHeadersAtEnd06_(sh, mandatoryFinanceHeaders); } catch (e) {}
     }
-    if (sheetName === 'Start' || sheetName === 'Finish' || sheetName === 'Expired Claim') {
+    if (sheetName === 'Start' || sheetName === 'Finish' || sheetName === 'Expired Claim' || sheetName === 'Reject Claim') {
       try { ensureHeadersAtEnd06_(sh, ['Claim Type']); } catch (e) {}
     }
 
@@ -1005,7 +1005,12 @@ function enrichOperationalSheetsFromRaw06_(ss, rawValues, headerIndexRaw, pic, o
         const idxServiceRaw = (sheetName === 'Start' || sheetName === 'Finish' || sheetName === 'Expired Claim') ? idxCheckinServiceTypeRaw : null;
         const rawServiceType = idxServiceRaw != null ? rawGet(idxServiceRaw) : '';
         const statusForService = lastStatuses ? String((lastStatuses[r] && lastStatuses[r][0]) || '').trim() : '';
-        outServiceType[r] = [ (typeof resolveServiceTypeFromStatus_ === 'function') ? resolveServiceTypeFromStatus_(sheetName, rawServiceType, statusForService) : rawServiceType ];
+        const rejectClaimType = (sheetName === 'Reject Claim' && typeof REJECT_CLAIM_TYPE_BY_LAST_STATUS !== 'undefined')
+          ? (REJECT_CLAIM_TYPE_BY_LAST_STATUS[statusForService] || '')
+          : null;
+        outServiceType[r] = [ rejectClaimType != null
+          ? rejectClaimType
+          : ((typeof resolveServiceTypeFromStatus_ === 'function') ? resolveServiceTypeFromStatus_(sheetName, rawServiceType, statusForService) : rawServiceType) ];
       }
 
       if (outProduct) outProduct[r] = [ idxProductRaw != null ? rawGet(idxProductRaw) : '' ];
@@ -1758,35 +1763,79 @@ function runMainPipelineStage2_() {
     if (!pre.total) throw new Error('No routable rows in MAIN stage 2: ' + pre.reason);
 
     const profile = state.profile || 'Master';
+    // Match direct MAIN semantics: a non-critical enrichment failure must be
+    // visible in Log - Main but must not prevent later finalizers from running.
+    const runBestEffort = function(step, fn) {
+      try {
+        return fn();
+      } catch (err) {
+        try { logLine_('WARN', 'MAIN_STAGE2_' + step, 'Step failed; continuing remaining finalizers.', String(err), 'WARN'); } catch (eLog) {}
+        return null;
+      }
+    };
     setProgress_(0.55, 'Execution 2: clearing operational sheets…');
     logLine_('MAIN_STAGE2_CLEAR', 'Clear operational sheets', 'rows=' + rows.length, '', 'INFO');
     clearOperationalSheets_(ss, profile, { skipManualSnapshot: true });
     setProgress_(0.65, 'Execution 2: routing claims…');
     logLine_('MAIN_STAGE2_ROUTE', 'Route Raw Data to operational sheets', '', '', 'INFO');
     const route = routeRawToOperationalSheetsInMemory_(ss, rows, index, profile);
-    applyTemplateRowToOperationalSheets_(ss, profile);
+    runBestEffort('TEMPLATE', function() { applyTemplateRowToOperationalSheets_(ss, profile); });
     setProgress_(0.75, 'Execution 2: restoring manual data…');
     logLine_('MAIN_STAGE2_RESTORE', 'Restore manual values, formulas, and formatting', 'routed=' + route.total, '', 'INFO');
-    restoreOpsFieldsFromRawBackup_(ss, rawSheet, index, profile);
-    restoreNamedOpsFieldsFromRaw06c_(ss, rawSheet, index, profile, ['AWB', 'Timestamp AWB']);
-    applyUpdateStatusRichTextToOperational_(ss, rawSheet, index, profile);
-    applyRemarksRichTextToOperational_(ss, rawSheet, index, profile);
+    runBestEffort('RESTORE_FIELDS', function() { restoreOpsFieldsFromRawBackup_(ss, rawSheet, index, profile); });
+    runBestEffort('RESTORE_AWB', function() { restoreNamedOpsFieldsFromRaw06c_(ss, rawSheet, index, profile, ['AWB', 'Timestamp AWB']); });
+    runBestEffort('RESTORE_UPDATE_STATUS', function() { applyUpdateStatusRichTextToOperational_(ss, rawSheet, index, profile); });
+    runBestEffort('RESTORE_REMARKS', function() { applyRemarksRichTextToOperational_(ss, rawSheet, index, profile); });
     // Read (but retain) the stage-1 style snapshot; SUB 09:00 owns its final deletion.
-    restoreOpsManualFromMainTempForSub06c_(ss, profile, { deleteAfterRestore: false });
+    runBestEffort('RESTORE_MAIN_TEMP', function() { restoreOpsManualFromMainTempForSub06c_(ss, profile, { deleteAfterRestore: false }); });
+    // Stage 1 persisted the complete manual snapshot before clearing. Restore it
+    // here as well so split MAIN has the same manual-field recovery as direct MAIN.
+    runBestEffort('RESTORE_BACKUP', function() {
+      if (typeof restoreOpsManualFromBackupSheet06c_ === 'function') restoreOpsManualFromBackupSheet06c_(ss, profile);
+    });
+    // Keep this after every restore, matching direct MAIN, so a copied template
+    // or manual style cannot overwrite the marker color.
+    runBestEffort('HIGHLIGHT', function() { applyOperationalClaimHighlightsByRaw_(ss, rows, index, profile); });
     setProgress_(0.85, 'Execution 2: enriching and optional sheets…');
     logLine_('MAIN_STAGE2_ENRICH', 'Enrich operational and optional sheets', '', '', 'INFO');
-    enrichOperationalSheetsFromRaw06_(ss, rows, index, profile, { flow: 'main' });
-    applyStrictSubmissionDateAndMonth06b_(ss, rows, index);
-    autofillBranchInScSheets06_(ss);
-    applyFinishTypeInScSheets06_(ss);
-    processB2B_(ss, rows, index, profile);
-    processSpecialCase_(ss, rows, index, profile);
-    processEVBike_(ss, rows, index, profile);
-    if (typeof processDoss_ === 'function') processDoss_(ss, rows, index, profile);
+    runBestEffort('ENRICH', function() { enrichOperationalSheetsFromRaw06_(ss, rows, index, profile, { flow: 'main' }); });
+    runBestEffort('SUBMISSION_SYNC', function() { applyStrictSubmissionDateAndMonth06b_(ss, rows, index); });
+    runBestEffort('SC_BRANCH', function() { autofillBranchInScSheets06_(ss); });
+    runBestEffort('SC_TYPE', function() { applyFinishTypeInScSheets06_(ss); });
+    runBestEffort('B2B', function() { processB2B_(ss, rows, index, profile); });
+    runBestEffort('SPECIAL_CASE', function() { processSpecialCase_(ss, rows, index, profile); });
+    runBestEffort('EV_BIKE', function() { processEVBike_(ss, rows, index, profile); });
+    runBestEffort('DOSS', function() { if (typeof processDoss_ === 'function') processDoss_(ss, rows, index, profile); });
+    runBestEffort('OPTIONAL_SUBMISSION_SYNC', function() { applyStrictSubmissionDateAndMonth06b_(ss, rows, index, { sheets: ['B2B', 'EV-Bike', 'Doss', 'Special Case'] }); });
+    runBestEffort('SANITIZE', function() { sanitizeProblematicDataValidations06_(ss, profile); });
+    runBestEffort('EXCLUSION_TAT', function() { recomputeExclusionTat_(ss, profile); });
+    runBestEffort('RAW_REORDER', function() { reorderRawDataColumns06_(rawSheet); });
+    runBestEffort('TRASH', function() {
+      if (PIPELINE_FLAGS && PIPELINE_FLAGS.TRASH_UPLOADED_FILES && (typeof DRY_RUN === 'undefined' || !DRY_RUN)) {
+        if (typeof flushTrashQueueBestEffort_ === 'function') flushTrashQueueBestEffort_('MAIN');
+      }
+    });
     setProgress_(0.95, 'Execution 2: sorting and refreshing reports…');
     logLine_('MAIN_STAGE2_FINALIZE', 'Sort sheets and refresh Report Base', '', '', 'INFO');
-    sortOperationalSheetsPreserveFilter06b_(ss, profile);
-    if (typeof refreshReportBaseFromOperational06_ === 'function') refreshReportBaseFromOperational06_(ss);
+    runBestEffort('SORT', function() { sortOperationalSheetsPreserveFilter06b_(ss, profile); });
+    runBestEffort('REPORT_BASE', function() { if (typeof refreshReportBaseFromOperational06_ === 'function') refreshReportBaseFromOperational06_(ss); });
+    runBestEffort('WEEKLY_REPORT_BASE', function() {
+      if (shouldRunWeeklyReportBaseNow06b_('main', 'EMAIL_MAIN')) {
+        SpreadsheetApp.flush();
+        Utilities.sleep(3000);
+        if (typeof fillWeeklyReportBase === 'function') fillWeeklyReportBase('', '', ss);
+      }
+    });
+    const managedSheets = getOperationalSheetNames06b_(profile).concat(['B2B', 'EV-Bike', 'Doss', 'Special Case', 'Daily Report Base', 'Weekly Report Base']);
+    const seenSheets = Object.create(null);
+    managedSheets.forEach(function(name) {
+      if (!name || seenSheets[name]) return;
+      seenSheets[name] = true;
+      const sh = ss.getSheetByName(name);
+      runBestEffort('FILTER_' + name, function() {
+        if (sh && typeof __expandSheetFilterToUsedRange06_ === 'function') __expandSheetFilterToUsedRange06_(sh);
+      });
+    });
     props.deleteProperty('MAIN_PIPELINE_STAGE2');
     setProgress_(1.0, 'MAIN stage 2 complete.');
     try { logLine_('MAIN_STAGE2', 'Route/restore complete', 'routed=' + route.total, 'token=' + state.token, 'INFO'); } catch (e) {}

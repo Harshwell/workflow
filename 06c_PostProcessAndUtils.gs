@@ -1402,6 +1402,8 @@ function __getBranchFromServiceCenter06_(serviceCenter) {
     ['Xiaomi Authorized', 'xiaomi authorized'],
     ['Samsung Exclusive', 'samsung exclusive'],
     ['Carlcare', 'carlcare'],
+    ['CV Berkah', 'cv berkah athallah'],
+    ['CV Berkah', 'cv berkah'],
     ['B-Store', 'b-store'],
     ['MDP', 'mdp'],
     ['Deltafone', 'deltasindo']
