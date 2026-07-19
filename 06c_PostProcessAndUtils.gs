@@ -565,6 +565,7 @@ function restoreOpsManualFromMainTempForSub06c_(ss, pic, opts) {
     const outT = iT !== -1 ? sh.getRange(2, iT + 1, n, 1).getValues() : null;
     const outS = iS !== -1 ? sh.getRange(2, iS + 1, n, 1).getValues() : null;
     const outR = iR !== -1 ? sh.getRange(2, iR + 1, n, 1).getValues() : null;
+    const styleJobs = [];
 
     for (let r = 0; r < n; r++) {
       const k = keyOf(claims[r][0], scs[r][0]);
@@ -575,17 +576,26 @@ function restoreOpsManualFromMainTempForSub06c_(ss, pic, opts) {
       if (outS && String(outS[r][0] || '').trim() === '' && String(rec.s || '').trim() !== '') { outS[r][0] = rec.s; restored++; }
       if (outR && String(outR[r][0] || '').trim() === '' && String(rec.r || '').trim() !== '') { outR[r][0] = rec.r; restored++; }
 
-      // Preserve style 1:1 from temp sheet (rich text, color, wrap, DV) for restored cells.
-      try { if (iU !== -1 && String(outU[r][0] || '').trim() !== '' && rec.rowNo) shBak.getRange(rec.rowNo, 6).copyTo(sh.getRange(r + 2, iU + 1), { contentsOnly: false }); } catch (eCu) {}
-      try { if (iT !== -1 && String(outT[r][0] || '').trim() !== '' && rec.rowNo) shBak.getRange(rec.rowNo, 7).copyTo(sh.getRange(r + 2, iT + 1), { contentsOnly: false }); } catch (eCt) {}
-      try { if (iS !== -1 && String(outS[r][0] || '').trim() !== '' && rec.rowNo) shBak.getRange(rec.rowNo, 8).copyTo(sh.getRange(r + 2, iS + 1), { contentsOnly: false }); } catch (eCs) {}
-      try { if (iR !== -1 && String(outR[r][0] || '').trim() !== '' && rec.rowNo) shBak.getRange(rec.rowNo, 9).copyTo(sh.getRange(r + 2, iR + 1), { contentsOnly: false }); } catch (eCr) {}
+      // Preserve style 1:1 from temp sheet (rich text, font color, wrap, DV)
+      // after value writes. If copyTo runs before setValues(), the later value
+      // batch can flatten rich text/font styling and recreate the shifted color
+      // issue during MAIN -> SUB restore.
+      if (rec.rowNo) {
+        if (iU !== -1 && outU && String(outU[r][0] || '').trim() !== '') styleJobs.push({ srcRow: rec.rowNo, srcCol: 6, dstRow: r + 2, dstCol: iU + 1 });
+        if (iT !== -1 && outT && String(outT[r][0] || '').trim() !== '') styleJobs.push({ srcRow: rec.rowNo, srcCol: 7, dstRow: r + 2, dstCol: iT + 1 });
+        if (iS !== -1 && outS && String(outS[r][0] || '').trim() !== '') styleJobs.push({ srcRow: rec.rowNo, srcCol: 8, dstRow: r + 2, dstCol: iS + 1 });
+        if (iR !== -1 && outR && String(outR[r][0] || '').trim() !== '') styleJobs.push({ srcRow: rec.rowNo, srcCol: 9, dstRow: r + 2, dstCol: iR + 1 });
+      }
     }
 
     try { if (outU) sh.getRange(2, iU + 1, n, 1).setValues(outU); } catch (e) {}
     try { if (outT) sh.getRange(2, iT + 1, n, 1).setValues(outT); } catch (e) {}
     try { if (outS) sh.getRange(2, iS + 1, n, 1).setValues(outS); } catch (e) {}
     try { if (outR) sh.getRange(2, iR + 1, n, 1).setValues(outR); } catch (e) {}
+    for (let j = 0; j < styleJobs.length; j++) {
+      const job = styleJobs[j];
+      try { shBak.getRange(job.srcRow, job.srcCol).copyTo(sh.getRange(job.dstRow, job.dstCol), { contentsOnly: false }); } catch (eCopy) {}
+    }
   }
 
   if (opts.deleteAfterRestore !== false) {
@@ -1402,6 +1412,8 @@ function __getBranchFromServiceCenter06_(serviceCenter) {
     ['Xiaomi Authorized', 'xiaomi authorized'],
     ['Samsung Exclusive', 'samsung exclusive'],
     ['Carlcare', 'carlcare'],
+    ['CV Berkah', 'cv berkah athallah'],
+    ['CV Berkah', 'cv berkah'],
     ['B-Store', 'b-store'],
     ['MDP', 'mdp'],
     ['Deltafone', 'deltasindo']

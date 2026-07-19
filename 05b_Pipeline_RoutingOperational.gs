@@ -203,6 +203,22 @@ function compileRoutingIndex_(routingMap) {
   return idx;
 }
 
+/**
+ * Some statuses intentionally belong to more than one operational queue.
+ * Keep these business-critical fan-out routes explicit so a future routing-map
+ * change cannot silently turn them into a single-destination route.
+ */
+function enforceRequiredMultiDestinationTargets05b_(status, targets, opsPolicy) {
+  const statusKey = String(status || '').trim();
+  const out = Array.isArray(targets) ? targets.slice() : [];
+  if (statusKey !== 'COURIER_PICKUP_START_DONE') return uniq05a_(out);
+
+  const sheets = (opsPolicy && opsPolicy.SHEETS) ? opsPolicy.SHEETS : {};
+  const startSheet = String(sheets.START || 'Start').trim();
+  if (startSheet) out.push(startSheet);
+  return uniq05a_(out);
+}
+
 
 /** =========================
  * SC sheet split + Type dropdown helpers (single master workflow)
@@ -1535,8 +1551,11 @@ function clearOperationalSheets_(ss, pic, opts) {
     const sh = ss.getSheetByName(name);
     if (!sh) return;
     const buffer = (name === 'Ask Detail') ? 1500 : 400;
-    // clearFormat() does not remove data validations (dropdowns stay intact)
-    clearSheetDataHard_(sh, { bufferRows: buffer, clearFormats: true, preserveTemplateRow: true });
+    // Hard-clear all routed data rows, including row 2. Preserving row 2 as a
+    // format template can shift stale manual styling (for example blue
+    // Update Status text) onto a different claim after MAIN/SUB rerouting.
+    // User-managed cell styles are restored by claim from the backup snapshots.
+    clearSheetDataHard_(sh, { bufferRows: buffer, clearFormats: true, preserveTemplateRow: false, clearEntireDataArea: true });
 
 // FIX: clearSheetDataHard_ with preserveTemplateRow=true preserves row 2's format AND DV
 // as a template (intentional for Status dropdown chip style). However, if Submission Date
@@ -1637,6 +1656,7 @@ function routeRawToOperationalSheetsInMemory_(ss, rawValues, headerIndexRaw, pic
     }
 
     let targets = (routingIndex[statusVal] || []).slice();
+    targets = enforceRequiredMultiDestinationTargets05b_(statusVal, targets, opsPolicy);
 
     if (isRejectClaimTarget05b_(statusVal, idxLastActivityAging != null ? rawRow[idxLastActivityAging] : '', idxLastUpdate != null ? rawRow[idxLastUpdate] : '')) {
       targets = ['Reject Claim'];
