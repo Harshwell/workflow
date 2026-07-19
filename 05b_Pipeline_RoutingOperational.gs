@@ -1551,8 +1551,11 @@ function clearOperationalSheets_(ss, pic, opts) {
     const sh = ss.getSheetByName(name);
     if (!sh) return;
     const buffer = (name === 'Ask Detail') ? 1500 : 400;
-    // clearFormat() does not remove data validations (dropdowns stay intact)
-    clearSheetDataHard_(sh, { bufferRows: buffer, clearFormats: true, preserveTemplateRow: true });
+    // Hard-clear all routed data rows, including row 2. Preserving row 2 as a
+    // format template can shift stale manual styling (for example blue
+    // Update Status text) onto a different claim after MAIN/SUB rerouting.
+    // User-managed cell styles are restored by claim from the backup snapshots.
+    clearSheetDataHard_(sh, { bufferRows: buffer, clearFormats: true, preserveTemplateRow: false, clearEntireDataArea: true });
 
 // FIX: clearSheetDataHard_ with preserveTemplateRow=true preserves row 2's format AND DV
 // as a template (intentional for Status dropdown chip style). However, if Submission Date

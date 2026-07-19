@@ -652,13 +652,16 @@ function clearSheetDataHard_(sh, opts) {
   const bufferRows = (opts.bufferRows != null) ? opts.bufferRows : 300;
   const clearFormats = (opts.clearFormats != null) ? !!opts.clearFormats : true;
   const preserveTemplateRow = !!opts.preserveTemplateRow; // keep row 2 formatting/DV as template when requested
+  const clearEntireDataArea = !!opts.clearEntireDataArea;
 
   const lastCol = sh.getLastColumn();
   if (lastCol <= 0) return;
 
   const maxRows = sh.getMaxRows();
   const lastRowContent = sh.getLastRow();
-  const targetLastRow = Math.min(maxRows, Math.max(1, lastRowContent) + bufferRows);
+  const targetLastRow = clearEntireDataArea
+    ? maxRows
+    : Math.min(maxRows, Math.max(1, lastRowContent) + bufferRows);
   if (targetLastRow <= 1) return;
 
   const rng = sh.getRange(2, 1, targetLastRow - 1, lastCol);

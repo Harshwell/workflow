@@ -56,6 +56,9 @@ function createContext() {
     Set,
     WeakMap,
     WeakSet,
+    fs,
+    path,
+    ROOT,
 
     Utilities: {
       formatDate: (d) => (d instanceof Date ? d.toISOString() : String(d || '')),
@@ -389,8 +392,14 @@ function runSmoke() {
     };
     applyOperationalColumnSchema_(formatSheet, ['Submission Date', 'TAT'], 2, 1, {});
     const schemaFormatOk = formatSheet.formats[2] === '#,##0.0';
+    const routingSource = fs.readFileSync(path.join(ROOT, '05b_Pipeline_RoutingOperational.gs'), 'utf8');
+    const restoreSource = fs.readFileSync(path.join(ROOT, '06c_PostProcessAndUtils.gs'), 'utf8');
+    const hardClearAllRowsOk = routingSource.indexOf('clearSheetDataHard_(sh, { bufferRows: buffer, clearFormats: true, preserveTemplateRow: false, clearEntireDataArea: true });') !== -1
+      && fs.readFileSync(path.join(ROOT, '03_SheetsAndValidation.gs'), 'utf8').indexOf('const clearEntireDataArea = !!opts.clearEntireDataArea;') !== -1;
+    const restoreStyleAfterValuesOk = restoreSource.indexOf('const styleJobs = [];') !== -1
+      && restoreSource.indexOf('setValues(outR)') < restoreSource.indexOf('for (let j = 0; j < styleJobs.length; j++)');
 
-    return { ok: b2bOk && b2bExcludeOk && highlightOk && finishCloneOk && submissionDateOk && strictSyncOk && smartStageAgingOk && schemaFormatOk && courierFanOutOk && rejectClaimTypeOk && cvBerkahBranchOk, b2bOk, b2bExcludeOk, highlightOk, finishCloneOk, submissionDateOk, strictSyncOk, smartStageAgingOk, schemaFormatOk, courierFanOutOk, rejectClaimTypeOk, cvBerkahBranchOk, stageSameBucket, stageChangedBucket, stageMissingRaw, stageBlankRaw, strictVal: String(strictVal), validationCleared: strictSheet.validationCleared, b2bRow: b2bRow, bg: highlightSheet.bgs[0][0], note: highlightSheet.notes[0][0] };
+    return { ok: b2bOk && b2bExcludeOk && highlightOk && finishCloneOk && submissionDateOk && strictSyncOk && smartStageAgingOk && schemaFormatOk && courierFanOutOk && rejectClaimTypeOk && cvBerkahBranchOk && hardClearAllRowsOk && restoreStyleAfterValuesOk, b2bOk, b2bExcludeOk, highlightOk, finishCloneOk, submissionDateOk, strictSyncOk, smartStageAgingOk, schemaFormatOk, courierFanOutOk, rejectClaimTypeOk, cvBerkahBranchOk, hardClearAllRowsOk, restoreStyleAfterValuesOk, stageSameBucket, stageChangedBucket, stageMissingRaw, stageBlankRaw, strictVal: String(strictVal), validationCleared: strictSheet.validationCleared, b2bRow: b2bRow, bg: highlightSheet.bgs[0][0], note: highlightSheet.notes[0][0] };
   })()`, ctx);
   if (!workflowGuard || workflowGuard.ok !== true) {
     throw new Error('MAIN/SUB workflow regression guard failed: ' + JSON.stringify(workflowGuard || {}, null, 2));
