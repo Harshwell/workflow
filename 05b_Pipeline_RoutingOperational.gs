@@ -1690,6 +1690,10 @@ function routeRawToOperationalSheetsInMemory_(ss, rawValues, headerIndexRaw, pic
       targets = targets.filter(function(name) { return name !== scFallbackName; });
     }
 
+    // Final guard after all SC-specific filters/overrides: this status must
+    // remain visible in Start and in the selected SC universe destination.
+    targets = enforceRequiredMultiDestinationTargets05b_(statusVal, targets, opsPolicy);
+
     // NOTE: previously there were EV-Bike / PIC suppressions. Those are intentionally removed.
     // We always route all incoming data in the single master workflow.
 

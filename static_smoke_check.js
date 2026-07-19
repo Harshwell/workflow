@@ -319,6 +319,20 @@ function runSmoke() {
     );
     const courierFanOutOk = courierTargets.indexOf('Start') !== -1
       && courierTargets.some(function (name) { return /^SC - /.test(name); });
+    let courierFinalTargets = filterScTargets05b_(
+      courierTargets,
+      'CV Berkah Athallah',
+      CONFIG.opsRouting.SHEETS.SC_FARHAN,
+      CONFIG.opsRouting.SHEETS.SC_MEILANI,
+      CONFIG.opsRouting.SHEETS.SC_IVAN,
+      CONFIG.opsRouting.SC_NAME_KEYWORDS[CONFIG.opsRouting.SHEETS.SC_FARHAN],
+      CONFIG.opsRouting.SC_NAME_KEYWORDS[CONFIG.opsRouting.SHEETS.SC_MEILANI],
+      CONFIG.opsRouting.SC_NAME_KEYWORDS[CONFIG.opsRouting.SHEETS.SC_IVAN],
+      'SC - Unmapped'
+    );
+    courierFinalTargets = enforceRequiredMultiDestinationTargets05b_('COURIER_PICKUP_START_DONE', courierFinalTargets, CONFIG.opsRouting);
+    const courierFinalFanOutOk = courierFinalTargets.indexOf('Start') !== -1
+      && courierFinalTargets.some(function (name) { return /^SC - /.test(name); });
     const rejectClaimTypeOk = REJECT_CLAIM_TYPE_BY_LAST_STATUS.COURIER_CLAIM_PICKUP_REJECT_DONE === 'SC - Middle'
       && REJECT_CLAIM_TYPE_BY_LAST_STATUS.QOALA_CLAIM_REJECT === 'Front';
     const cvBerkahBranchOk = __getBranchFromServiceCenter06_('CV Berkah Athallah') === 'CV Berkah'
@@ -399,7 +413,7 @@ function runSmoke() {
     const restoreStyleAfterValuesOk = restoreSource.indexOf('const styleJobs = [];') !== -1
       && restoreSource.indexOf('setValues(outR)') < restoreSource.indexOf('for (let j = 0; j < styleJobs.length; j++)');
 
-    return { ok: b2bOk && b2bExcludeOk && highlightOk && finishCloneOk && submissionDateOk && strictSyncOk && smartStageAgingOk && schemaFormatOk && courierFanOutOk && rejectClaimTypeOk && cvBerkahBranchOk && hardClearAllRowsOk && restoreStyleAfterValuesOk, b2bOk, b2bExcludeOk, highlightOk, finishCloneOk, submissionDateOk, strictSyncOk, smartStageAgingOk, schemaFormatOk, courierFanOutOk, rejectClaimTypeOk, cvBerkahBranchOk, hardClearAllRowsOk, restoreStyleAfterValuesOk, stageSameBucket, stageChangedBucket, stageMissingRaw, stageBlankRaw, strictVal: String(strictVal), validationCleared: strictSheet.validationCleared, b2bRow: b2bRow, bg: highlightSheet.bgs[0][0], note: highlightSheet.notes[0][0] };
+    return { ok: b2bOk && b2bExcludeOk && highlightOk && finishCloneOk && submissionDateOk && strictSyncOk && smartStageAgingOk && schemaFormatOk && courierFanOutOk && courierFinalFanOutOk && rejectClaimTypeOk && cvBerkahBranchOk && hardClearAllRowsOk && restoreStyleAfterValuesOk, b2bOk, b2bExcludeOk, highlightOk, finishCloneOk, submissionDateOk, strictSyncOk, smartStageAgingOk, schemaFormatOk, courierFanOutOk, courierFinalFanOutOk, courierFinalTargets, rejectClaimTypeOk, cvBerkahBranchOk, hardClearAllRowsOk, restoreStyleAfterValuesOk, stageSameBucket, stageChangedBucket, stageMissingRaw, stageBlankRaw, strictVal: String(strictVal), validationCleared: strictSheet.validationCleared, b2bRow: b2bRow, bg: highlightSheet.bgs[0][0], note: highlightSheet.notes[0][0] };
   })()`, ctx);
   if (!workflowGuard || workflowGuard.ok !== true) {
     throw new Error('MAIN/SUB workflow regression guard failed: ' + JSON.stringify(workflowGuard || {}, null, 2));
