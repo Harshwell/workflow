@@ -2743,13 +2743,18 @@ function __relocateOperationalRowsByLastStatusSub06a_(ss, sheetNames) {
     };
   }
 
-  function resetMovedRowFieldsByHeader(rowVals, resetIdx, stageAgingValue) {
+  function resetMovedRowFieldsByHeader(rowVals, resetIdx, stageAgingValue, preserveManualFields) {
     const out = Array.isArray(rowVals) ? rowVals.slice() : [];
     if (!resetIdx) return out;
-    const keys = ['updateStatus', 'timestamp', 'status', 'remarks'];
-    for (let i = 0; i < keys.length; i++) {
-      const ix = resetIdx[keys[i]];
-      if (ix != null && ix >= 0 && ix < out.length) out[ix] = '';
+    // SUB Finish rows must keep the four user/workflow columns. MAIN has already backed
+    // them up, and clearing them during SUB relocation makes Type=Finish claims look
+    // "lost" right after Update Status/Timestamp/Status/Remarks are refreshed.
+    if (!preserveManualFields) {
+      const keys = ['updateStatus', 'timestamp', 'status', 'remarks'];
+      for (let i = 0; i < keys.length; i++) {
+        const ix = resetIdx[keys[i]];
+        if (ix != null && ix >= 0 && ix < out.length) out[ix] = '';
+      }
     }
     const idxStageAging = resetIdx.stageAging;
     if (idxStageAging != null && idxStageAging >= 0 && idxStageAging < out.length) out[idxStageAging] = (stageAgingValue === '' || stageAgingValue == null) ? 0 : stageAgingValue;
@@ -2865,7 +2870,8 @@ function __relocateOperationalRowsByLastStatusSub06a_(ss, sheetNames) {
       const aligned = alignRowToTarget(mv.srcHdr, mv.rowVals, tgt.hdr, tgt.lc);
       const resetIdx = getResetColumnIndexesByHeader(tgt.hdr);
       const stageAgingForMove = __resolveMovedStageAgingSub06a_(mv.claim, mv.dest, (mv.status || ''), mainRawForStageAging, routingIdx, scPolicy);
-      const alignedAfterReset = resetMovedRowFieldsByHeader(aligned, resetIdx, stageAgingForMove);
+      const preserveManualFields = String(mv.dest || '').trim().toLowerCase() === 'finish' || mv.finishClone === true;
+      const alignedAfterReset = resetMovedRowFieldsByHeader(aligned, resetIdx, stageAgingForMove, preserveManualFields);
 
       // If claim already exists in target, MERGE non-empty cells to avoid data loss and avoid duplicates.
       const existing = tgt.map.get(mv.claim) || [];
@@ -2878,8 +2884,8 @@ function __relocateOperationalRowsByLastStatusSub06a_(ss, sheetNames) {
           for (let c = 0; c < tgt.lc; c++) {
             if (alignedAfterReset[c] !== '' && alignedAfterReset[c] != null) merged[c] = alignedAfterReset[c];
           }
-          // Always reset manual workflow columns and Stage Aging after cross-sheet movement.
-          const mergedAfterReset = resetMovedRowFieldsByHeader(merged, resetIdx, stageAgingForMove);
+          // Preserve manual workflow columns for Finish targets; reset them for other cross-sheet movements.
+          const mergedAfterReset = resetMovedRowFieldsByHeader(merged, resetIdx, stageAgingForMove, preserveManualFields);
           tgt.sh.getRange(keepRow, 1, 1, tgt.lc).setValues([mergedAfterReset]);
           applyRichTextLinksToTarget(srcName, mv.row1Based, mv.srcHdr, tgt.sh, tgt.hdr, keepRow, tgt.lc);
         }
@@ -2905,7 +2911,7 @@ function __relocateOperationalRowsByLastStatusSub06a_(ss, sheetNames) {
           if (srcSh && sameSchema) {
             srcSh.getRange(mv.row1Based, 1, 1, tgt.lc)
               .copyTo(tgt.sh.getRange(appendRow, 1, 1, tgt.lc), SpreadsheetApp.CopyPasteType.PASTE_NORMAL, false);
-            const resetRow = resetMovedRowFieldsByHeader(tgt.sh.getRange(appendRow, 1, 1, tgt.lc).getValues()[0], resetIdx, stageAgingForMove);
+            const resetRow = resetMovedRowFieldsByHeader(tgt.sh.getRange(appendRow, 1, 1, tgt.lc).getValues()[0], resetIdx, stageAgingForMove, preserveManualFields);
             tgt.sh.getRange(appendRow, 1, 1, tgt.lc).setValues([resetRow]);
           } else {
             tgt.sh.getRange(appendRow, 1, 1, tgt.lc).setValues([alignedAfterReset]);

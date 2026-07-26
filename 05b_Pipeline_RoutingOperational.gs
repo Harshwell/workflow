@@ -897,6 +897,18 @@ function normalizeColor_(c) {
   return s;
 }
 
+function __sanitizeSheetFillColor05b_(c) {
+  const s = String(c || '').trim();
+  // SpreadsheetApp setBackgrounds is strict: invalid/blank strings can fail the whole
+  // batch, while setNotes still succeeds. Return null to clear a fill safely.
+  if (!s) return null;
+  if (/^#[0-9a-fA-F]{6}$/.test(s) || /^#[0-9a-fA-F]{3}$/.test(s)) return s;
+  // Named colors are accepted inconsistently across Apps Script surfaces; keep only
+  // simple names as a best-effort fallback and reject formula/rich strings.
+  if (/^[a-zA-Z]+$/.test(s)) return s.toLowerCase();
+  return null;
+}
+
 function formatLogDate05b_(v) {
   const d = (typeof coerceDateOnly_ === 'function') ? coerceDateOnly_(v) : (v instanceof Date ? v : null);
   if (d) {
@@ -1034,7 +1046,7 @@ function applyOperationalClaimHighlightsByRaw_(ss, rawValues, headerIndexRaw, pi
     if (marker === 'firstMonthPolicy') return policy.firstMonthPolicy.bg;
     if (marker === 'remaining1Month') return policy.remaining1Month.bg;
     if (marker === 'migrationPolicy') return policy.migrationPolicy.bg;
-    return '';
+    return null;
   };
 
   const isMarkerBg_ = (bg) => {
@@ -1135,10 +1147,11 @@ const __setNotes05b__ = (range, matrix, sheetName) => {
       const desiredBg = desiredBgFromMarker_(marker);
 
       if (desiredBg) {
-        if (normalizeColor_(bgs[i][0]) !== normalizeColor_(desiredBg)) { bgs[i][0] = desiredBg; bgChanged = true; }
+        const safeBg = __sanitizeSheetFillColor05b_(desiredBg);
+        if (normalizeColor_(bgs[i][0]) !== normalizeColor_(safeBg)) { bgs[i][0] = safeBg; bgChanged = true; }
       } else {
         // Clear only our marker colors to avoid wiping user formatting.
-        if (isMarkerBg_(bgs[i][0]) && !__shouldPreserveSubHighlight05b_(pic, bgs[i][0], notes[i][0])) { bgs[i][0] = ''; bgChanged = true; }
+        if (isMarkerBg_(bgs[i][0]) && !__shouldPreserveSubHighlight05b_(pic, bgs[i][0], notes[i][0])) { bgs[i][0] = null; bgChanged = true; }
       }
     }
 
