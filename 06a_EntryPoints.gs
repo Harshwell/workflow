@@ -554,7 +554,6 @@ function runSubFromFormDrive06a_(req, runId) {
     'Exclusion',
     'Expired Claim',
     'Reject Claim',
-    'B2B',
     'EV-Bike',
     'Doss'
   ];
@@ -685,9 +684,9 @@ function __runSubCore06a_(masterSs, oldBlob, newBlob, opt) {
 
 function __getSubRelocationSheetNames06a_(sheetNames) {
   const names = Array.isArray(sheetNames) ? sheetNames : [];
-  // EV-Bike/Doss are user-managed optional buckets; SUB relocation must not move/delete their rows.
+  // B2B/EV-Bike/Doss are optional buckets; SUB relocation must not move/delete their rows.
   // Exclusion MUST stay in relocation scope so status transitions like DONE_REPAIR -> DONE can move there.
-  const blocked = new Set(['ev-bike', 'doss']);
+  const blocked = new Set(['b2b', 'ev-bike', 'doss']);
   return names.filter(function (name) {
     const key = String(name || '').trim().toLowerCase();
     return key && !blocked.has(key);
@@ -700,6 +699,7 @@ function __normalizeSubOperationalSheetNames06a_(sheetNames) {
   (Array.isArray(sheetNames) ? sheetNames : []).forEach(function(name) {
     let n = String(name || '').trim();
     if (!n) return;
+    if (n.toLowerCase() === 'b2b') return;
     if (n === 'Claim Expired') n = 'Expired Claim';
     const key = n.toLowerCase();
     if (seen[key]) return;
@@ -1233,7 +1233,6 @@ function runSubEmailIngest(maxThreads) {
       'Exclusion',
       'Expired Claim',
       'Reject Claim',
-      'B2B',
       'EV-Bike',
       'Doss'
     ];
@@ -1941,7 +1940,8 @@ function __updateOperationalSheetsFromRaw06a_(ss, sheetNames, rawMap, ctx) {
     orSet: new Set(typePolicy['OR'] || []),
     insurance: new Set(typePolicy['Insurance'] || []),
     est: new Set(typePolicy['SC - Est'] || []),
-    rcvd: new Set(typePolicy['SC - Rcvd'] || [])
+    rcvd: new Set(typePolicy['SC - Rcvd'] || []),
+    start: new Set(typePolicy['Start'] || [])
   } : null;
 
   // Precedence (specific > general): On Rep / Wait Rep override Insurance.
@@ -1950,6 +1950,7 @@ function __updateOperationalSheetsFromRaw06a_(ss, sheetNames, rawMap, ctx) {
     if (!s || !typeSets) return '';
     if (typeSets.onRep && typeSets.onRep.has(s)) return 'SC - On Rep';
     if (typeSets.waitRep && typeSets.waitRep.has(s)) return 'SC - Wait Rep';
+    if (typeSets.start && typeSets.start.has(s)) return 'Start';
     if (typeSets.finish && typeSets.finish.has(s)) return 'Finish';
     if (typeSets.orSet && typeSets.orSet.has(s)) return 'OR';
     if (typeSets.insurance && typeSets.insurance.has(s)) return 'Insurance';
@@ -1986,7 +1987,7 @@ function __updateOperationalSheetsFromRaw06a_(ss, sheetNames, rawMap, ctx) {
     const hdr = all[0].map(h => String(h || '').trim());
     const norm = hdr.map(h => h.toLowerCase());
 
-    const isScSheet = (name === scFarhanName || name === scMeilaniName || name === scIvanName);
+    const isScSheet = (name === scFarhanName || name === scMeilaniName || name === scIvanName || name === __getScFallbackSheet06a_());
 
     function idxOfAny(candidates) {
       for (let k = 0; k < candidates.length; k++) {
@@ -2387,6 +2388,17 @@ function __shouldKeepScRowAndCloneFinishSub06a_(status) {
   return /FINISH/i.test(s);
 }
 
+function __shouldMirrorStartAndScSub06a_(status) {
+  return String(status || '').trim().toUpperCase() === 'COURIER_PICKUP_START_DONE';
+}
+
+function __isScSheetNameSub06a_(sheetName, scPolicy) {
+  const name = String(sheetName || '').trim();
+  if (!name) return false;
+  const sheets = (scPolicy && Array.isArray(scPolicy.scSheets)) ? scPolicy.scSheets : ['SC - Farhan', 'SC - Meilani', 'SC - Meindar'];
+  return sheets.indexOf(name) > -1 || name === __getScFallbackSheet06a_();
+}
+
 function __loadMainRawRowsForSubStageAging06a_(ss) {
   const out = { map: new Map(), headerIndex: {} };
   try {
@@ -2562,6 +2574,7 @@ function __relocateOperationalRowsByLastStatusSub06a_(ss, sheetNames) {
     const idxSc = idxOfAny(norm, ['service center', 'repairer_location_store_name', 'sc_name', 'service_center']);
     const idxLsd = idxOfAny(norm, ['last status date', 'claim_last_updated_datetime', 'claim last updated datetime', 'last update datetime', 'last_update_datetime']);
     const idxLsa = idxOfAny(norm, ['last status aging', 'days_aging_from_last_activity', 'last_status_aging', 'lsa']);
+    const idxType = idxOfAny(norm, ['type']);
 
     if (idxClaim < 0 || idxStatus < 0) {
       res.sheets[sheetName] = { skipped: 'missing Claim Number or Last Status' };
@@ -2622,29 +2635,46 @@ function __relocateOperationalRowsByLastStatusSub06a_(ss, sheetNames) {
 
       const status = __normalizeRoutingStatusKeySub06a_(row[idxStatus]);
       if (!status) continue;
+      const rowTypeIsFinish = idxType >= 0 && String(row[idxType] || '').trim().toLowerCase() === 'finish';
 
       let candidates = routingIdx[status] || null;
       if (typeof isRejectClaimTarget05b_ === 'function' && isRejectClaimTarget05b_(status, idxLsa >= 0 ? row[idxLsa] : '', idxLsd >= 0 ? row[idxLsd] : '')) {
         candidates = ss.getSheetByName('Reject Claim') ? ['Reject Claim'] : candidates;
       }
       // Force SC-universe statuses to be routed by SC keyword split, even if routing map is stale/misaligned.
-      if (scPolicy.sharedStatusSet.has(status)) {
+      if (scPolicy.sharedStatusSet.has(status) && !__shouldMirrorStartAndScSub06a_(status)) {
         candidates = scPolicy.scSheets.filter(function (n) { return !!ss.getSheetByName(n); });
       }
+      const mirrorStartAndSc = __shouldMirrorStartAndScSub06a_(status) && !!ss.getSheetByName('Start');
       const keepScAndCloneFinish = __shouldKeepScRowAndCloneFinishSub06a_(status) && !!ss.getSheetByName('Finish');
-      if (!candidates || !candidates.length) continue;
+      if ((!candidates || !candidates.length) && !mirrorStartAndSc) continue;
 
       const scName = (idxSc >= 0) ? row[idxSc] : '';
+      if (mirrorStartAndSc) {
+        const startDest = 'Start';
+        const scSheets = scPolicy.scSheets.filter(function (n) { return !!ss.getSheetByName(n); });
+        const scDest = pickDest(status, scName, scSheets);
+        if (scDest && scDest !== sheetName && !(exclusiveTokenClaim && scDest === scFallbackSheet)) {
+          movesBySource[sheetName] = movesBySource[sheetName] || [];
+          movesBySource[sheetName].push({ row1Based: r + 1, claim, dest: scDest, status: status, rowVals: row.slice(), srcHdr: d.hdr, copyOnly: sheetName === startDest, preserveManualFields: rowTypeIsFinish });
+        }
+        if (sheetName !== startDest) {
+          movesBySource[sheetName] = movesBySource[sheetName] || [];
+          movesBySource[sheetName].push({ row1Based: r + 1, claim, dest: startDest, status: status, rowVals: row.slice(), srcHdr: d.hdr, copyOnly: __isScSheetNameSub06a_(sheetName, scPolicy) || !!scDest, startClone: true, preserveManualFields: rowTypeIsFinish });
+        }
+        continue;
+      }
+
       if (keepScAndCloneFinish) {
         const scSheets = scPolicy.scSheets.filter(function (n) { return !!ss.getSheetByName(n); });
         const scDest = pickDest(status, scName, scSheets);
         if (scDest && scDest !== sheetName && !(exclusiveTokenClaim && scDest === scFallbackSheet)) {
           movesBySource[sheetName] = movesBySource[sheetName] || [];
-          movesBySource[sheetName].push({ row1Based: r + 1, claim, dest: scDest, status: status, rowVals: row.slice(), srcHdr: d.hdr, copyOnly: sheetName === 'Finish' });
+          movesBySource[sheetName].push({ row1Based: r + 1, claim, dest: scDest, status: status, rowVals: row.slice(), srcHdr: d.hdr, copyOnly: sheetName === 'Finish', preserveManualFields: true });
         }
         if (sheetName !== 'Finish') {
           movesBySource[sheetName] = movesBySource[sheetName] || [];
-          movesBySource[sheetName].push({ row1Based: r + 1, claim, dest: 'Finish', status: status, rowVals: row.slice(), srcHdr: d.hdr, copyOnly: true, finishClone: true });
+          movesBySource[sheetName].push({ row1Based: r + 1, claim, dest: 'Finish', status: status, rowVals: row.slice(), srcHdr: d.hdr, copyOnly: true, finishClone: true, preserveManualFields: true });
         }
         continue;
       }
@@ -2666,7 +2696,7 @@ function __relocateOperationalRowsByLastStatusSub06a_(ss, sheetNames) {
       if (!dest || dest === sheetName) continue;
 
       movesBySource[sheetName] = movesBySource[sheetName] || [];
-      movesBySource[sheetName].push({ row1Based: r + 1, claim, dest, status: status, rowVals: row.slice(), srcHdr: d.hdr });
+      movesBySource[sheetName].push({ row1Based: r + 1, claim, dest, status: status, rowVals: row.slice(), srcHdr: d.hdr, preserveManualFields: rowTypeIsFinish });
     }
   });
 
@@ -2739,7 +2769,8 @@ function __relocateOperationalRowsByLastStatusSub06a_(ss, sheetNames) {
       timestamp: idxOfAnyLocal(['timestamp']),
       status: idxOfAnyLocal(['status']),
       remarks: idxOfAnyLocal(['remarks', 'remark']),
-      stageAging: idxOfAnyLocal(['stage aging', 'aging position', 'aging post.', 'aging post'])
+      stageAging: idxOfAnyLocal(['stage aging', 'aging position', 'aging post.', 'aging post']),
+      type: idxOfAnyLocal(['type'])
     };
   }
 
@@ -2870,7 +2901,8 @@ function __relocateOperationalRowsByLastStatusSub06a_(ss, sheetNames) {
       const aligned = alignRowToTarget(mv.srcHdr, mv.rowVals, tgt.hdr, tgt.lc);
       const resetIdx = getResetColumnIndexesByHeader(tgt.hdr);
       const stageAgingForMove = __resolveMovedStageAgingSub06a_(mv.claim, mv.dest, (mv.status || ''), mainRawForStageAging, routingIdx, scPolicy);
-      const preserveManualFields = String(mv.dest || '').trim().toLowerCase() === 'finish' || mv.finishClone === true;
+      const alignedTypeIsFinish = resetIdx.type != null && resetIdx.type >= 0 && resetIdx.type < aligned.length && String(aligned[resetIdx.type] || '').trim().toLowerCase() === 'finish';
+      const preserveManualFields = String(mv.dest || '').trim().toLowerCase() === 'finish' || mv.finishClone === true || mv.preserveManualFields === true || alignedTypeIsFinish;
       const alignedAfterReset = resetMovedRowFieldsByHeader(aligned, resetIdx, stageAgingForMove, preserveManualFields);
 
       // If claim already exists in target, MERGE non-empty cells to avoid data loss and avoid duplicates.

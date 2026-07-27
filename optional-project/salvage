@@ -55,6 +55,7 @@ var SALVAGE_CONFIG = typeof SALVAGE_CONFIG !== 'undefined'
     claimMissingNote: 'Data klaim ini tidak ditemukan pada source salvage terbaru.',
     claimMissingColor: '#f4cccc',
     defaultCellColor: '#ffffff',
+    newRowDefaultRemarks: 'Unit belum ada',
     sampleSize: 5,
   },
   log: {
@@ -1552,6 +1553,7 @@ function syncTargetSheet_(sourceSnapshot, precheckedTargetSnapshot) {
   const existingRangeRowCount = Math.max(targetSnapshot.lastRow - headerRow, 0);
   const claimCol = targetColumnMap['Claim Number'];
   const remarksCol = findColumnByHeaderName_(targetSnapshot.headers, 'Remarks');
+  const newRowDefaultRemarks = String((SALVAGE_CONFIG.target && SALVAGE_CONFIG.target.newRowDefaultRemarks) || 'Unit belum ada');
 
   let values = [];
   let claimBackgrounds = [];
@@ -1630,7 +1632,7 @@ function syncTargetSheet_(sourceSnapshot, precheckedTargetSnapshot) {
     if (isInsert && remarksCol) {
       const existingRemarks = values[rowIndex][remarksCol - 1];
       if (normalizeKey_(existingRemarks) === '') {
-        values[rowIndex][remarksCol - 1] = 'Unit belum ada';
+        values[rowIndex][remarksCol - 1] = newRowDefaultRemarks;
       }
     }
 

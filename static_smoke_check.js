@@ -407,13 +407,44 @@ function runSmoke() {
     applyOperationalColumnSchema_(formatSheet, ['Submission Date', 'TAT'], 2, 1, {});
     const schemaFormatOk = formatSheet.formats[2] === '#,##0.0';
     const routingSource = fs.readFileSync(path.join(ROOT, '05b_Pipeline_RoutingOperational.gs'), 'utf8');
+    const optionalSource = fs.readFileSync(path.join(ROOT, '05c_Pipeline_OptionalSheets.gs'), 'utf8');
+    const entrySource = fs.readFileSync(path.join(ROOT, '06a_EntryPoints.gs'), 'utf8');
     const restoreSource = fs.readFileSync(path.join(ROOT, '06c_PostProcessAndUtils.gs'), 'utf8');
+    const salvageSource = fs.readFileSync(path.join(ROOT, 'optional-project', 'salvage'), 'utf8');
     const hardClearAllRowsOk = routingSource.indexOf('clearSheetDataHard_(sh, { bufferRows: buffer, clearFormats: true, preserveTemplateRow: false, clearEntireDataArea: true });') !== -1
       && fs.readFileSync(path.join(ROOT, '03_SheetsAndValidation.gs'), 'utf8').indexOf('const clearEntireDataArea = !!opts.clearEntireDataArea;') !== -1;
     const restoreStyleAfterValuesOk = restoreSource.indexOf('const styleJobs = [];') !== -1
       && restoreSource.indexOf('setValues(outR)') < restoreSource.indexOf('for (let j = 0; j < styleJobs.length; j++)');
+    const scTypeStartOk = Array.isArray(SC_TYPE_DROPDOWN_OPTIONS)
+      && SC_TYPE_DROPDOWN_OPTIONS.indexOf('Start') !== -1
+      && CONFIG.opsRouting.TYPE_BY_LAST_STATUS.Start.indexOf('COURIER_PICKUP_START_DONE') !== -1
+      && typeof applyFinishTypeInScSheets06_ === 'function';
+    const subStartMirrorOk = typeof __shouldMirrorStartAndScSub06a_ === 'function'
+      && __shouldMirrorStartAndScSub06a_('COURIER_PICKUP_START_DONE') === true
+      && entrySource.indexOf('const mirrorStartAndSc = __shouldMirrorStartAndScSub06a_(status)') !== -1;
+    const subB2BIsolatedOk = CONFIG.subFlow.OPERATIONAL_SHEETS.indexOf('B2B') === -1
+      && entrySource.indexOf("const blocked = new Set(['b2b', 'ev-bike', 'doss']);") !== -1
+      && entrySource.indexOf("if (n.toLowerCase() === 'b2b') return;") !== -1;
+    const b2bFnStart = optionalSource.indexOf('function processB2B_');
+    const b2bFnEnd = optionalSource.indexOf('/** Special Case excluded statuses', b2bFnStart);
+    const b2bFnSource = (b2bFnStart > -1 && b2bFnEnd > b2bFnStart) ? optionalSource.slice(b2bFnStart, b2bFnEnd) : '';
+    const b2bNoFullClearOk = b2bFnSource.indexOf('clearSheetDataHard_') === -1
+      && b2bFnSource.indexOf('protectedHeaders') !== -1
+      && b2bFnSource.indexOf('preserved_existing=') !== -1;
+    const evDossSortOk = optionalSource.indexOf('function __sortOptionalSheetBySubmissionDate05c_') !== -1
+      && (optionalSource.split('__sortOptionalSheetBySubmissionDate05c_(sh);').length - 1) >= 2;
+    const subFinishManualRetentionOk = entrySource.indexOf('alignedTypeIsFinish') !== -1
+      && entrySource.indexOf('preserveManualFields: rowTypeIsFinish') !== -1;
+    const salvageDefaultRemarksOk = salvageSource.indexOf('if (isInsert && remarksCol)') !== -1
+      && salvageSource.indexOf("newRowDefaultRemarks: 'Unit belum ada'") !== -1
+      && salvageSource.indexOf('values[rowIndex][remarksCol - 1] = newRowDefaultRemarks;') !== -1;
 
-    return { ok: b2bOk && b2bExcludeOk && highlightOk && finishCloneOk && submissionDateOk && strictSyncOk && smartStageAgingOk && schemaFormatOk && courierFanOutOk && courierFinalFanOutOk && rejectClaimTypeOk && cvBerkahBranchOk && hardClearAllRowsOk && restoreStyleAfterValuesOk, b2bOk, b2bExcludeOk, highlightOk, finishCloneOk, submissionDateOk, strictSyncOk, smartStageAgingOk, schemaFormatOk, courierFanOutOk, courierFinalFanOutOk, courierFinalTargets, rejectClaimTypeOk, cvBerkahBranchOk, hardClearAllRowsOk, restoreStyleAfterValuesOk, stageSameBucket, stageChangedBucket, stageMissingRaw, stageBlankRaw, strictVal: String(strictVal), validationCleared: strictSheet.validationCleared, b2bRow: b2bRow, bg: highlightSheet.bgs[0][0], note: highlightSheet.notes[0][0] };
+    const ok = b2bOk && b2bExcludeOk && highlightOk && finishCloneOk && submissionDateOk && strictSyncOk
+      && smartStageAgingOk && schemaFormatOk && courierFanOutOk && courierFinalFanOutOk && rejectClaimTypeOk
+      && cvBerkahBranchOk && hardClearAllRowsOk && restoreStyleAfterValuesOk && scTypeStartOk && subStartMirrorOk
+      && subB2BIsolatedOk && b2bNoFullClearOk && evDossSortOk && subFinishManualRetentionOk && salvageDefaultRemarksOk;
+
+    return { ok, b2bOk, b2bExcludeOk, highlightOk, finishCloneOk, submissionDateOk, strictSyncOk, smartStageAgingOk, schemaFormatOk, courierFanOutOk, courierFinalFanOutOk, courierFinalTargets, rejectClaimTypeOk, cvBerkahBranchOk, hardClearAllRowsOk, restoreStyleAfterValuesOk, scTypeStartOk, subStartMirrorOk, subB2BIsolatedOk, b2bNoFullClearOk, evDossSortOk, subFinishManualRetentionOk, salvageDefaultRemarksOk, stageSameBucket, stageChangedBucket, stageMissingRaw, stageBlankRaw, strictVal: String(strictVal), validationCleared: strictSheet.validationCleared, b2bRow: b2bRow, bg: highlightSheet.bgs[0][0], note: highlightSheet.notes[0][0] };
   })()`, ctx);
   if (!workflowGuard || workflowGuard.ok !== true) {
     throw new Error('MAIN/SUB workflow regression guard failed: ' + JSON.stringify(workflowGuard || {}, null, 2));

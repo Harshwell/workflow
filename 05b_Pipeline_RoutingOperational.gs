@@ -215,7 +215,21 @@ function enforceRequiredMultiDestinationTargets05b_(status, targets, opsPolicy) 
 
   const sheets = (opsPolicy && opsPolicy.SHEETS) ? opsPolicy.SHEETS : {};
   const startSheet = String(sheets.START || 'Start').trim();
+  const scSheets = [
+    String(sheets.SC_FARHAN || 'SC - Farhan').trim(),
+    String(sheets.SC_MEILANI || 'SC - Meilani').trim(),
+    String(sheets.SC_IVAN || sheets.SC_IVAN_NAME || 'SC - Meindar').trim()
+  ].filter(Boolean);
+
   if (startSheet) out.push(startSheet);
+
+  const hasScTarget = out.some(function (name) {
+    return scSheets.indexOf(String(name || '').trim()) > -1;
+  });
+  if (!hasScTarget) {
+    scSheets.forEach(function (name) { out.push(name); });
+  }
+
   return uniq05a_(out);
 }
 
@@ -1195,7 +1209,8 @@ function buildSheetWriters_(ss, routingMap, headerIndexRaw, pic) {
     orSet: new Set(typePolicy['OR'] || []),
     insurance: new Set(typePolicy['Insurance'] || []),
     est: new Set(typePolicy['SC - Est'] || []),
-    rcvd: new Set(typePolicy['SC - Rcvd'] || [])
+    rcvd: new Set(typePolicy['SC - Rcvd'] || []),
+    start: new Set(typePolicy['Start'] || [])
   } : null;
 
   // Precedence (specific > general):
@@ -1205,6 +1220,7 @@ function buildSheetWriters_(ss, routingMap, headerIndexRaw, pic) {
     if (!s || !typeSets) return '';
     if (typeSets.onRep && typeSets.onRep.has(s)) return 'SC - On Rep';
     if (typeSets.waitRep && typeSets.waitRep.has(s)) return 'SC - Wait Rep';
+    if (typeSets.start && typeSets.start.has(s)) return 'Start';
     if (typeSets.finish && typeSets.finish.has(s)) return 'Finish';
     if (typeSets.orSet && typeSets.orSet.has(s)) return 'OR';
     if (typeSets.insurance && typeSets.insurance.has(s)) return 'Insurance';

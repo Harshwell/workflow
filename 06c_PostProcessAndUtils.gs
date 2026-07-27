@@ -1385,7 +1385,14 @@ function __getScSheetNames06_() {
   const scFarhanName = (opsPolicy && opsPolicy.SHEETS && opsPolicy.SHEETS.SC_FARHAN) ? opsPolicy.SHEETS.SC_FARHAN : 'SC - Farhan';
   const scMeilaniName = (opsPolicy && opsPolicy.SHEETS && opsPolicy.SHEETS.SC_MEILANI) ? opsPolicy.SHEETS.SC_MEILANI : 'SC - Meilani';
   const scIvanName = (opsPolicy && opsPolicy.SHEETS && opsPolicy.SHEETS.SC_IVAN) ? opsPolicy.SHEETS.SC_IVAN : 'SC - Meindar';
-  return [scFarhanName, scMeilaniName, scIvanName].filter(Boolean);
+  const scFallbackName = (opsPolicy && opsPolicy.SC_FALLBACK_SHEET) ? opsPolicy.SC_FALLBACK_SHEET : 'SC - Unmapped';
+  const seen = Object.create(null);
+  return [scFarhanName, scMeilaniName, scIvanName, scFallbackName].filter(function (name) {
+    const n = String(name || '').trim();
+    if (!n || seen[n]) return false;
+    seen[n] = true;
+    return true;
+  });
 }
 
 function __getBranchFromServiceCenter06_(serviceCenter) {
@@ -2387,7 +2394,8 @@ function applyFinishTypeInScSheets06_(ss) {
     orSet: new Set(typePolicy['OR'] || []),
     insurance: new Set(typePolicy['Insurance'] || []),
     est: new Set(typePolicy['SC - Est'] || []),
-    rcvd: new Set(typePolicy['SC - Rcvd'] || [])
+    rcvd: new Set(typePolicy['SC - Rcvd'] || []),
+    start: new Set(typePolicy['Start'] || [])
   };
 
   const resolveType = (statusVal) => {
@@ -2395,6 +2403,7 @@ function applyFinishTypeInScSheets06_(ss) {
     if (!s) return '';
     if (sets.onRep.has(s)) return 'SC - On Rep';
     if (sets.waitRep.has(s)) return 'SC - Wait Rep';
+    if (sets.start.has(s)) return 'Start';
     if (sets.finish.has(s)) return 'Finish';
     if (sets.orSet.has(s)) return 'OR';
     if (sets.insurance.has(s)) return 'Insurance';
@@ -2423,7 +2432,7 @@ function applyFinishTypeInScSheets06_(ss) {
   // Fallback list-based rule (may lose dropdown-chip styling if chips are required).
   const fallbackTypeOpts = (typeof getScTypeDropdownOptions_ === 'function')
     ? getScTypeDropdownOptions_()
-    : ['SC - Rcvd','SC - Est','Insurance','OR','Finish','SC - Wait Rep','SC - On Rep'];
+    : ['SC - Rcvd','Start','SC - Est','Insurance','OR','Finish','SC - Wait Rep','SC - On Rep'];
 
   const fallbackDvRule = SpreadsheetApp.newDataValidation()
     .requireValueInList(fallbackTypeOpts, true)

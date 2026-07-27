@@ -472,9 +472,8 @@ function runPipeline_(pic, fileIds, opts) {
     }
   }
 
-  // Re-apply strict Submission Date/Month after optional sheet processors
-  // so newly rebuilt rows (e.g. B2B on FORM - MAIN) are not left blank.
-  try { applyStrictSubmissionDateAndMonth06b_(ss, rawValues, headerIndexRaw, { sheets: ['B2B', 'EV-Bike', 'Doss', 'Special Case'] }); } catch (eSubFix2) { try { logLine_('WARN', 'Submission date/month strict re-sync failed', '', String(eSubFix2), 'WARN'); } catch (e2) {} }
+  // Re-apply strict Submission Date/Month after optional sheet processors that are safe for generic sync.
+  try { applyStrictSubmissionDateAndMonth06b_(ss, rawValues, headerIndexRaw, { sheets: ['EV-Bike', 'Doss', 'Special Case'] }); } catch (eSubFix2) { try { logLine_('WARN', 'Submission date/month strict re-sync failed', '', String(eSubFix2), 'WARN'); } catch (e2) {} }
 
   // Defensive sanitizer for known validation regressions:
   // - Submission Date turning into checkbox
@@ -813,7 +812,7 @@ function enrichOperationalSheetsFromRaw06_(ss, rawValues, headerIndexRaw, pic, o
   if (typeof applyRawHeaderAliases_ === 'function') headerIndexRaw = applyRawHeaderAliases_(headerIndexRaw);
 
   let sheets = getOperationalSheetNames06b_(pic);
-  sheets = Array.from(new Set((sheets || []).concat(['B2B'])));
+  sheets = Array.from(new Set(sheets || []));
 
   // Flow context for formatting decisions (default: main)
   const flowName = ((opts && (opts.flow || opts.Flow || opts.flowName)) || (typeof RUNTIME !== 'undefined' && RUNTIME ? RUNTIME.flowName : '') || 'main')
@@ -1218,7 +1217,7 @@ function applyStrictSubmissionDateAndMonth06b_(ss, rawValues, headerIndexRaw, op
   let targetSheets = (opts && Array.isArray(opts.sheets) && opts.sheets.length) ? opts.sheets.slice() : [
     'Submission', 'Ask Detail', 'OR - OLD', 'Start', 'Finish', 'Expired Claim', 'Reject Claim',
     'SC - Farhan', 'SC - Meilani', 'SC - Meindar', 'SC - Unmapped', 'PO',
-    'Exclusion', 'B2B', 'EV-Bike', 'Doss'
+    'Exclusion', 'EV-Bike', 'Doss'
   ];
   if (flowName === 'main' && targetSheets.indexOf('Special Case') === -1 && !(opts && Array.isArray(opts.sheets))) targetSheets.push('Special Case');
   targetSheets.forEach(function(name) {
@@ -1806,7 +1805,7 @@ function runMainPipelineStage2_() {
     runBestEffort('SPECIAL_CASE', function() { processSpecialCase_(ss, rows, index, profile); });
     runBestEffort('EV_BIKE', function() { processEVBike_(ss, rows, index, profile); });
     runBestEffort('DOSS', function() { if (typeof processDoss_ === 'function') processDoss_(ss, rows, index, profile); });
-    runBestEffort('OPTIONAL_SUBMISSION_SYNC', function() { applyStrictSubmissionDateAndMonth06b_(ss, rows, index, { sheets: ['B2B', 'EV-Bike', 'Doss', 'Special Case'] }); });
+    runBestEffort('OPTIONAL_SUBMISSION_SYNC', function() { applyStrictSubmissionDateAndMonth06b_(ss, rows, index, { sheets: ['EV-Bike', 'Doss', 'Special Case'] }); });
     runBestEffort('SANITIZE', function() { sanitizeProblematicDataValidations06_(ss, profile); });
     runBestEffort('EXCLUSION_TAT', function() { recomputeExclusionTat_(ss, profile); });
     runBestEffort('RAW_REORDER', function() { reorderRawDataColumns06_(rawSheet); });

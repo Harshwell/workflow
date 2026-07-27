@@ -101,6 +101,7 @@ const SC_SHEET_NAMES = Object.freeze([
 
 const SC_TYPE_DROPDOWN_OPTIONS = Object.freeze([
   'SC - Rcvd',
+  'Start',
   'SC - Est',
   'Insurance',
   'OR',
@@ -112,7 +113,7 @@ const SC_TYPE_DROPDOWN_OPTIONS = Object.freeze([
 function getScTypeDropdownOptions_() {
   return (typeof SC_TYPE_DROPDOWN_OPTIONS !== 'undefined' && Array.isArray(SC_TYPE_DROPDOWN_OPTIONS))
     ? SC_TYPE_DROPDOWN_OPTIONS.slice()
-    : ['SC - Rcvd','SC - Est','Insurance','OR','Finish','SC - Wait Rep','SC - On Rep'];
+    : ['SC - Rcvd','Start','SC - Est','Insurance','OR','Finish','SC - Wait Rep','SC - On Rep'];
 }
 
 
@@ -283,7 +284,6 @@ const SUB_FLOW_SPEC = Object.freeze({
     'Exclusion',
     'Expired Claim',
     'Reject Claim',
-    'B2B',
     'EV-Bike',
     'Doss'
   ]),
@@ -1559,6 +1559,9 @@ const OPS_ROUTING_POLICY = Object.freeze({
       'SERVICE_CENTER_CLAIM_RECEIVE',
       'CLAIM_ADDED_SC',
       'RECEIVED_SC'
+    ]),
+    'Start': Object.freeze([
+      'COURIER_PICKUP_START_DONE'
     ]),
     'SC - Est': Object.freeze([
       'SERVICE_CENTER_CLAIM_ESTIMATE',
