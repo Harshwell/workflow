@@ -12,6 +12,7 @@
 const SC_MEILANI_CONFIG = Object.freeze({
   sourceSpreadsheetId: '1zRlYrSRssv9LVcPKEq90CmmvTRsZoN_TqfIg2pNufbc',
   destinationSpreadsheetId: '1dU9dt01Ld_ykMJWQxupvIHyLXV6ArnGeXCBV72q31lU',
+  scriptVersion: '2026-07-30-safety-4',
   menuName: 'SC Meilani',
   logSheetName: 'Log SC-Meilani',
   headerRow: 1,
@@ -157,6 +158,7 @@ function scMeilaniWithLock_(flowName, runner) {
     throw new Error('Run dibatalkan: proses lain masih berjalan.');
   }
 
+  scMeilaniValidateRuntime_();
   const startedAt = new Date();
   const destinationSpreadsheet = SpreadsheetApp.openById(SC_MEILANI_CONFIG.destinationSpreadsheetId);
   const sourceSpreadsheet = SpreadsheetApp.openById(SC_MEILANI_CONFIG.sourceSpreadsheetId);
@@ -181,6 +183,17 @@ function scMeilaniWithLock_(flowName, runner) {
   }
 }
 
+function scMeilaniValidateRuntime_() {
+  if (!String(SC_MEILANI_CONFIG.sourceSpreadsheetId || '').trim()) {
+    throw new Error('Source spreadsheet ID kosong.');
+  }
+  if (!String(SC_MEILANI_CONFIG.destinationSpreadsheetId || '').trim()) {
+    throw new Error('Destination spreadsheet ID kosong.');
+  }
+  if (SC_MEILANI_CONFIG.sourceSpreadsheetId === SC_MEILANI_CONFIG.destinationSpreadsheetId) {
+    throw new Error('Source dan destination spreadsheet ID tidak boleh sama.');
+  }
+}
 function scMeilaniReadSourceMeta_(sheet, requiredHeaders) {
   const values = sheet.getDataRange().getValues();
   if (!values.length) throw new Error('Source sheet kosong: ' + sheet.getName());
@@ -243,54 +256,70 @@ function scMeilaniMirrorRows_(sourceSheet, sourceMeta, targetSheet, targetMeta, 
 }
 
 function scMeilaniWriteMirroredColumn_(sourceSheet, targetSheet, sourceRowNumbers, sourceColumn, targetStartRow, targetColumn) {
-  const values = [];
-  const richTextValues = [];
-  const numberFormats = [];
-  const backgrounds = [];
-  const fontColors = [];
-  const fontFamilies = [];
-  const fontSizes = [];
-  const fontWeights = [];
-  const fontStyles = [];
-  const horizontalAlignments = [];
-  const verticalAlignments = [];
-  const wraps = [];
+  const snapshots = [];
 
   for (let i = 0; i < sourceRowNumbers.length; i++) {
     const sourceCell = sourceSheet.getRange(sourceRowNumbers[i], sourceColumn);
-    values.push([sourceCell.getValue()]);
-    richTextValues.push([sourceCell.getRichTextValue()]);
-    numberFormats.push([sourceCell.getNumberFormat()]);
-    backgrounds.push([sourceCell.getBackground()]);
-    fontColors.push([sourceCell.getFontColor()]);
-    fontFamilies.push([sourceCell.getFontFamily()]);
-    fontSizes.push([sourceCell.getFontSize()]);
-    fontWeights.push([sourceCell.getFontWeight()]);
-    fontStyles.push([sourceCell.getFontStyle()]);
-    horizontalAlignments.push([sourceCell.getHorizontalAlignment()]);
-    verticalAlignments.push([sourceCell.getVerticalAlignment()]);
-    wraps.push([sourceCell.getWrap()]);
+    snapshots.push(scMeilaniReadCellSnapshot_(sourceCell));
   }
 
   const targetRange = targetSheet.getRange(targetStartRow, targetColumn, sourceRowNumbers.length, 1);
+  const values = snapshots.map(function (item) { return [item.value]; });
   targetRange.setValues(values);
-  targetRange.setNumberFormats(numberFormats);
-  targetRange.setBackgrounds(backgrounds);
-  targetRange.setFontColors(fontColors);
-  targetRange.setFontFamilies(fontFamilies);
-  targetRange.setFontSizes(fontSizes);
-  targetRange.setFontWeights(fontWeights);
-  targetRange.setFontStyles(fontStyles);
-  targetRange.setHorizontalAlignments(horizontalAlignments);
-  targetRange.setVerticalAlignments(verticalAlignments);
-  targetRange.setWraps(wraps);
+
+  scMeilaniTryWriteRange_(targetRange, 'setNumberFormats', snapshots.map(function (item) { return [item.numberFormat]; }));
+  scMeilaniTryWriteRange_(targetRange, 'setBackgrounds', snapshots.map(function (item) { return [item.background]; }));
+  scMeilaniTryWriteRange_(targetRange, 'setFontColors', snapshots.map(function (item) { return [item.fontColor]; }));
+  scMeilaniTryWriteRange_(targetRange, 'setFontFamilies', snapshots.map(function (item) { return [item.fontFamily]; }));
+  scMeilaniTryWriteRange_(targetRange, 'setFontSizes', snapshots.map(function (item) { return [item.fontSize]; }));
+  scMeilaniTryWriteRange_(targetRange, 'setFontWeights', snapshots.map(function (item) { return [item.fontWeight]; }));
+  scMeilaniTryWriteRange_(targetRange, 'setFontStyles', snapshots.map(function (item) { return [item.fontStyle]; }));
+  scMeilaniTryWriteRange_(targetRange, 'setHorizontalAlignments', snapshots.map(function (item) { return [item.horizontalAlignment]; }));
+  scMeilaniTryWriteRange_(targetRange, 'setVerticalAlignments', snapshots.map(function (item) { return [item.verticalAlignment]; }));
+  scMeilaniTryWriteRange_(targetRange, 'setWraps', snapshots.map(function (item) { return [item.wrap]; }));
 
   try {
+    const richTextValues = snapshots.map(function (item) { return [item.richText]; });
     targetRange.setRichTextValues(richTextValues);
   } catch (err) {
-    // Values and visual formats are already written; rich text can fail on some formula-driven cells.
+    // Rich text is optional; keep the data if the source cell style cannot be serialized.
   }
 }
+
+function scMeilaniReadCellSnapshot_(cell) {
+  return {
+    value: scMeilaniSafeCall_(function () { return cell.getValue(); }, ''),
+    richText: scMeilaniSafeCall_(function () { return cell.getRichTextValue(); }, null),
+    numberFormat: scMeilaniSafeCall_(function () { return cell.getNumberFormat(); }, '@'),
+    background: scMeilaniSafeCall_(function () { return cell.getBackground(); }, '#ffffff'),
+    fontColor: scMeilaniSafeCall_(function () { return cell.getFontColor(); }, '#000000'),
+    fontFamily: scMeilaniSafeCall_(function () { return cell.getFontFamily(); }, 'Arial'),
+    fontSize: scMeilaniSafeCall_(function () { return cell.getFontSize(); }, 10),
+    fontWeight: scMeilaniSafeCall_(function () { return cell.getFontWeight(); }, 'normal'),
+    fontStyle: scMeilaniSafeCall_(function () { return cell.getFontStyle(); }, 'normal'),
+    horizontalAlignment: scMeilaniSafeCall_(function () { return cell.getHorizontalAlignment(); }, 'left'),
+    verticalAlignment: scMeilaniSafeCall_(function () { return cell.getVerticalAlignment(); }, 'middle'),
+    wrap: scMeilaniSafeCall_(function () { return cell.getWrap(); }, false),
+  };
+}
+
+function scMeilaniTryWriteRange_(range, setterName, values) {
+  try {
+    range[setterName](values);
+  } catch (err) {
+    // Ignore style write failure and keep going. Data already exists.
+  }
+}
+
+function scMeilaniSafeCall_(fn, fallback) {
+  try {
+    const value = fn();
+    return value === undefined ? fallback : value;
+  } catch (err) {
+    return fallback;
+  }
+}
+
 function scMeilaniValidateMirrorHeaders_(sourceMeta, targetMeta, outputHeaders) {
   const missingSource = [];
   const missingTarget = [];
@@ -330,6 +359,8 @@ function scMeilaniFindBestHeaderRowIndex_(values, requiredHeaders) {
   const scanLimit = Math.min(values.length, SC_MEILANI_CONFIG.headerScanRows || 20);
   let bestIndex = SC_MEILANI_CONFIG.headerRow - 1;
   let bestScore = -1;
+  const requiredCount = (requiredHeaders || []).length;
+  const minScore = Math.max(2, requiredCount);
 
   for (let r = 0; r < scanLimit; r++) {
     const map = scMeilaniBuildHeaderMap_(values[r] || []);
@@ -346,6 +377,7 @@ function scMeilaniFindBestHeaderRowIndex_(values, requiredHeaders) {
     }
   }
 
+  if (bestScore < minScore) return SC_MEILANI_CONFIG.headerRow - 1;
   return bestIndex;
 }
 
@@ -398,7 +430,7 @@ function scMeilaniFindHeaderIndex_(headerMap, canonicalHeader) {
 
 function scMeilaniRequireSheet_(spreadsheet, sheetName) {
   const sheet = spreadsheet.getSheetByName(sheetName);
-  if (!sheet) throw new Error('Sheet tidak ditemukan: ' + sheetName);
+  if (!sheet) throw new Error('Sheet tidak ditemukan di spreadsheet ' + spreadsheet.getId() + ': ' + sheetName);
   return sheet;
 }
 
