@@ -1,0 +1,534 @@
+/**
+ * SC-Meilani
+ *
+ * Manual Google Sheets menu for mirroring filtered Salvage and Salvage Repair data
+ * from source workbook into the active destination workbook.
+ *
+ * Menu:
+ * - SC Meilani > Salvage
+ * - SC Meilani > Salvage Repair
+ */
+
+const SC_MEILANI_CONFIG = Object.freeze({
+  sourceSpreadsheetId: '1zRlYrSRssv9LVcPKEq90CmmvTRsZoN_TqfIg2pNufbc',
+  destinationSpreadsheetId: '1dU9dt01Ld_ykMJWQxupvIHyLXV6ArnGeXCBV72q31lU',
+  scriptVersion: '2026-07-30-safety-4',
+  menuName: 'SC Meilani',
+  logSheetName: 'Log SC-Meilani',
+  headerRow: 1,
+  headerScanRows: 20,
+  fallbackColumns: Object.freeze({
+    Branch: 6,
+    YoS: 8,
+    Remarks: 20,
+  }),
+  allowedBranches: Object.freeze([
+    'Xiaomi Authorized',
+    'Unicom',
+    'Samsung Exclusive',
+  ]),
+  salvage: Object.freeze({
+    sourceSheetName: 'Salvage 25-26',
+    yosHeader: 'YoS',
+    remarksHeader: 'Remarks',
+    requiredRemarksValue: 'Unit belum ada',
+    targets: Object.freeze([
+      Object.freeze({ year: 2025, sheetName: 'Salvage TLO/BER 2025' }),
+      Object.freeze({ year: 2026, sheetName: 'Salvage TLO/BER 2026' }),
+    ]),
+  }),
+  repair: Object.freeze({
+    sourceSheetName: 'Raw NEW',
+    targetSheetName: 'Pickup Sparepart Repair (Salvage)',
+    allowedLastStatuses: Object.freeze([
+      'SERVICE_CENTER_CLAIM_DONE_REPAIR_WALKIN',
+      'SERVICE_CENTER_CLAIM_WAITING_WALKIN_FINISH',
+      'SERVICE_CENTER_CLAIM_DONE',
+      'SERVICE_CENTER_CLAIM_DONE_REPAIR_PICKUP',
+      'SERVICE_CENTER_CLAIM_WAITING_PICKUP_FINISH',
+      'COURIER_CLAIM_PICKUP_FINISH',
+      'COURIER_CLAIM_PICKUP_FINISH_DONE',
+      'INSURANCE_CLAIM_WAITING_PAID_REPAIR',
+      'INSURANCE_CLAIM_PAID_REPAIR',
+      'INSURANCE_CLAIM_WAITING_PAID',
+    ]),
+  }),
+  outputHeaders: Object.freeze([
+    'Submission Date',
+    'Submission Month',
+    'Claim Number',
+    'DB Link',
+    'Approval Date',
+    'Branch',
+    'Service Center',
+    'Insurance',
+    'Sum Insured',
+    'Device Brand',
+    'Device Type',
+    'IMEI/SN',
+    'Last Status',
+  ]),
+  headerAliases: Object.freeze({
+    'Submission Date': Object.freeze(['Submission Date', 'Submitted Datetime', 'Submitted Date', 'claim_submitted_at', 'created_at']),
+    'Submission Month': Object.freeze(['Submission Month', 'Submitted Month', 'Month']),
+    'Claim Number': Object.freeze(['Claim Number', 'Claim No', 'Claim', 'claim_number']),
+    'DB Link': Object.freeze(['DB Link', 'Dashboard Link', 'Link']),
+    'Approval Date': Object.freeze(['Approval Date', 'Approved Date', 'Insurance Approval Date', 'approval_date']),
+    'Branch': Object.freeze(['Branch', 'Service Center Branch', 'SC Branch', 'branch']),
+    'Service Center': Object.freeze(['Service Center', 'Service Center Name', 'SC Name', 'SC', 'service_center_name']),
+    'Insurance': Object.freeze(['Insurance', 'Insurance Name', 'insurance_name']),
+    'Sum Insured': Object.freeze(['Sum Insured', 'SI', 'sum_insured']),
+    'Device Brand': Object.freeze(['Device Brand', 'Brand', 'device_brand']),
+    'Device Type': Object.freeze(['Device Type', 'Type', 'device_type']),
+    'IMEI/SN': Object.freeze(['IMEI/SN', 'IMEI', 'SN', 'Serial Number', 'IMEI SN', 'imei', 'serial_number']),
+    'Last Status': Object.freeze(['Last Status', 'Status Terakhir', 'claim_last_status_name', 'last_status']),
+    'YoS': Object.freeze(['YoS', 'YOS', 'Year of Salvage', 'Year']),
+    'Remarks': Object.freeze(['Remarks', 'Remark', 'Notes', 'Note']),
+  }),
+});
+
+function onOpen() {
+  SpreadsheetApp.getUi()
+    .createMenu(SC_MEILANI_CONFIG.menuName)
+    .addItem('Salvage', 'runSCMeilaniSalvage')
+    .addItem('Salvage Repair', 'runSCMeilaniSalvageRepair')
+    .addSeparator()
+    .addItem('Run All', 'runSCMeilaniAll')
+    .addToUi();
+}
+
+function runSCMeilaniAll() {
+  runSCMeilaniSalvage();
+  runSCMeilaniSalvageRepair();
+}
+
+function runSCMeilaniSalvage() {
+  return scMeilaniWithLock_('SALVAGE', function (ctx) {
+    const cfg = SC_MEILANI_CONFIG;
+    const sourceSheet = scMeilaniRequireSheet_(ctx.sourceSpreadsheet, cfg.salvage.sourceSheetName);
+    const sourceMeta = scMeilaniReadSourceMeta_(sourceSheet, ['Claim Number', 'Branch', cfg.salvage.yosHeader, cfg.salvage.remarksHeader]);
+    const branchCol = scMeilaniRequireSourceColumn_(sourceMeta, 'Branch', cfg.fallbackColumns.Branch);
+    const yosCol = scMeilaniRequireSourceColumn_(sourceMeta, cfg.salvage.yosHeader, cfg.fallbackColumns.YoS);
+    const remarksCol = scMeilaniRequireSourceColumn_(sourceMeta, cfg.salvage.remarksHeader, cfg.fallbackColumns.Remarks);
+
+    const results = [];
+    cfg.salvage.targets.forEach(function (target) {
+      const targetSheet = scMeilaniRequireSheet_(ctx.destinationSpreadsheet, target.sheetName);
+      const targetMeta = scMeilaniReadTargetMeta_(targetSheet);
+      const rowNumbers = scMeilaniCollectRowNumbers_(sourceMeta, function (row) {
+        return scMeilaniIsAllowedBranch_(row[branchCol])
+          && scMeilaniMatchesYear_(row[yosCol], target.year)
+          && scMeilaniEqualsText_(row[remarksCol], cfg.salvage.requiredRemarksValue);
+      });
+
+      const written = scMeilaniMirrorRows_(sourceSheet, sourceMeta, targetSheet, targetMeta, rowNumbers, cfg.outputHeaders);
+      results.push(target.sheetName + ': ' + written + ' row');
+    });
+
+    scMeilaniToast_(ctx.destinationSpreadsheet, 'Salvage selesai. ' + results.join(' | '));
+    return results;
+  });
+}
+
+function runSCMeilaniSalvageRepair() {
+  return scMeilaniWithLock_('SALVAGE_REPAIR', function (ctx) {
+    const cfg = SC_MEILANI_CONFIG;
+    const sourceSheet = scMeilaniRequireSheet_(ctx.sourceSpreadsheet, cfg.repair.sourceSheetName);
+    const targetSheet = scMeilaniRequireSheet_(ctx.destinationSpreadsheet, cfg.repair.targetSheetName);
+    const sourceMeta = scMeilaniReadSourceMeta_(sourceSheet, ['Claim Number', 'Branch', 'Last Status']);
+    const targetMeta = scMeilaniReadTargetMeta_(targetSheet);
+    const branchCol = scMeilaniRequireSourceColumn_(sourceMeta, 'Branch', cfg.fallbackColumns.Branch);
+    const lastStatusCol = scMeilaniRequireSourceColumn_(sourceMeta, 'Last Status');
+    const allowedStatuses = scMeilaniToKeySet_(cfg.repair.allowedLastStatuses);
+
+    const rowNumbers = scMeilaniCollectRowNumbers_(sourceMeta, function (row) {
+      return scMeilaniIsAllowedBranch_(row[branchCol])
+        && allowedStatuses[scMeilaniStatusKey_(row[lastStatusCol])] === true;
+    });
+
+    const written = scMeilaniMirrorRows_(sourceSheet, sourceMeta, targetSheet, targetMeta, rowNumbers, cfg.outputHeaders);
+    scMeilaniToast_(ctx.destinationSpreadsheet, 'Salvage Repair selesai. ' + written + ' row ditulis.');
+    return written;
+  });
+}
+
+function scMeilaniWithLock_(flowName, runner) {
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(30000)) {
+    throw new Error('Run dibatalkan: proses lain masih berjalan.');
+  }
+
+  scMeilaniValidateRuntime_();
+  const startedAt = new Date();
+  const destinationSpreadsheet = SpreadsheetApp.openById(SC_MEILANI_CONFIG.destinationSpreadsheetId);
+  const sourceSpreadsheet = SpreadsheetApp.openById(SC_MEILANI_CONFIG.sourceSpreadsheetId);
+  const ctx = {
+    flowName: flowName,
+    destinationSpreadsheet: destinationSpreadsheet,
+    sourceSpreadsheet: sourceSpreadsheet,
+    startedAt: startedAt,
+  };
+
+  try {
+    scMeilaniToast_(destinationSpreadsheet, flowName + ' berjalan...');
+    const result = runner(ctx);
+    scMeilaniLog_(destinationSpreadsheet, flowName, 'SUCCESS', startedAt, 'OK', JSON.stringify(result));
+    return result;
+  } catch (err) {
+    scMeilaniLog_(destinationSpreadsheet, flowName, 'ERROR', startedAt, scMeilaniErrorMessage_(err), '');
+    scMeilaniToast_(destinationSpreadsheet, flowName + ' gagal: ' + scMeilaniErrorMessage_(err));
+    throw err;
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function scMeilaniValidateRuntime_() {
+  if (!String(SC_MEILANI_CONFIG.sourceSpreadsheetId || '').trim()) {
+    throw new Error('Source spreadsheet ID kosong.');
+  }
+  if (!String(SC_MEILANI_CONFIG.destinationSpreadsheetId || '').trim()) {
+    throw new Error('Destination spreadsheet ID kosong.');
+  }
+  if (SC_MEILANI_CONFIG.sourceSpreadsheetId === SC_MEILANI_CONFIG.destinationSpreadsheetId) {
+    throw new Error('Source dan destination spreadsheet ID tidak boleh sama.');
+  }
+}
+function scMeilaniReadSourceMeta_(sheet, requiredHeaders) {
+  const values = sheet.getDataRange().getValues();
+  if (!values.length) throw new Error('Source sheet kosong: ' + sheet.getName());
+
+  const headerRowIndex = scMeilaniFindBestHeaderRowIndex_(values, requiredHeaders);
+  const headerValues = values[headerRowIndex] || [];
+  return {
+    sheet: sheet,
+    values: values,
+    headerRowIndex: headerRowIndex,
+    headerRowNumber: headerRowIndex + 1,
+    headerValues: headerValues,
+    headerMap: scMeilaniBuildHeaderMap_(headerValues),
+  };
+}
+
+function scMeilaniReadTargetMeta_(sheet) {
+  const lastColumn = Math.max(sheet.getLastColumn(), SC_MEILANI_CONFIG.outputHeaders.length, 1);
+  const scanRowCount = Math.max(Math.min(sheet.getMaxRows(), SC_MEILANI_CONFIG.headerScanRows), 1);
+  const scanValues = sheet.getRange(1, 1, scanRowCount, lastColumn).getValues();
+  const headerRowIndex = scMeilaniFindBestHeaderRowIndex_(scanValues, ['Claim Number']);
+  const headerRowNumber = headerRowIndex + 1;
+  const headerValues = sheet.getRange(headerRowNumber, 1, 1, lastColumn).getValues()[0];
+  const headerMap = scMeilaniBuildHeaderMap_(headerValues);
+
+  SC_MEILANI_CONFIG.outputHeaders.forEach(function (header, index) {
+    if (scMeilaniFindHeaderIndex_(headerMap, header) == null) {
+      sheet.getRange(headerRowNumber, index + 1).setValue(header);
+    }
+  });
+
+  const refreshedHeaders = sheet.getRange(headerRowNumber, 1, 1, Math.max(sheet.getLastColumn(), SC_MEILANI_CONFIG.outputHeaders.length)).getValues()[0];
+  return {
+    sheet: sheet,
+    headerRowIndex: headerRowIndex,
+    headerRowNumber: headerRowNumber,
+    headerValues: refreshedHeaders,
+    headerMap: scMeilaniBuildHeaderMap_(refreshedHeaders),
+  };
+}
+
+function scMeilaniMirrorRows_(sourceSheet, sourceMeta, targetSheet, targetMeta, sourceRowNumbers, outputHeaders) {
+  scMeilaniValidateMirrorHeaders_(sourceMeta, targetMeta, outputHeaders);
+  scMeilaniClearBody_(targetSheet, targetMeta.headerRowNumber);
+  if (!sourceRowNumbers.length) return 0;
+
+  const targetStartRow = targetMeta.headerRowNumber + 1;
+  const sourceCols = outputHeaders.map(function (header) {
+    return scMeilaniRequireHeader_(sourceMeta.headerMap, header) + 1;
+  });
+  const targetCols = outputHeaders.map(function (header) {
+    return scMeilaniRequireHeader_(targetMeta.headerMap, header) + 1;
+  });
+
+  for (let h = 0; h < outputHeaders.length; h++) {
+    scMeilaniWriteMirroredColumn_(sourceSheet, targetSheet, sourceRowNumbers, sourceCols[h], targetStartRow, targetCols[h]);
+  }
+
+  return sourceRowNumbers.length;
+}
+
+function scMeilaniWriteMirroredColumn_(sourceSheet, targetSheet, sourceRowNumbers, sourceColumn, targetStartRow, targetColumn) {
+  const snapshots = [];
+
+  for (let i = 0; i < sourceRowNumbers.length; i++) {
+    const sourceCell = sourceSheet.getRange(sourceRowNumbers[i], sourceColumn);
+    snapshots.push(scMeilaniReadCellSnapshot_(sourceCell));
+  }
+
+  const targetRange = targetSheet.getRange(targetStartRow, targetColumn, sourceRowNumbers.length, 1);
+  const values = snapshots.map(function (item) { return [item.value]; });
+  targetRange.setValues(values);
+
+  scMeilaniTryWriteRange_(targetRange, 'setNumberFormats', snapshots.map(function (item) { return [item.numberFormat]; }));
+  scMeilaniTryWriteRange_(targetRange, 'setBackgrounds', snapshots.map(function (item) { return [item.background]; }));
+  scMeilaniTryWriteRange_(targetRange, 'setFontColors', snapshots.map(function (item) { return [item.fontColor]; }));
+  scMeilaniTryWriteRange_(targetRange, 'setFontFamilies', snapshots.map(function (item) { return [item.fontFamily]; }));
+  scMeilaniTryWriteRange_(targetRange, 'setFontSizes', snapshots.map(function (item) { return [item.fontSize]; }));
+  scMeilaniTryWriteRange_(targetRange, 'setFontWeights', snapshots.map(function (item) { return [item.fontWeight]; }));
+  scMeilaniTryWriteRange_(targetRange, 'setFontStyles', snapshots.map(function (item) { return [item.fontStyle]; }));
+  scMeilaniTryWriteRange_(targetRange, 'setHorizontalAlignments', snapshots.map(function (item) { return [item.horizontalAlignment]; }));
+  scMeilaniTryWriteRange_(targetRange, 'setVerticalAlignments', snapshots.map(function (item) { return [item.verticalAlignment]; }));
+  scMeilaniTryWriteRange_(targetRange, 'setWraps', snapshots.map(function (item) { return [item.wrap]; }));
+
+  try {
+    const richTextValues = snapshots.map(function (item) { return [item.richText]; });
+    targetRange.setRichTextValues(richTextValues);
+  } catch (err) {
+    // Rich text is optional; keep the data if the source cell style cannot be serialized.
+  }
+}
+
+function scMeilaniReadCellSnapshot_(cell) {
+  return {
+    value: scMeilaniSafeCall_(function () { return cell.getValue(); }, ''),
+    richText: scMeilaniSafeCall_(function () { return cell.getRichTextValue(); }, null),
+    numberFormat: scMeilaniSafeCall_(function () { return cell.getNumberFormat(); }, '@'),
+    background: scMeilaniSafeCall_(function () { return cell.getBackground(); }, '#ffffff'),
+    fontColor: scMeilaniSafeCall_(function () { return cell.getFontColor(); }, '#000000'),
+    fontFamily: scMeilaniSafeCall_(function () { return cell.getFontFamily(); }, 'Arial'),
+    fontSize: scMeilaniSafeCall_(function () { return cell.getFontSize(); }, 10),
+    fontWeight: scMeilaniSafeCall_(function () { return cell.getFontWeight(); }, 'normal'),
+    fontStyle: scMeilaniSafeCall_(function () { return cell.getFontStyle(); }, 'normal'),
+    horizontalAlignment: scMeilaniSafeCall_(function () { return cell.getHorizontalAlignment(); }, 'left'),
+    verticalAlignment: scMeilaniSafeCall_(function () { return cell.getVerticalAlignment(); }, 'middle'),
+    wrap: scMeilaniSafeCall_(function () { return cell.getWrap(); }, false),
+  };
+}
+
+function scMeilaniTryWriteRange_(range, setterName, values) {
+  try {
+    range[setterName](values);
+  } catch (err) {
+    // Ignore style write failure and keep going. Data already exists.
+  }
+}
+
+function scMeilaniSafeCall_(fn, fallback) {
+  try {
+    const value = fn();
+    return value === undefined ? fallback : value;
+  } catch (err) {
+    return fallback;
+  }
+}
+
+function scMeilaniValidateMirrorHeaders_(sourceMeta, targetMeta, outputHeaders) {
+  const missingSource = [];
+  const missingTarget = [];
+
+  outputHeaders.forEach(function (header) {
+    if (scMeilaniFindHeaderIndex_(sourceMeta.headerMap, header) == null) missingSource.push(header);
+    if (scMeilaniFindHeaderIndex_(targetMeta.headerMap, header) == null) missingTarget.push(header);
+  });
+
+  if (missingSource.length) {
+    throw new Error('Header source tidak ditemukan di "' + sourceMeta.sheet.getName() + '" row ' + sourceMeta.headerRowNumber + ': ' + missingSource.join(', '));
+  }
+  if (missingTarget.length) {
+    throw new Error('Header target tidak ditemukan di "' + targetMeta.sheet.getName() + '" row ' + targetMeta.headerRowNumber + ': ' + missingTarget.join(', '));
+  }
+}
+
+function scMeilaniClearBody_(sheet, headerRow) {
+  const effectiveHeaderRow = headerRow || SC_MEILANI_CONFIG.headerRow;
+  const lastRow = sheet.getLastRow();
+  const lastColumn = Math.max(sheet.getLastColumn(), 1);
+  if (lastRow <= effectiveHeaderRow) return;
+  sheet.getRange(effectiveHeaderRow + 1, 1, lastRow - effectiveHeaderRow, lastColumn).clear();
+}
+
+function scMeilaniCollectRowNumbers_(sourceMeta, predicate) {
+  const values = sourceMeta.values || [];
+  const out = [];
+  for (let r = sourceMeta.headerRowIndex + 1; r < values.length; r++) {
+    const row = values[r] || [];
+    if (predicate(row)) out.push(r + 1);
+  }
+  return out;
+}
+
+function scMeilaniFindBestHeaderRowIndex_(values, requiredHeaders) {
+  const scanLimit = Math.min(values.length, SC_MEILANI_CONFIG.headerScanRows || 20);
+  let bestIndex = SC_MEILANI_CONFIG.headerRow - 1;
+  let bestScore = -1;
+  const requiredCount = (requiredHeaders || []).length;
+  const minScore = Math.max(2, requiredCount);
+
+  for (let r = 0; r < scanLimit; r++) {
+    const map = scMeilaniBuildHeaderMap_(values[r] || []);
+    let score = 0;
+    SC_MEILANI_CONFIG.outputHeaders.forEach(function (header) {
+      if (scMeilaniFindHeaderIndex_(map, header) != null) score += 1;
+    });
+    (requiredHeaders || []).forEach(function (header) {
+      if (scMeilaniFindHeaderIndex_(map, header) != null) score += 5;
+    });
+    if (score > bestScore) {
+      bestScore = score;
+      bestIndex = r;
+    }
+  }
+
+  if (bestScore < minScore) return SC_MEILANI_CONFIG.headerRow - 1;
+  return bestIndex;
+}
+
+function scMeilaniBuildHeaderMap_(headers) {
+  const map = {};
+  (headers || []).forEach(function (header, index) {
+    const key = scMeilaniHeaderKey_(header);
+    if (!key || map[key] != null) return;
+    map[key] = index;
+  });
+  return map;
+}
+
+function scMeilaniRequireSourceColumn_(sourceMeta, canonicalHeader, fallbackColumnNumber) {
+  const idx = scMeilaniFindHeaderIndex_(sourceMeta.headerMap, canonicalHeader);
+  if (idx != null) return idx;
+
+  if (fallbackColumnNumber && fallbackColumnNumber > 0) {
+    return fallbackColumnNumber - 1;
+  }
+
+  throw new Error(
+    'Header source tidak ditemukan di "' + sourceMeta.sheet.getName() +
+    '" row ' + sourceMeta.headerRowNumber + ': ' + canonicalHeader +
+    '. Header terbaca: ' + scMeilaniPreviewHeaders_(sourceMeta.headerValues)
+  );
+}
+
+function scMeilaniPreviewHeaders_(headers) {
+  return (headers || [])
+    .map(function (header) { return String(header == null ? '' : header).trim(); })
+    .filter(function (header) { return !!header; })
+    .slice(0, 30)
+    .join(' | ');
+}
+function scMeilaniRequireHeader_(headerMap, canonicalHeader) {
+  const idx = scMeilaniFindHeaderIndex_(headerMap, canonicalHeader);
+  if (idx == null) throw new Error('Header wajib tidak ditemukan: ' + canonicalHeader);
+  return idx;
+}
+
+function scMeilaniFindHeaderIndex_(headerMap, canonicalHeader) {
+  const aliases = SC_MEILANI_CONFIG.headerAliases[canonicalHeader] || [canonicalHeader];
+  for (let i = 0; i < aliases.length; i++) {
+    const idx = headerMap[scMeilaniHeaderKey_(aliases[i])];
+    if (idx != null) return idx;
+  }
+  return null;
+}
+
+function scMeilaniRequireSheet_(spreadsheet, sheetName) {
+  const sheet = spreadsheet.getSheetByName(sheetName);
+  if (!sheet) throw new Error('Sheet tidak ditemukan di spreadsheet ' + spreadsheet.getId() + ': ' + sheetName);
+  return sheet;
+}
+
+function scMeilaniIsAllowedBranch_(value) {
+  const branch = scMeilaniNormalizeText_(value);
+  const allowed = SC_MEILANI_CONFIG.allowedBranches;
+  for (let i = 0; i < allowed.length; i++) {
+    if (branch === scMeilaniNormalizeText_(allowed[i])) return true;
+  }
+  return false;
+}
+
+function scMeilaniMatchesYear_(value, year) {
+  if (value instanceof Date && !isNaN(value.getTime())) return value.getFullYear() === Number(year);
+  const text = String(value == null ? '' : value).trim();
+  return text === String(year) || new RegExp('(^|\\D)' + year + '(\\D|$)').test(text);
+}
+
+function scMeilaniEqualsText_(value, expected) {
+  return scMeilaniNormalizeText_(value) === scMeilaniNormalizeText_(expected);
+}
+
+function scMeilaniToKeySet_(values) {
+  const out = {};
+  (values || []).forEach(function (value) {
+    out[scMeilaniStatusKey_(value)] = true;
+  });
+  return out;
+}
+
+function scMeilaniStatusKey_(value) {
+  return String(value == null ? '' : value)
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '');
+}
+
+function scMeilaniHeaderKey_(value) {
+  return String(value == null ? '' : value)
+    .replace(/[\u200B-\u200D\uFEFF]/g, '')
+    .replace(/\u00A0/g, ' ')
+    .trim()
+    .toLowerCase()
+    .replace(/[_\s]+/g, ' ');
+}
+
+function scMeilaniNormalizeText_(value) {
+  return String(value == null ? '' : value)
+    .replace(/[\u200B-\u200D\uFEFF]/g, '')
+    .replace(/\u00A0/g, ' ')
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, ' ');
+}
+
+function scMeilaniToast_(spreadsheet, message) {
+  try {
+    spreadsheet.toast(String(message || ''), SC_MEILANI_CONFIG.menuName, 8);
+  } catch (err) {
+    Logger.log(message);
+  }
+}
+
+function scMeilaniLog_(spreadsheet, flowName, status, startedAt, message, details) {
+  const sheet = scMeilaniGetOrCreateLogSheet_(spreadsheet);
+  const endedAt = new Date();
+  sheet.appendRow([
+    endedAt,
+    flowName,
+    status,
+    startedAt,
+    endedAt,
+    Math.round((endedAt.getTime() - startedAt.getTime()) / 1000),
+    message,
+    details || '',
+  ]);
+}
+
+function scMeilaniGetOrCreateLogSheet_(spreadsheet) {
+  let sheet = spreadsheet.getSheetByName(SC_MEILANI_CONFIG.logSheetName);
+  if (sheet) return sheet;
+
+  sheet = spreadsheet.insertSheet(SC_MEILANI_CONFIG.logSheetName);
+  sheet.getRange(1, 1, 1, 8).setValues([[
+    'Timestamp',
+    'Flow',
+    'Status',
+    'Started At',
+    'Ended At',
+    'Duration Seconds',
+    'Message',
+    'Details',
+  ]]);
+  sheet.setFrozenRows(1);
+  return sheet;
+}
+
+function scMeilaniErrorMessage_(err) {
+  return err && err.message ? err.message : String(err);
+}
