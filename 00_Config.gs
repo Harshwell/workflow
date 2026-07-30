@@ -67,7 +67,7 @@ const DRY_RUN = false;
 const CONFIG_SECTION_INDEX = Object.freeze({
   foundation: Object.freeze(['App.Registry', 'APP_VERSION', 'SCHEMA_VERSION', 'DRY_RUN']),
   ingestion: Object.freeze(['EMAIL_INGEST_POLICY', 'SUB_EMAIL_INGEST_POLICY', 'SUB_FLOW_SPEC', 'FORM_INGEST_POLICY']),
-  workbook: Object.freeze(['MASTER_SPREADSHEET_ID', 'MASTER_RAW_SHEET_NAME', 'WEBAPP_MOVEMENT_POLICY', 'WORKBOOK_PROFILES']),
+  workbook: Object.freeze(['MASTER_SPREADSHEET_ID', 'MASTER_RAW_SHEET_NAME', 'WORKBOOK_PROFILES']),
   routing: Object.freeze(['OPS_ROUTING_POLICY', 'STATUS_TYPE_BY_LAST_STATUS', 'POSITION_BY_LAST_STATUS', 'FINISH_STATUSES']),
   validationAndPresentation: Object.freeze(['VALIDATION_POLICY', 'VALIDATION_FALLBACKS', 'CHECKBOX_POLICY', 'LINK_POLICY', 'COLUMN_TYPES', 'COLUMN_ALIGNMENT']),
   optionalSheets: Object.freeze(['SPECIAL_CASE_WRITER_POLICY', 'EVBIKE_POLICY', 'EXCLUSION_TAT_POLICY', 'OPTIONAL_SHEETS_FLAGS']),
@@ -101,6 +101,7 @@ const SC_SHEET_NAMES = Object.freeze([
 
 const SC_TYPE_DROPDOWN_OPTIONS = Object.freeze([
   'SC - Rcvd',
+  'Start',
   'SC - Est',
   'Insurance',
   'OR',
@@ -112,7 +113,7 @@ const SC_TYPE_DROPDOWN_OPTIONS = Object.freeze([
 function getScTypeDropdownOptions_() {
   return (typeof SC_TYPE_DROPDOWN_OPTIONS !== 'undefined' && Array.isArray(SC_TYPE_DROPDOWN_OPTIONS))
     ? SC_TYPE_DROPDOWN_OPTIONS.slice()
-    : ['SC - Rcvd','SC - Est','Insurance','OR','Finish','SC - Wait Rep','SC - On Rep'];
+    : ['SC - Rcvd','Start','SC - Est','Insurance','OR','Finish','SC - Wait Rep','SC - On Rep'];
 }
 
 
@@ -125,6 +126,7 @@ const BRANCH_KEYWORDS = Object.freeze({
   'Sitcomtara': ['sitcomtara'],
   'iBox': ['ibox'],
   'GSI': ['gsi'],
+  'Rejeki Seluler': ['rejeki seluler', 'rejeki seluller'],
   'Andalas': ['andalas'],
   'Klikcare': ['klikcare'],
   'J-Bros': ['j-bros', 'jbros'],
@@ -137,6 +139,7 @@ const BRANCH_KEYWORDS = Object.freeze({
   'Xiaomi Authorized': ['xiaomi authorized', 'xiaomi'],
   'Samsung Exclusive': ['samsung exclusive', 'samsung'],
   'Carlcare': ['carlcare'],
+  'CV Berkah': ['cv berkah athallah', 'cv berkah'],
   'B-Store': ['b-store', 'bstore'],
   'EzCare': ['ezcare', 'ez care'],
   'Deltasindo': ['deltasindo'],
@@ -154,80 +157,6 @@ const MASTER_SPREADSHEET_ID = getPropString_(
   '1zRlYrSRssv9LVcPKEq90CmmvTRsZoN_TqfIg2pNufbc'
 );
 const MASTER_RAW_SHEET_NAME = getPropString_('MASTER_RAW_SHEET_NAME', 'Raw Data');
-
-/** =========================
- * WebApp Project (movement tracking)
- * =========================
- * Snapshot baseline MUST live in the WebApp Project spreadsheet (NOT Raw OLD/NEW).
- */
-const WEBAPP_PROJECT_SPREADSHEET_ID = getPropString_(
-  'WEBAPP_PROJECT_SPREADSHEET_ID',
-  '1anPGHYa8Ej19jZJMC3bKyReZ-O6Qki2WBvtRl6rNTTk'
-);
-
-const WEBAPP_MOVEMENT_POLICY = Object.freeze({
-  ENABLE: getPropBool_('WEBAPP_MOVEMENT_ENABLE', true),
-  SPREADSHEET_ID: WEBAPP_PROJECT_SPREADSHEET_ID,
-
-  /**
-   * Snapshot sheets live in the WebApp Project spreadsheet.
-   * Flow contract:
-   * - Before SUB starts: copy Overview Claim -> Raw OLD/NEW into SNAPSHOT_PREV_OLD/NEW
-   * - After  SUB ends:   copy Overview Claim -> Raw OLD/NEW into SNAPSHOT_CURR_OLD/NEW
-   */
-  SHEETS: Object.freeze({
-    DAILY: 'Daily',
-    PAST: 'Past',
-
-    SNAPSHOT_PREV_OLD: 'SNAPSHOT_PREV_OLD',
-    SNAPSHOT_CURR_OLD: 'SNAPSHOT_CURR_OLD',
-
-    SNAPSHOT_PREV_NEW: 'SNAPSHOT_PREV_NEW',
-    SNAPSHOT_CURR_NEW: 'SNAPSHOT_CURR_NEW'
-  }),
-
-  // Column names MUST match snapshot headers (WebApp Project)
-  SNAPSHOT_COLUMNS: Object.freeze([
-    'Claim Number',
-    'Last Status',
-    'Last Update Datetime',
-    'Activity Log',
-    'Activity Log Datetime',
-    'Service Center Name',
-    'Branch',
-    'Position',
-    'Status Type'
-  ]),
-
-  // Column names MUST match Daily/Past headers (WebApp Project)
-  DAILY_COLUMNS: Object.freeze([
-    'Timestamp',
-    'DB',
-    'Claim Number',
-    'Change Type',
-
-    'Last Status (Before)',
-    'Last Update Datetime (Before)',
-    'Last Status (After)',
-    'Last Update Datetime (After)',
-    'Gap Time Status (Minutes)',
-    'Gap Time Status',
-
-    'Activity Log',
-    'Activity Log Datetime',
-
-    'Service Center Name',
-    'Branch',
-    'Position',
-    'Status Type',
-
-    'Event ID'
-  ]),
-
-  // Existing Event-ID lookup for Past uses recent rows only (performance guard).
-  PAST_EVENT_SCAN_MAX_ROWS: getPropInt_('WEBAPP_PAST_EVENT_SCAN_MAX_ROWS', 5000)
-});
-
 
 /**
  * Second-Year (Market Value) detection policy.
@@ -354,7 +283,7 @@ const SUB_FLOW_SPEC = Object.freeze({
     'PO',
     'Exclusion',
     'Expired Claim',
-    'B2B',
+    'Reject Claim',
     'EV-Bike',
     'Doss'
   ]),
@@ -1399,6 +1328,8 @@ const RAW_DATA_CUSTOM_TAIL_HEADERS = Object.freeze([
   'Timestamp',
   'Status',
   'Remarks',
+  'AWB',
+  'Timestamp AWB',
   'Q-L (Months)',
   'M-L (Months)',
   'M-Q (Months)'
@@ -1411,6 +1342,14 @@ const RAW_DATA_CUSTOM_TAIL_HEADERS = Object.freeze([
  * - SC - Farhan, SC - Meilani, and SC - Meindar share the same last_status universe, but are split by sc_name keywords.
  * - "Type" (dropdown) on both SC sheets is filled from last_status categories.
  */
+const REJECT_CLAIM_TYPE_BY_LAST_STATUS = Object.freeze({
+  'QOALA_CLAIM_REJECT': 'Front', 'QOALA_CLAIM_REJECT_PICKUP': 'Front', 'QOALA_CLAIM_REJECT_WALKIN': 'Front',
+  'CUSTOMER_REJECT_PAYMENT_DEDUCTIBLE_EXCESS_FEE_WALKIN': 'Cust - OR', 'CUSTOMER_REJECT_PAYMENT_DEDUCTIBLE_EXCESS_FEE_PICKUP': 'Cust - OR',
+  'INSURANCE_CLAIM_REJECT_WALKIN': 'Insurance', 'INSURANCE_CLAIM_REJECT_PICKUP': 'Insurance',
+  'SERVICE_CENTER_CLAIM_WAITING_WALKIN_REJECT': 'SC - Middle', 'SERVICE_CENTER_CLAIM_DONE_REJECT': 'SC - Middle',
+  'SERVICE_CENTER_CLAIM_WAITING_PICKUP_REJECT': 'SC - Middle', 'COURIER_CLAIM_PICKUP_REJECT': 'SC - Middle', 'COURIER_CLAIM_PICKUP_REJECT_DONE': 'SC - Middle'
+});
+
 const OPS_ROUTING_POLICY = Object.freeze({
   SHEETS: Object.freeze({
     SUBMISSION: 'Submission',
@@ -1419,6 +1358,7 @@ const OPS_ROUTING_POLICY = Object.freeze({
     START: 'Start',
     FINISH: 'Finish',
     CLAIM_EXPIRED: 'Expired Claim',
+    REJECT_CLAIM: 'Reject Claim',
     SC_FARHAN: 'SC - Farhan',
     SC_MEILANI: 'SC - Meilani',
     SC_IVAN: 'SC - Meindar',
@@ -1471,10 +1411,14 @@ const OPS_ROUTING_POLICY = Object.freeze({
       'CLAIM_EXPIRE_WALKIN'
     ]),
 
+    'Reject Claim': Object.freeze([]),
+
     // SC universe (shared by Farhan/Meilani; split via sc_name keyword)
     '__SC_SHARED__': Object.freeze([
       'CLAIM_ADDED_SC',
       'RECEIVED_SC',
+      // Transitional: visible in both Start and the mapped SC universe.
+      'COURIER_PICKUP_START_DONE',
       'ESTIMATE_COST',
       'ON_PROGRESS',
       'DONE_REPAIR',
@@ -1572,7 +1516,10 @@ const OPS_ROUTING_POLICY = Object.freeze({
       'Mitracare',
       'Sitcomtara',
       'iBox',
-      'GSI'
+      'Rejeki Seluler',
+      'Rejeki Seluller',
+      'CV Berkah Athallah',
+      'CV Berkah'
     ]),
     'SC - Meindar': Object.freeze([
       'Klikcare',
@@ -1598,7 +1545,8 @@ const OPS_ROUTING_POLICY = Object.freeze({
       'Samsung Authorized Service Center by Unicom',
       'Xiaomi Authorized',
       'Samsung Exclusive',
-      'Carlcare'
+      'Carlcare',
+      'GSI'
     ])
   }),
 
@@ -1611,6 +1559,9 @@ const OPS_ROUTING_POLICY = Object.freeze({
       'SERVICE_CENTER_CLAIM_RECEIVE',
       'CLAIM_ADDED_SC',
       'RECEIVED_SC'
+    ]),
+    'Start': Object.freeze([
+      'COURIER_PICKUP_START_DONE'
     ]),
     'SC - Est': Object.freeze([
       'SERVICE_CENTER_CLAIM_ESTIMATE',
@@ -1979,15 +1930,14 @@ const CONFIG = Object.freeze({
   mappingSheetName: getPropString_('MAPPING_SHEET_NAME', '[UPDATED] Mapping Team Claim'),
 
   logSpreadsheetId: getPropString_('LOG_SPREADSHEET_ID', '1TC9YjDo6qxWq17zPYEBqIryhaYbUMqGtaSH0F-G8IwE'),
-  logSheetName: getPropString_('LOG_SHEET_NAME', 'Log'),
+  // MAIN/SUB have independent logs so one flow never clears or interleaves the other.
+  logSheetName: getPropString_('LOG_SHEET_NAME', 'Log - Main'),
+  logSheetNameMain: getPropString_('LOG_SHEET_NAME_MAIN', 'Log - Main'),
+  logSheetNameSub: getPropString_('LOG_SHEET_NAME_SUB', 'Log - Sub'),
   detailsSheetName: 'Details',
   detailsLogPolicy: DETAILS_LOG_POLICY,
   mappingErrorLogPolicy: MAPPING_ERROR_LOG_POLICY,
   logPolicy: LOG_POLICY,
-
-  // WebApp movement tracking
-  webappProjectSpreadsheetId: WEBAPP_PROJECT_SPREADSHEET_ID,
-  webappMovement: WEBAPP_MOVEMENT_POLICY,
 
   // Status type mapping (mandatory operational column)
   statusTypeByLastStatus: STATUS_TYPE_BY_LAST_STATUS,
@@ -2060,6 +2010,7 @@ const CONFIG = Object.freeze({
         OPS_ROUTING_POLICY.SHEETS.START,
         OPS_ROUTING_POLICY.SHEETS.FINISH,
         OPS_ROUTING_POLICY.SHEETS.CLAIM_EXPIRED,
+        OPS_ROUTING_POLICY.SHEETS.REJECT_CLAIM,
         OPS_ROUTING_POLICY.SHEETS.SC_FARHAN,
         OPS_ROUTING_POLICY.SHEETS.SC_MEILANI,
         OPS_ROUTING_POLICY.SHEETS.SC_IVAN,
@@ -2077,6 +2028,7 @@ const CONFIG = Object.freeze({
         OPS_ROUTING_POLICY.SHEETS.START,
         OPS_ROUTING_POLICY.SHEETS.FINISH,
         OPS_ROUTING_POLICY.SHEETS.CLAIM_EXPIRED,
+        OPS_ROUTING_POLICY.SHEETS.REJECT_CLAIM,
         OPS_ROUTING_POLICY.SHEETS.SC_FARHAN,
         OPS_ROUTING_POLICY.SHEETS.SC_MEILANI,
         OPS_ROUTING_POLICY.SHEETS.SC_IVAN,
@@ -2101,6 +2053,7 @@ const CONFIG = Object.freeze({
       OPS_ROUTING_POLICY.SHEETS.START,
       OPS_ROUTING_POLICY.SHEETS.FINISH,
       OPS_ROUTING_POLICY.SHEETS.CLAIM_EXPIRED,
+      OPS_ROUTING_POLICY.SHEETS.REJECT_CLAIM,
       OPS_ROUTING_POLICY.SHEETS.SC_FARHAN,
       OPS_ROUTING_POLICY.SHEETS.SC_MEILANI,
       OPS_ROUTING_POLICY.SHEETS.SC_IVAN,
@@ -2114,6 +2067,7 @@ const CONFIG = Object.freeze({
       OPS_ROUTING_POLICY.SHEETS.START,
       OPS_ROUTING_POLICY.SHEETS.FINISH,
       OPS_ROUTING_POLICY.SHEETS.CLAIM_EXPIRED,
+      OPS_ROUTING_POLICY.SHEETS.REJECT_CLAIM,
       OPS_ROUTING_POLICY.SHEETS.SC_FARHAN,
       OPS_ROUTING_POLICY.SHEETS.SC_MEILANI,
       OPS_ROUTING_POLICY.SHEETS.SC_IVAN,
@@ -2152,6 +2106,7 @@ const CONFIG = Object.freeze({
     [OPS_ROUTING_POLICY.SHEETS.START]: OPS_ROUTING_POLICY.LAST_STATUS_BY_SHEET['Start'],
     [OPS_ROUTING_POLICY.SHEETS.FINISH]: OPS_ROUTING_POLICY.LAST_STATUS_BY_SHEET['Finish'],
     [OPS_ROUTING_POLICY.SHEETS.CLAIM_EXPIRED]: OPS_ROUTING_POLICY.LAST_STATUS_BY_SHEET['Expired Claim'],
+    [OPS_ROUTING_POLICY.SHEETS.REJECT_CLAIM]: OPS_ROUTING_POLICY.LAST_STATUS_BY_SHEET['Reject Claim'],
     [OPS_ROUTING_POLICY.SHEETS.SC_FARHAN]: OPS_ROUTING_POLICY.LAST_STATUS_BY_SHEET['__SC_SHARED__'],
     [OPS_ROUTING_POLICY.SHEETS.SC_MEILANI]: OPS_ROUTING_POLICY.LAST_STATUS_BY_SHEET['__SC_SHARED__'],
     [OPS_ROUTING_POLICY.SHEETS.SC_IVAN]: OPS_ROUTING_POLICY.LAST_STATUS_BY_SHEET['__SC_SHARED__'],
@@ -2167,6 +2122,7 @@ const CONFIG = Object.freeze({
     [OPS_ROUTING_POLICY.SHEETS.START]: OPS_ROUTING_POLICY.LAST_STATUS_BY_SHEET['Start'],
     [OPS_ROUTING_POLICY.SHEETS.FINISH]: OPS_ROUTING_POLICY.LAST_STATUS_BY_SHEET['Finish'],
     [OPS_ROUTING_POLICY.SHEETS.CLAIM_EXPIRED]: OPS_ROUTING_POLICY.LAST_STATUS_BY_SHEET['Expired Claim'],
+    [OPS_ROUTING_POLICY.SHEETS.REJECT_CLAIM]: OPS_ROUTING_POLICY.LAST_STATUS_BY_SHEET['Reject Claim'],
     [OPS_ROUTING_POLICY.SHEETS.SC_FARHAN]: OPS_ROUTING_POLICY.LAST_STATUS_BY_SHEET['__SC_SHARED__'],
     [OPS_ROUTING_POLICY.SHEETS.SC_MEILANI]: OPS_ROUTING_POLICY.LAST_STATUS_BY_SHEET['__SC_SHARED__'],
     [OPS_ROUTING_POLICY.SHEETS.SC_IVAN]: OPS_ROUTING_POLICY.LAST_STATUS_BY_SHEET['__SC_SHARED__'],
@@ -2388,8 +2344,7 @@ function healthCheck_() {
     checkedAt: new Date().toISOString(),
     ok: true,
     master: { ok: false, error: '' },
-    log: { ok: false, error: '' },
-    webapp: { ok: false, error: '' }
+    log: { ok: false, error: '' }
   };
 
   // Master
@@ -2414,19 +2369,7 @@ function healthCheck_() {
     res.log.error = String(eL && eL.message ? eL.message : eL);
   }
 
-  // WebApp Project
-  try {
-    const ss = SpreadsheetApp.openById(String(CONFIG.webappProjectSpreadsheetId));
-    const daily = ss.getSheetByName(WEBAPP_MOVEMENT_POLICY.SHEETS.DAILY);
-    const past = ss.getSheetByName(WEBAPP_MOVEMENT_POLICY.SHEETS.PAST);
-    res.webapp.ok = !!(daily && past);
-    if (!res.webapp.ok) res.webapp.error = 'Missing Daily/Past sheet(s) in WebApp Project';
-  } catch (eW) {
-    res.webapp.ok = false;
-    res.webapp.error = String(eW && eW.message ? eW.message : eW);
-  }
-
-  res.ok = !!(res.master.ok && res.log.ok && res.webapp.ok);
+  res.ok = !!(res.master.ok && res.log.ok);
   try { Logger.log(JSON.stringify(res)); } catch (e0) {}
   return res;
 }

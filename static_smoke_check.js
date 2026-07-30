@@ -62,6 +62,9 @@ function createContext() {
     Set,
     WeakMap,
     WeakSet,
+    fs,
+    path,
+    ROOT,
 
     Utilities: {
       formatDate: (d) => (d instanceof Date ? d.toISOString() : String(d || '')),
@@ -106,6 +109,8 @@ function createContext() {
         const sheets = {
           'Raw Data': sheetStub,
           'Log': sheetStub,
+          'Log - Main': sheetStub,
+          'Log - Sub': sheetStub,
           'Daily': sheetStub,
           'Past': sheetStub
         };
@@ -210,6 +215,8 @@ function runSmoke() {
       days_aging_from_last_activity: 3
     });
     const b2bRow = b2b.data[1];
+    const b2bExcludeSet = (typeof getB2BExcludedStatuses05c_ === 'function') ? getB2BExcludedStatuses05c_() : new Set();
+    const b2bExcludeOk = b2bExcludeSet.has('DONE_EXPIRED') && b2bExcludeSet.has('CLAIM_EXPIRE') && b2bExcludeSet.has('CLAIM_EXPIRE_WALKIN');
     const b2bOk = b2bChanged === 1
       && b2bRow[1] === 'SERVICE_CENTER_CLAIM_WAITING_PICKUP_FINISH'
       && b2bRow[2] === 'New SC'
@@ -310,6 +317,32 @@ function runSmoke() {
     const routingMap = __getSubRoutingMap06a_();
     const routingIdxRaw = (typeof buildRoutingIndex06_ === 'function') ? buildRoutingIndex06_(routingMap) : __buildRoutingIndexLocalSub06a_(routingMap);
     const routingIdx = __normalizeRoutingIndexSub06a_(routingIdxRaw);
+    const mainRoutingIdx = compileRoutingIndex_(CONFIG.statusRoutingAdmin);
+    const courierTargets = enforceRequiredMultiDestinationTargets05b_(
+      'COURIER_PICKUP_START_DONE',
+      mainRoutingIdx.COURIER_PICKUP_START_DONE,
+      CONFIG.opsRouting
+    );
+    const courierFanOutOk = courierTargets.indexOf('Start') !== -1
+      && courierTargets.some(function (name) { return /^SC - /.test(name); });
+    let courierFinalTargets = filterScTargets05b_(
+      courierTargets,
+      'CV Berkah Athallah',
+      CONFIG.opsRouting.SHEETS.SC_FARHAN,
+      CONFIG.opsRouting.SHEETS.SC_MEILANI,
+      CONFIG.opsRouting.SHEETS.SC_IVAN,
+      CONFIG.opsRouting.SC_NAME_KEYWORDS[CONFIG.opsRouting.SHEETS.SC_FARHAN],
+      CONFIG.opsRouting.SC_NAME_KEYWORDS[CONFIG.opsRouting.SHEETS.SC_MEILANI],
+      CONFIG.opsRouting.SC_NAME_KEYWORDS[CONFIG.opsRouting.SHEETS.SC_IVAN],
+      'SC - Unmapped'
+    );
+    courierFinalTargets = enforceRequiredMultiDestinationTargets05b_('COURIER_PICKUP_START_DONE', courierFinalTargets, CONFIG.opsRouting);
+    const courierFinalFanOutOk = courierFinalTargets.indexOf('Start') !== -1
+      && courierFinalTargets.some(function (name) { return /^SC - /.test(name); });
+    const rejectClaimTypeOk = REJECT_CLAIM_TYPE_BY_LAST_STATUS.COURIER_CLAIM_PICKUP_REJECT_DONE === 'SC - Middle'
+      && REJECT_CLAIM_TYPE_BY_LAST_STATUS.QOALA_CLAIM_REJECT === 'Front';
+    const cvBerkahBranchOk = __getBranchFromServiceCenter06_('CV Berkah Athallah') === 'CV Berkah'
+      && __getBranchFromServiceCenter06_('CV Berkah') === 'CV Berkah';
     const scPolicy = __getScRoutingPolicySub06a_();
     const rawStageRef = {
       headerIndex: {

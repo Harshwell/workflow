@@ -221,6 +221,7 @@ const SV03_TEMPLATES = Object.freeze({
     'Nett Claim Amount',
     '% Approval',
     'OR',
+    'Service Center PIC',
     'Update Status',
     'Timestamp',
     'Status',
@@ -348,7 +349,7 @@ const SV03_OPTIONAL_SHEETS_DEFAULT = Object.freeze(['B2B', 'EV-Bike', 'Doss', 'S
 // If headers change, user will adjust them manually.
 const SV03_FIXED_SCHEMA_SHEETS = new Set(['Special Case', 'Exclusion']);
 // Sheets that have specific Update Status/Timestamp columns (Asso/Admin) and must NOT receive generic ones.
-const SV03_WORKFLOW_SHEETS = new Set(['Ask Detail', 'Start', 'Finish', 'Expired Claim']);
+const SV03_WORKFLOW_SHEETS = new Set(['Ask Detail', 'Start', 'Finish', 'Expired Claim', 'Reject Claim']);
 
 
 function sv03_isFixedSchemaSheet_(name) {
@@ -581,6 +582,10 @@ function ensurePicSheets_(ss, pic) {
     (spec.optional || []).forEach(name => {
       if (!sv03_isOptionalSheetEnabledForPic_(pic, name)) return;
 
+      if (name === 'Reject Claim' && SV03_TEMPLATES.OPS_PIC_WORKFLOW) {
+        sv03_ensureSheetWithHeader_(ss, 'Reject Claim', SV03_TEMPLATES.OPS_PIC_WORKFLOW, pic);
+        return;
+      }
       if (name === 'B2B') {
         sv03_ensureSheetWithHeader_(ss, 'B2B', SV03_TEMPLATES.B2B, pic);
         return;
@@ -647,13 +652,16 @@ function clearSheetDataHard_(sh, opts) {
   const bufferRows = (opts.bufferRows != null) ? opts.bufferRows : 300;
   const clearFormats = (opts.clearFormats != null) ? !!opts.clearFormats : true;
   const preserveTemplateRow = !!opts.preserveTemplateRow; // keep row 2 formatting/DV as template when requested
+  const clearEntireDataArea = !!opts.clearEntireDataArea;
 
   const lastCol = sh.getLastColumn();
   if (lastCol <= 0) return;
 
   const maxRows = sh.getMaxRows();
   const lastRowContent = sh.getLastRow();
-  const targetLastRow = Math.min(maxRows, Math.max(1, lastRowContent) + bufferRows);
+  const targetLastRow = clearEntireDataArea
+    ? maxRows
+    : Math.min(maxRows, Math.max(1, lastRowContent) + bufferRows);
   if (targetLastRow <= 1) return;
 
   const rng = sh.getRange(2, 1, targetLastRow - 1, lastCol);

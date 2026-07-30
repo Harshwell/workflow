@@ -609,7 +609,7 @@ function runSubFromFormDrive06a_(req, runId) {
     'PO',
     'Exclusion',
     'Expired Claim',
-    'B2B',
+    'Reject Claim',
     'EV-Bike',
     'Doss'
   ];
@@ -678,18 +678,6 @@ function __runSubCore06a_(masterSs, oldBlob, newBlob, opt) {
   const doTrashFlush = !!o.doTrashFlush;
 
   const startedAt = new Date();
-  try { setProgressForFlow_('SUB', 0.05, 'Snapshot PREV...', { prefixFlowInStep: true }); } catch (e0) {}
-  try { setProgressForFlow_('SUB', 0.05, 'Snapshot PREV…', { prefixFlowInStep: true }); } catch (e0) {}
-
-  // WebApp snapshots (best effort)
-  try {
-    if (typeof webappMovementSnapshotPrevForSub06c_ === 'function') {
-      webappMovementSnapshotPrevForSub06c_(masterSs, rawOldName, rawNewName);
-    }
-  } catch (eWp0) {
-    try { logLine_('WEBAPP_SNAP_PREV_ERR', 'Snapshot PREV failed (non-fatal)', String(eWp0), '', 'WARN'); } catch (eWp2) {}
-  }
-
   try { setProgressForFlow_('SUB', 0.20, 'Process OLD...', { prefixFlowInStep: true }); } catch (e1) {}
   try { setProgressForFlow_('SUB', 0.20, 'Process OLD…', { prefixFlowInStep: true }); } catch (e1) {}
 
@@ -726,14 +714,6 @@ function __runSubCore06a_(masterSs, oldBlob, newBlob, opt) {
   }
   const sortRes = __sortOperationalSheetsSub06a_(masterSs, opSheets, sortSpecs);
 
-  // WebApp movement tracking (best effort)
-  try {
-    if (typeof webappMovementSnapshotCurrAndTrackForSub06c_ === 'function') {
-      webappMovementSnapshotCurrAndTrackForSub06c_(masterSs, rawOldName, rawNewName);
-    }
-  } catch (eWp4) {
-    try { logLine_('WEBAPP_MOVE_ERR', 'Movement tracking failed (non-fatal)', String(eWp4), '', 'WARN'); } catch (eWp5) {}
-  }
 
   // Trash uploaded files only after successful SUB
   if (doTrashFlush) {
@@ -760,9 +740,9 @@ function __runSubCore06a_(masterSs, oldBlob, newBlob, opt) {
 
 function __getSubRelocationSheetNames06a_(sheetNames) {
   const names = Array.isArray(sheetNames) ? sheetNames : [];
-  // EV-Bike/Doss are user-managed optional buckets; SUB relocation must not move/delete their rows.
+  // B2B/EV-Bike/Doss are optional buckets; SUB relocation must not move/delete their rows.
   // Exclusion MUST stay in relocation scope so status transitions like DONE_REPAIR -> DONE can move there.
-  const blocked = new Set(['ev-bike', 'doss']);
+  const blocked = new Set(['b2b', 'ev-bike', 'doss']);
   return names.filter(function (name) {
     const key = String(name || '').trim().toLowerCase();
     return key && !blocked.has(key);
@@ -775,6 +755,7 @@ function __normalizeSubOperationalSheetNames06a_(sheetNames) {
   (Array.isArray(sheetNames) ? sheetNames : []).forEach(function(name) {
     let n = String(name || '').trim();
     if (!n) return;
+    if (n.toLowerCase() === 'b2b') return;
     if (n === 'Claim Expired') n = 'Expired Claim';
     const key = n.toLowerCase();
     if (seen[key]) return;
@@ -877,7 +858,7 @@ function ensureMasterSheets_(ss) {
 
   const mustHave = [
     // Operational
-    'Submission', 'Ask Detail', 'OR - OLD', 'Start', 'Finish', 'Expired Claim', 'SC - Farhan', 'SC - Meilani', 'SC - Meindar', 'SC - Unmapped', 'PO', 'Exclusion',
+    'Submission', 'Ask Detail', 'OR - OLD', 'Start', 'Finish', 'Expired Claim', 'Reject Claim', 'SC - Farhan', 'SC - Meilani', 'SC - Meindar', 'SC - Unmapped', 'PO', 'Exclusion',
     // Optional
     'B2B', 'EV-Bike', 'Doss', 'Special Case'
   ];
@@ -1092,7 +1073,7 @@ function runEmailIngest(maxThreads) {
         tmpFileId = conv.fileId;
 
         setProgress_(0.35, 'Processing pipeline...');
-        const res = runPipeline_('Master', [tmpFileId], { flow: 'main', source: 'EMAIL_MAIN', subject: msg.getSubject() });
+        const res = runPipeline_('Master', [tmpFileId], { flow: 'main', source: 'EMAIL_MAIN', subject: msg.getSubject(), deferRouting: true });
         try {
           if (typeof setLogEventContext_ === 'function' && res) {
             setLogEventContext_({
@@ -1315,7 +1296,7 @@ function runSubEmailIngest(maxThreads, options) {
       'PO',
       'Exclusion',
       'Expired Claim',
-      'B2B',
+      'Reject Claim',
       'EV-Bike',
       'Doss'
     ];
@@ -1362,17 +1343,6 @@ function runSubEmailIngest(maxThreads, options) {
 
 
 
-
-// WebApp Project (Movement Claim Tracking): take PREV snapshots BEFORE SUB overwrites Raw.
-try { setProgressForFlow_('SUB', 0.25, 'Snapshot PREV...', { prefixFlowInStep: true }); } catch (eP4) {}
-try {
-  if (typeof webappMovementSnapshotPrevForSub06c_ === 'function') {
-    const snapPrev = webappMovementSnapshotPrevForSub06c_(masterSs, rawOldName, rawNewName);
-    try { logLine_('WEBAPP_SNAP_PREV', 'Snapshot PREV (Raw->WebApp)', JSON.stringify(snapPrev || {}), '', 'INFO'); } catch (eWp1) {}
-  }
-} catch (eWp0) {
-  try { logLine_('WEBAPP_SNAP_PREV_ERR', 'Snapshot PREV failed (non-fatal)', String(eWp0), '', 'WARN'); } catch (eWp2) {}
-}
 
     // Process available attachment(s). Allow SUB to run with only 1 XLSX.
     let rOld = null;
@@ -1441,27 +1411,20 @@ try {
       if (typeof refreshReportBaseFromOperational06_ === 'function') refreshReportBaseFromOperational06_(masterSs);
     } catch (eRb) { try { logLine_('SUB_WARN', 'Report Base refresh failed', String(eRb), '', 'WARN'); } catch (eRb2) {} }
 
-    // One-shot restore from MAIN temp backup (if exists), then delete temp sheet.
-    try {
-      if (typeof restoreOpsManualFromMainTempForSub06c_ === 'function') {
-        const rs = restoreOpsManualFromMainTempForSub06c_(masterSs, 'Master', { deleteAfterRestore: true });
-        const msg = rs && rs.skipped ? ('skip=' + (rs.reason || 'unknown')) : ('restored=' + (rs ? rs.restored : 0) + ' rows=' + (rs ? rs.rows : 0));
-        try { logLine_('SUB_TEMP_RESTORE', 'Restore manual columns from MAIN temp backup', msg, '', (rs && rs.skipped) ? 'INFO' : 'INFO'); } catch (eTr2) {}
-      }
-    } catch (eTr) { try { logLine_('SUB_TEMP_RESTORE_WARN', 'MAIN temp restore failed (non-fatal)', String(eTr), '', 'WARN'); } catch (eTr3) {} }
+    // MAIN→SUB handoff is valid only for the 09:00 SUB window; later hourly SUB runs must not restore it.
+    if (isMainSubHandoffWindow06a_()) {
+      try {
+        if (typeof restoreOpsManualFromMainTempForSub06c_ === 'function') {
+          const rs = restoreOpsManualFromMainTempForSub06c_(masterSs, 'Master', { deleteAfterRestore: true });
+          const msg = rs && rs.skipped ? ('skip=' + (rs.reason || 'unknown')) : ('restored=' + (rs ? rs.restored : 0) + ' rows=' + (rs ? rs.rows : 0));
+          try { logLine_('SUB_TEMP_RESTORE', 'Restore manual columns from MAIN temp backup', msg, '', 'INFO'); } catch (eTr2) {}
+        }
+      } catch (eTr) { try { logLine_('SUB_TEMP_RESTORE_WARN', 'MAIN temp restore failed (non-fatal)', String(eTr), '', 'WARN'); } catch (eTr3) {} }
+    } else {
+      try { logLine_('SUB_TEMP_RESTORE_SKIP', 'Skip MAIN handoff outside 09:00 window', '', '', 'INFO'); } catch (eTrSkip) {}
+    }
 
 
-
-// WebApp Project (Movement Claim Tracking): take CURR snapshots AFTER SUB, then emit Daily events (dedup by Event ID).
-try { setProgressForFlow_('SUB', 0.92, 'Snapshot CURR + movement...', { prefixFlowInStep: true }); } catch (eP10) {}
-try {
-  if (typeof webappMovementSnapshotCurrAndTrackForSub06c_ === 'function') {
-    const snapCurr = webappMovementSnapshotCurrAndTrackForSub06c_(masterSs, rawOldName, rawNewName);
-    try { logLine_('WEBAPP_MOVE', 'Movement tracking emitted to Daily', JSON.stringify(snapCurr || {}), '', 'INFO'); } catch (eWp3) {}
-  }
-} catch (eWp4) {
-  try { logLine_('WEBAPP_MOVE_ERR', 'Movement tracking failed (non-fatal)', String(eWp4), '', 'WARN'); } catch (eWp5) {}
-}
 
     // Cleanup email thread after both succeeded.
     try {
@@ -1483,6 +1446,12 @@ try {
       sorted: sortRes
     });
   });
+}
+
+function isMainSubHandoffWindow06a_(now) {
+  const d = now || new Date();
+  const tz = (typeof getTzSafe_ === 'function') ? getTzSafe_() : Session.getScriptTimeZone();
+  return Number(Utilities.formatDate(d, tz, 'H')) === 9;
 }
 
 function __refreshTokenOptionalSheetsFromSubRaw06a_(ss, rawSheetNames) {
@@ -1775,7 +1744,7 @@ function __coerceSubDatetimeColumnsFromDisplay06a_(values, displayValues) {
     return -1;
   }
 
-  // Datetime columns we care about (SUB + WebApp movement tracking).
+  // Datetime columns used by SUB updates.
   const idxs = [];
   idxs.push(idxOfAny(['claim_last_updated_datetime', 'claim last updated datetime']));
   idxs.push(idxOfAny(['activity_log_timestamp', 'activity log timestamp', 'activity_log_datetime', 'activity log datetime', 'last_activity_log_datetime', 'last activity log datetime']));
@@ -1914,7 +1883,7 @@ function __buildSubRawIndex06a_(values) {
   const idxInsurance = idxOfAny(['insurance_partner_code', 'insurance', 'insurance_code', 'insurance partner code']);
   const idxDeviceType = idxOfAny(['device_type', 'device type']);
   const idxImei = idxOfAny(['device_imei', 'imei/sn', 'imei', 'sn', 'imei/sn']);
-  const idxStoreName = idxOfAny(['outlet_name', 'outlet name', '3. all transaction - qoala_policy_number → outlet_name', 'store_name', 'store name']);
+  const idxStoreName = idxOfAny(['outlet_name', 'outlet name', '3. all transaction - qoala_policy_number → outlet_name']);
   const idxPaName = idxOfAny(['3. all transaction - qoala_policy_number → pa_name', 'pa_name', 'pa name']);
   const idxSpaName = idxOfAny(['3. all transaction - qoala_policy_number → spa_name', 'spa_name', 'spa name']);
 
@@ -2037,7 +2006,8 @@ function __updateOperationalSheetsFromRaw06a_(ss, sheetNames, rawMap, ctx) {
     orSet: new Set(typePolicy['OR'] || []),
     insurance: new Set(typePolicy['Insurance'] || []),
     est: new Set(typePolicy['SC - Est'] || []),
-    rcvd: new Set(typePolicy['SC - Rcvd'] || [])
+    rcvd: new Set(typePolicy['SC - Rcvd'] || []),
+    start: new Set(typePolicy['Start'] || [])
   } : null;
 
   // Precedence (specific > general): On Rep / Wait Rep override Insurance.
@@ -2046,6 +2016,7 @@ function __updateOperationalSheetsFromRaw06a_(ss, sheetNames, rawMap, ctx) {
     if (!s || !typeSets) return '';
     if (typeSets.onRep && typeSets.onRep.has(s)) return 'SC - On Rep';
     if (typeSets.waitRep && typeSets.waitRep.has(s)) return 'SC - Wait Rep';
+    if (typeSets.start && typeSets.start.has(s)) return 'Start';
     if (typeSets.finish && typeSets.finish.has(s)) return 'Finish';
     if (typeSets.orSet && typeSets.orSet.has(s)) return 'OR';
     if (typeSets.insurance && typeSets.insurance.has(s)) return 'Insurance';
@@ -2082,7 +2053,7 @@ function __updateOperationalSheetsFromRaw06a_(ss, sheetNames, rawMap, ctx) {
     const hdr = all[0].map(h => String(h || '').trim());
     const norm = hdr.map(h => h.toLowerCase());
 
-    const isScSheet = (name === scFarhanName || name === scMeilaniName || name === scIvanName);
+    const isScSheet = (name === scFarhanName || name === scMeilaniName || name === scIvanName || name === __getScFallbackSheet06a_());
 
     function idxOfAny(candidates) {
       for (let k = 0; k < candidates.length; k++) {
@@ -2105,7 +2076,7 @@ function __updateOperationalSheetsFromRaw06a_(ss, sheetNames, rawMap, ctx) {
     const idxType = isScSheet ? idxOfAny(['type']) : -1;
     const idxSubmissionDate = idxOfAny(['submission date', 'claim_submitted_datetime', 'claim_submission_date', 'claim submitted datetime', 'submission_date']);
     const idxSubmissionMonth = idxOfAny(['submission by month', 'submission_month']);
-    const idxStoreName = idxOfAny(['store name', 'outlet_name', 'outlet name', 'store_name']);
+    const idxStoreName = idxOfAny(['outlet_name', 'outlet name']);
     const idxPaName = idxOfAny(['pa name', 'pa_name']);
     const idxSpaName = idxOfAny(['spa name', 'spa_name']);
     const idxServiceCenterPic = idxOfAny(['service center pic', 'service_center_pic']);
@@ -2483,6 +2454,17 @@ function __shouldKeepScRowAndCloneFinishSub06a_(status) {
   return /FINISH/i.test(s);
 }
 
+function __shouldMirrorStartAndScSub06a_(status) {
+  return String(status || '').trim().toUpperCase() === 'COURIER_PICKUP_START_DONE';
+}
+
+function __isScSheetNameSub06a_(sheetName, scPolicy) {
+  const name = String(sheetName || '').trim();
+  if (!name) return false;
+  const sheets = (scPolicy && Array.isArray(scPolicy.scSheets)) ? scPolicy.scSheets : ['SC - Farhan', 'SC - Meilani', 'SC - Meindar'];
+  return sheets.indexOf(name) > -1 || name === __getScFallbackSheet06a_();
+}
+
 function __loadMainRawRowsForSubStageAging06a_(ss) {
   const out = { map: new Map(), headerIndex: {} };
   try {
@@ -2656,7 +2638,9 @@ function __relocateOperationalRowsByLastStatusSub06a_(ss, sheetNames) {
     const idxClaim = idxOfAny(norm, ['claim number', 'claim_number', 'claim no', 'claim_no']);
     const idxStatus = idxOfAny(norm, ['last status', 'claim_last_status_name', 'last_status']);
     const idxSc = idxOfAny(norm, ['service center', 'repairer_location_store_name', 'sc_name', 'service_center']);
-    const idxLsd = idxOfAny(norm, ['last status date', 'claim_last_updated_datetime', 'claim last updated datetime']);
+    const idxLsd = idxOfAny(norm, ['last status date', 'claim_last_updated_datetime', 'claim last updated datetime', 'last update datetime', 'last_update_datetime']);
+    const idxLsa = idxOfAny(norm, ['last status aging', 'days_aging_from_last_activity', 'last_status_aging', 'lsa']);
+    const idxType = idxOfAny(norm, ['type']);
 
     if (idxClaim < 0 || idxStatus < 0) {
       res.sheets[sheetName] = { skipped: 'missing Claim Number or Last Status' };
@@ -2717,26 +2701,46 @@ function __relocateOperationalRowsByLastStatusSub06a_(ss, sheetNames) {
 
       const status = __normalizeRoutingStatusKeySub06a_(row[idxStatus]);
       if (!status) continue;
+      const rowTypeIsFinish = idxType >= 0 && String(row[idxType] || '').trim().toLowerCase() === 'finish';
 
       let candidates = routingIdx[status] || null;
+      if (typeof isRejectClaimTarget05b_ === 'function' && isRejectClaimTarget05b_(status, idxLsa >= 0 ? row[idxLsa] : '', idxLsd >= 0 ? row[idxLsd] : '')) {
+        candidates = ss.getSheetByName('Reject Claim') ? ['Reject Claim'] : candidates;
+      }
       // Force SC-universe statuses to be routed by SC keyword split, even if routing map is stale/misaligned.
-      if (scPolicy.sharedStatusSet.has(status)) {
+      if (scPolicy.sharedStatusSet.has(status) && !__shouldMirrorStartAndScSub06a_(status)) {
         candidates = scPolicy.scSheets.filter(function (n) { return !!ss.getSheetByName(n); });
       }
+      const mirrorStartAndSc = __shouldMirrorStartAndScSub06a_(status) && !!ss.getSheetByName('Start');
       const keepScAndCloneFinish = __shouldKeepScRowAndCloneFinishSub06a_(status) && !!ss.getSheetByName('Finish');
-      if (!candidates || !candidates.length) continue;
+      if ((!candidates || !candidates.length) && !mirrorStartAndSc) continue;
 
       const scName = (idxSc >= 0) ? row[idxSc] : '';
+      if (mirrorStartAndSc) {
+        const startDest = 'Start';
+        const scSheets = scPolicy.scSheets.filter(function (n) { return !!ss.getSheetByName(n); });
+        const scDest = pickDest(status, scName, scSheets);
+        if (scDest && scDest !== sheetName && !(exclusiveTokenClaim && scDest === scFallbackSheet)) {
+          movesBySource[sheetName] = movesBySource[sheetName] || [];
+          movesBySource[sheetName].push({ row1Based: r + 1, claim, dest: scDest, status: status, rowVals: row.slice(), srcHdr: d.hdr, copyOnly: sheetName === startDest, preserveManualFields: rowTypeIsFinish });
+        }
+        if (sheetName !== startDest) {
+          movesBySource[sheetName] = movesBySource[sheetName] || [];
+          movesBySource[sheetName].push({ row1Based: r + 1, claim, dest: startDest, status: status, rowVals: row.slice(), srcHdr: d.hdr, copyOnly: __isScSheetNameSub06a_(sheetName, scPolicy) || !!scDest, startClone: true, preserveManualFields: rowTypeIsFinish });
+        }
+        continue;
+      }
+
       if (keepScAndCloneFinish) {
         const scSheets = scPolicy.scSheets.filter(function (n) { return !!ss.getSheetByName(n); });
         const scDest = pickDest(status, scName, scSheets);
         if (scDest && scDest !== sheetName && !(exclusiveTokenClaim && scDest === scFallbackSheet)) {
           movesBySource[sheetName] = movesBySource[sheetName] || [];
-          movesBySource[sheetName].push({ row1Based: r + 1, claim, dest: scDest, status: status, rowVals: row.slice(), srcHdr: d.hdr, copyOnly: sheetName === 'Finish' });
+          movesBySource[sheetName].push({ row1Based: r + 1, claim, dest: scDest, status: status, rowVals: row.slice(), srcHdr: d.hdr, copyOnly: sheetName === 'Finish', preserveManualFields: true });
         }
         if (sheetName !== 'Finish') {
           movesBySource[sheetName] = movesBySource[sheetName] || [];
-          movesBySource[sheetName].push({ row1Based: r + 1, claim, dest: 'Finish', status: status, rowVals: row.slice(), srcHdr: d.hdr, copyOnly: true, finishClone: true });
+          movesBySource[sheetName].push({ row1Based: r + 1, claim, dest: 'Finish', status: status, rowVals: row.slice(), srcHdr: d.hdr, copyOnly: true, finishClone: true, preserveManualFields: true });
         }
         continue;
       }
@@ -2758,7 +2762,7 @@ function __relocateOperationalRowsByLastStatusSub06a_(ss, sheetNames) {
       if (!dest || dest === sheetName) continue;
 
       movesBySource[sheetName] = movesBySource[sheetName] || [];
-      movesBySource[sheetName].push({ row1Based: r + 1, claim, dest, status: status, rowVals: row.slice(), srcHdr: d.hdr });
+      movesBySource[sheetName].push({ row1Based: r + 1, claim, dest, status: status, rowVals: row.slice(), srcHdr: d.hdr, preserveManualFields: rowTypeIsFinish });
     }
   });
 
@@ -2831,17 +2835,23 @@ function __relocateOperationalRowsByLastStatusSub06a_(ss, sheetNames) {
       timestamp: idxOfAnyLocal(['timestamp']),
       status: idxOfAnyLocal(['status']),
       remarks: idxOfAnyLocal(['remarks', 'remark']),
-      stageAging: idxOfAnyLocal(['stage aging', 'aging position', 'aging post.', 'aging post'])
+      stageAging: idxOfAnyLocal(['stage aging', 'aging position', 'aging post.', 'aging post']),
+      type: idxOfAnyLocal(['type'])
     };
   }
 
-  function resetMovedRowFieldsByHeader(rowVals, resetIdx, stageAgingValue) {
+  function resetMovedRowFieldsByHeader(rowVals, resetIdx, stageAgingValue, preserveManualFields) {
     const out = Array.isArray(rowVals) ? rowVals.slice() : [];
     if (!resetIdx) return out;
-    const keys = ['updateStatus', 'timestamp', 'status', 'remarks'];
-    for (let i = 0; i < keys.length; i++) {
-      const ix = resetIdx[keys[i]];
-      if (ix != null && ix >= 0 && ix < out.length) out[ix] = '';
+    // SUB Finish rows must keep the four user/workflow columns. MAIN has already backed
+    // them up, and clearing them during SUB relocation makes Type=Finish claims look
+    // "lost" right after Update Status/Timestamp/Status/Remarks are refreshed.
+    if (!preserveManualFields) {
+      const keys = ['updateStatus', 'timestamp', 'status', 'remarks'];
+      for (let i = 0; i < keys.length; i++) {
+        const ix = resetIdx[keys[i]];
+        if (ix != null && ix >= 0 && ix < out.length) out[ix] = '';
+      }
     }
     const idxStageAging = resetIdx.stageAging;
     if (idxStageAging != null && idxStageAging >= 0 && idxStageAging < out.length) out[idxStageAging] = (stageAgingValue === '' || stageAgingValue == null) ? 0 : stageAgingValue;
@@ -2957,7 +2967,9 @@ function __relocateOperationalRowsByLastStatusSub06a_(ss, sheetNames) {
       const aligned = alignRowToTarget(mv.srcHdr, mv.rowVals, tgt.hdr, tgt.lc);
       const resetIdx = getResetColumnIndexesByHeader(tgt.hdr);
       const stageAgingForMove = __resolveMovedStageAgingSub06a_(mv.claim, mv.dest, (mv.status || ''), mainRawForStageAging, routingIdx, scPolicy);
-      const alignedAfterReset = resetMovedRowFieldsByHeader(aligned, resetIdx, stageAgingForMove);
+      const alignedTypeIsFinish = resetIdx.type != null && resetIdx.type >= 0 && resetIdx.type < aligned.length && String(aligned[resetIdx.type] || '').trim().toLowerCase() === 'finish';
+      const preserveManualFields = String(mv.dest || '').trim().toLowerCase() === 'finish' || mv.finishClone === true || mv.preserveManualFields === true || alignedTypeIsFinish;
+      const alignedAfterReset = resetMovedRowFieldsByHeader(aligned, resetIdx, stageAgingForMove, preserveManualFields);
 
       // If claim already exists in target, MERGE non-empty cells to avoid data loss and avoid duplicates.
       const existing = tgt.map.get(mv.claim) || [];
@@ -2970,8 +2982,8 @@ function __relocateOperationalRowsByLastStatusSub06a_(ss, sheetNames) {
           for (let c = 0; c < tgt.lc; c++) {
             if (alignedAfterReset[c] !== '' && alignedAfterReset[c] != null) merged[c] = alignedAfterReset[c];
           }
-          // Always reset manual workflow columns and Stage Aging after cross-sheet movement.
-          const mergedAfterReset = resetMovedRowFieldsByHeader(merged, resetIdx, stageAgingForMove);
+          // Preserve manual workflow columns for Finish targets; reset them for other cross-sheet movements.
+          const mergedAfterReset = resetMovedRowFieldsByHeader(merged, resetIdx, stageAgingForMove, preserveManualFields);
           tgt.sh.getRange(keepRow, 1, 1, tgt.lc).setValues([mergedAfterReset]);
           applyRichTextLinksToTarget(srcName, mv.row1Based, mv.srcHdr, tgt.sh, tgt.hdr, keepRow, tgt.lc);
         }
@@ -2997,7 +3009,7 @@ function __relocateOperationalRowsByLastStatusSub06a_(ss, sheetNames) {
           if (srcSh && sameSchema) {
             srcSh.getRange(mv.row1Based, 1, 1, tgt.lc)
               .copyTo(tgt.sh.getRange(appendRow, 1, 1, tgt.lc), SpreadsheetApp.CopyPasteType.PASTE_NORMAL, false);
-            const resetRow = resetMovedRowFieldsByHeader(tgt.sh.getRange(appendRow, 1, 1, tgt.lc).getValues()[0], resetIdx, stageAgingForMove);
+            const resetRow = resetMovedRowFieldsByHeader(tgt.sh.getRange(appendRow, 1, 1, tgt.lc).getValues()[0], resetIdx, stageAgingForMove, preserveManualFields);
             tgt.sh.getRange(appendRow, 1, 1, tgt.lc).setValues([resetRow]);
           } else {
             tgt.sh.getRange(appendRow, 1, 1, tgt.lc).setValues([alignedAfterReset]);
@@ -3152,9 +3164,9 @@ function __getScSheetAllowlistsSub06a_() {
   } catch (e1) {}
 
   // 3) hard fallback (should rarely be used)
-  if (!out['SC - Farhan'] || !out['SC - Farhan'].length) out['SC - Farhan'] = ['mitracare', 'sitcomtara', 'gsi', 'ibox'].map(norm);
+  if (!out['SC - Farhan'] || !out['SC - Farhan'].length) out['SC - Farhan'] = ['mitracare', 'sitcomtara', 'ibox', 'rejeki seluler', 'rejeki seluller'].map(norm);
   if (!out['SC - Meindar'] || !out['SC - Meindar'].length) out['SC - Meindar'] = [].map(norm);
-  if (!out['SC - Meilani'] || !out['SC - Meilani'].length) out['SC - Meilani'] = [].map(norm);
+  if (!out['SC - Meilani'] || !out['SC - Meilani'].length) out['SC - Meilani'] = ['gsi'].map(norm);
 
   return out;
 }

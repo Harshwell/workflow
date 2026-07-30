@@ -108,7 +108,7 @@ var CFG = {
 
   // Middle PIC mapping via Service Center keywords
   MIDDLE_SC_KEYWORDS: {
-    Farhan: ['mitracare', 'sitcomtara', 'ibox', 'gsi'],
+    Farhan: ['mitracare', 'sitcomtara', 'ibox', 'gsi', 'rejeki seluler', 'rejeki seluller', 'cv berkah athallah', 'cv berkah'],
     Meilani: ['unicom', 'xiaomi authorized', 'samsung exclusive', 'carlcare', 'andalas'],
     Ivan: [
       'andalas', 'klikcare', 'j-bros', 'makmur era abadi',

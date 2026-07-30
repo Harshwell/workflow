@@ -1,7 +1,40 @@
+# Unreleased
+- MAIN stage 2 melewati snapshot manual duplikat sebelum clear karena snapshot durable sudah dibuat stage 1, mengurangi read Spreadsheet API yang menyebabkan execution tersangkut.
+- Stage 2 MAIN tidak lagi menghapus temp snapshot agar handoff restore SUB 09:00 tetap tersedia.
+- Log stage 2 MAIN sekarang selalu append setelah log stage 1; progress kumulatif 50%→100% dan checkpoint detail ditulis untuk clear/route/restore/enrich/finalize.
+- Backup/restore enam kolom manual (`Update Status`, `Timestamp`, `Status`, `Remarks`, `AWB`, `Timestamp AWB`) kini menyimpan formula dan mengembalikannya setelah routing agar formula dihitung ulang pada row hasil restore.
+- SUB optional refresh EV-Bike/Doss tidak lagi menulis kolom manual/dropdown; handoff backup MAIN→SUB hanya diproses pada window 09:00.
+- Optional project Service Center Extractor, Salvage, dan Outstanding sekarang mengikuti override Farhan untuk CV Berkah/Rejeki Seluler serta EzCare Apple sejak 15 Jul 2026; Extractor otomatis membuat/menulis tab CV Berkah dan Rejeki Seluler tanpa mapping manual.
+- MAIN sekarang menggunakan continuation dua tahap dengan Script Properties token + one-shot trigger untuk memisahkan ingest/backup dari clear/route/restore; Log - Main berlanjut dengan RunID sama tanpa reset pada transisi stage.
+- Memisahkan audit log MAIN (`Log - Main`) dan SUB (`Log - Sub`) dengan lazy migration yang aman.
+- Menambahkan backup AWB/Timestamp AWB, mapping Claim Type Reject Claim, SC CV Berkah/Rejeki Seluler, dan split EzCare Apple per 15 Jul 2026.
+- Mengganti Service Type menjadi Claim Type dan menambahkan Service Center PIC di PO.
+
 # Changelog
 
 Repo ini memakai changelog ringan yang fokus ke perubahan yang benar-benar relevan buat maintainer.
 Formatnya sengaja sederhana: **Added / Changed / Fixed**. Tidak perlu sok formal kalau ujungnya tidak pernah dibaca.
+
+---
+
+
+## 2026-07-06
+
+### Added
+- Sheet operasional `Reject Claim` untuk klaim dengan `Last Status` mengandung keyword `reject` dan `days_aging_from_last_activity` atau `last_update_datetime` masih `<= 30` hari.
+
+### Changed
+- Mapping GSI dipindahkan ke Meilani di routing SC, Service Center PIC, Service Center Extractor, dan Salvage; Rejeki Seluler/Rejeki Seluller tetap diarahkan ke Farhan.
+- WebApp Movement Tracking dihapus dari runtime dan health check pipeline. Daily/Weekly Report Base tetap dipertahankan.
+- Strict sync kedua setelah optional processors dibatasi ke optional sheets untuk mengurangi scan/write operational sheets berulang.
+- `Submission.TAT` diformat decimal 1 digit; sheet lain tetap integer.
+- Dokumentasi workflow/column contract diperbarui untuk Reject Claim, SC mapping, dan perubahan runtime.
+
+### Fixed
+- SUB relocation sekarang dapat memindahkan klaim existing ke `Reject Claim` saat status berubah menjadi reject dan masih dalam window 30 hari.
+- Branch/PIC mapping mengenali Rejeki Seluler agar tidak jatuh ke unknown/unmapped.
+- B2B sekarang mengecualikan status `DONE_EXPIRED`, `CLAIM_EXPIRE`, dan `CLAIM_EXPIRE_WALKIN`.
+- Salvage tidak lagi menulis Last Update Timestamp ke F1; timestamp run hanya mengisi `D1:E1`.
 
 ---
 

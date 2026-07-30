@@ -152,6 +152,8 @@ function applyRemarksRichTextToOperational_(ss, rawSheet, headerIndexRaw, pic) {
     const header = sh.getRange(1, 1, 1, lastCol).getValues()[0].map(__normalizeHeaderText06_);
     const idxClaim = __findHeaderIndexFlexible06_(header, 'Claim Number');
     const idxRemarks = __findHeaderIndexFlexible06_(header, 'Remarks');
+    const idxAwb = __findHeaderIndexFlexible06_(header, 'AWB');
+    const idxTimestampAwb = __findHeaderIndexFlexible06_(header, 'Timestamp AWB');
     if (idxClaim === -1 || idxRemarks === -1) continue;
 
     const rows = lastRow - 1;
@@ -220,8 +222,10 @@ function snapshotOpsManualColumnsRich06c_(ss, pic) {
     const idxTs = __findHeaderIndexFlexible06_(header, 'Timestamp');
     const idxStatus = isEvBike ? -1 : __findHeaderIndexFlexible06_(header, 'Status');
     const idxRemarks = __findHeaderIndexFlexible06_(header, 'Remarks');
+    const idxAwb = __findHeaderIndexFlexible06_(header, 'AWB');
+    const idxTimestampAwb = __findHeaderIndexFlexible06_(header, 'Timestamp AWB');
 
-    if (idxUpdate === -1 && idxTs === -1 && idxStatus === -1 && idxRemarks === -1) continue;
+    if (idxUpdate === -1 && idxTs === -1 && idxStatus === -1 && idxRemarks === -1 && idxAwb === -1 && idxTimestampAwb === -1) continue;
 
     const n = lr - 1;
     const claims = sh.getRange(2, idxClaim + 1, n, 1).getValues();
@@ -230,17 +234,28 @@ function snapshotOpsManualColumnsRich06c_(ss, pic) {
     const rngTs = (idxTs !== -1) ? sh.getRange(2, idxTs + 1, n, 1) : null;
     const rngStatus = (idxStatus !== -1) ? sh.getRange(2, idxStatus + 1, n, 1) : null;
     const rngRemarks = (idxRemarks !== -1) ? sh.getRange(2, idxRemarks + 1, n, 1) : null;
+    const rngAwb = (idxAwb !== -1) ? sh.getRange(2, idxAwb + 1, n, 1) : null;
+    const rngTimestampAwb = (idxTimestampAwb !== -1) ? sh.getRange(2, idxTimestampAwb + 1, n, 1) : null;
 
     const updRT = rngUpdate ? rngUpdate.getRichTextValues() : null;
     const updWrap = rngUpdate ? rngUpdate.getWrapStrategies() : null;
+    const updFormula = rngUpdate ? rngUpdate.getFormulas() : null;
 
     const tsVals = rngTs ? rngTs.getValues() : null;
     const tsFmt = rngTs ? rngTs.getNumberFormats() : null;
+    const tsFormula = rngTs ? rngTs.getFormulas() : null;
 
     const stVals = rngStatus ? rngStatus.getValues() : null;
+    const stFormula = rngStatus ? rngStatus.getFormulas() : null;
 
     const remRT = rngRemarks ? rngRemarks.getRichTextValues() : null;
     const remWrap = rngRemarks ? rngRemarks.getWrapStrategies() : null;
+    const remFormula = rngRemarks ? rngRemarks.getFormulas() : null;
+    const awbVals = rngAwb ? rngAwb.getValues() : null;
+    const awbFormula = rngAwb ? rngAwb.getFormulas() : null;
+    const tsAwbVals = rngTimestampAwb ? rngTimestampAwb.getValues() : null;
+    const tsAwbFmt = rngTimestampAwb ? rngTimestampAwb.getNumberFormats() : null;
+    const tsAwbFormula = rngTimestampAwb ? rngTimestampAwb.getFormulas() : null;
 
     for (let i = 0; i < n; i++) {
       const claim = __claimKey06_(claims[i] && claims[i][0]);
@@ -257,7 +272,7 @@ function snapshotOpsManualColumnsRich06c_(ss, pic) {
         const rt = (updRT[i] && updRT[i][0]) ? updRT[i][0] : null;
         const txt = (rt && rt.getText) ? String(rt.getText() || '') : '';
         if (txt !== '') {
-          rec.u = { rt: rt, wrap: (updWrap && updWrap[i] && updWrap[i][0]) ? updWrap[i][0] : null };
+          rec.u = { rt: rt, wrap: (updWrap && updWrap[i] && updWrap[i][0]) ? updWrap[i][0] : null, formula: (updFormula && updFormula[i]) ? updFormula[i][0] : '' };
           any = true;
         }
       }
@@ -265,7 +280,7 @@ function snapshotOpsManualColumnsRich06c_(ss, pic) {
       if (tsVals) {
         const v = tsVals[i] ? tsVals[i][0] : '';
         if (v !== '' && v != null) {
-          rec.t = { v: v, fmt: (tsFmt && tsFmt[i] && tsFmt[i][0]) ? tsFmt[i][0] : null };
+          rec.t = { v: v, fmt: (tsFmt && tsFmt[i] && tsFmt[i][0]) ? tsFmt[i][0] : null, formula: (tsFormula && tsFormula[i]) ? tsFormula[i][0] : '' };
           any = true;
         }
       }
@@ -273,7 +288,7 @@ function snapshotOpsManualColumnsRich06c_(ss, pic) {
       if (stVals) {
         const v = stVals[i] ? stVals[i][0] : '';
         if (v !== '' && v != null) {
-          rec.s = { v: v };
+          rec.s = { v: v, formula: (stFormula && stFormula[i]) ? stFormula[i][0] : '' };
           any = true;
         }
       }
@@ -282,9 +297,20 @@ function snapshotOpsManualColumnsRich06c_(ss, pic) {
         const rt = (remRT[i] && remRT[i][0]) ? remRT[i][0] : null;
         const txt = (rt && rt.getText) ? String(rt.getText() || '') : '';
         if (txt !== '') {
-          rec.r = { rt: rt, wrap: (remWrap && remWrap[i] && remWrap[i][0]) ? remWrap[i][0] : null };
+          rec.r = { rt: rt, wrap: (remWrap && remWrap[i] && remWrap[i][0]) ? remWrap[i][0] : null, formula: (remFormula && remFormula[i]) ? remFormula[i][0] : '' };
           any = true;
         }
+      }
+
+      if (awbVals) {
+        const v = awbVals[i] ? awbVals[i][0] : '';
+        const f = (awbFormula && awbFormula[i]) ? awbFormula[i][0] : '';
+        if (v !== '' || f) { rec.a = { v: v, formula: f }; any = true; }
+      }
+      if (tsAwbVals) {
+        const v = tsAwbVals[i] ? tsAwbVals[i][0] : '';
+        const f = (tsAwbFormula && tsAwbFormula[i]) ? tsAwbFormula[i][0] : '';
+        if (v !== '' || f) { rec.ta = { v: v, fmt: (tsAwbFmt && tsAwbFmt[i]) ? tsAwbFmt[i][0] : null, formula: f }; any = true; }
       }
 
       if (any) {
@@ -404,7 +430,7 @@ function persistOpsManualTempForSub06c_(ss, pic) {
   const header = ['Backup Timestamp','PIC','Source Sheet','Claim Number','Service Center','Update Status','Timestamp','Status','Remarks'];
   const rows = [header];
   const now = new Date();
-  const richJobs = [];
+  const copyJobs = [];
 
   for (let si = 0; si < sheetNames.length; si++) {
     const srcName = sheetNames[si];
@@ -432,47 +458,39 @@ function persistOpsManualTempForSub06c_(ss, pic) {
 
     if (idxUpd === -1 && idxTs === -1 && idxSt === -1 && idxRem === -1) continue;
 
+    // Keep a row-for-row block in the temp sheet. This permits four bulk copyTo calls
+    // per source sheet instead of four calls per claim, which avoids MAIN timeouts.
     const vals = src.getRange(2, 1, lr - 1, lc).getValues();
+    const tempStartRow = rows.length + 1;
     for (let r = 0; r < vals.length; r++) {
       const row = vals[r] || [];
-      const claim = String(row[idxClaim] || '').trim();
-      if (!claim) continue;
       rows.push([
         now,
         String(pic || ''),
         srcName,
-        claim,
+        String(row[idxClaim] || '').trim(),
         idxSc !== -1 ? row[idxSc] : '',
         idxUpd !== -1 ? row[idxUpd] : '',
         idxTs !== -1 ? row[idxTs] : '',
         idxSt !== -1 ? row[idxSt] : '',
         idxRem !== -1 ? row[idxRem] : ''
       ]);
-      const tempRowNo = rows.length; // 1-based row index in temp sheet
-      richJobs.push({
-        src: src,
-        srcRowNo: r + 2,
-        idxUpd: idxUpd,
-        idxTs: idxTs,
-        idxSt: idxSt,
-        idxRem: idxRem,
-        tempRowNo: tempRowNo
-      });
     }
+    copyJobs.push({ src: src, srcStartRow: 2, tempStartRow: tempStartRow, rows: vals.length,
+      idxUpd: idxUpd, idxTs: idxTs, idxSt: idxSt, idxRem: idxRem });
   }
 
   sh.clearContents();
   sh.getRange(1, 1, rows.length, header.length).setValues(rows);
   try { sh.getRange(1, 1, 1, header.length).setFontWeight('bold'); } catch (e1) {}
 
-  // Preserve per-cell style 1:1 (rich text, colors, number format, wrap, DV) for manual columns.
-  for (let i = 0; i < richJobs.length; i++) {
-    const j = richJobs[i];
-    try { if (j.idxUpd !== -1) j.src.getRange(j.srcRowNo, j.idxUpd + 1).copyTo(sh.getRange(j.tempRowNo, 6), { contentsOnly: false }); } catch (eU) {}
-    try { if (j.idxTs !== -1) j.src.getRange(j.srcRowNo, j.idxTs + 1).copyTo(sh.getRange(j.tempRowNo, 7), { contentsOnly: false }); } catch (eT) {}
-    try { if (j.idxSt !== -1) j.src.getRange(j.srcRowNo, j.idxSt + 1).copyTo(sh.getRange(j.tempRowNo, 8), { contentsOnly: false }); } catch (eS) {}
-    try { if (j.idxRem !== -1) j.src.getRange(j.srcRowNo, j.idxRem + 1).copyTo(sh.getRange(j.tempRowNo, 9), { contentsOnly: false }); } catch (eR) {}
-  }
+  // Preserve styles in bulk (rich text, colors, number format, wrap, DV).
+  copyJobs.forEach(function(j) {
+    try { if (j.idxUpd !== -1) j.src.getRange(j.srcStartRow, j.idxUpd + 1, j.rows, 1).copyTo(sh.getRange(j.tempStartRow, 6, j.rows, 1), { contentsOnly: false }); } catch (eU) {}
+    try { if (j.idxTs !== -1) j.src.getRange(j.srcStartRow, j.idxTs + 1, j.rows, 1).copyTo(sh.getRange(j.tempStartRow, 7, j.rows, 1), { contentsOnly: false }); } catch (eT) {}
+    try { if (j.idxSt !== -1) j.src.getRange(j.srcStartRow, j.idxSt + 1, j.rows, 1).copyTo(sh.getRange(j.tempStartRow, 8, j.rows, 1), { contentsOnly: false }); } catch (eS) {}
+    try { if (j.idxRem !== -1) j.src.getRange(j.srcStartRow, j.idxRem + 1, j.rows, 1).copyTo(sh.getRange(j.tempStartRow, 9, j.rows, 1), { contentsOnly: false }); } catch (eR) {}
+  });
 
   return { rows: Math.max(0, rows.length - 1), sheet: name };
 }
@@ -547,6 +565,7 @@ function restoreOpsManualFromMainTempForSub06c_(ss, pic, opts) {
     const outT = iT !== -1 ? sh.getRange(2, iT + 1, n, 1).getValues() : null;
     const outS = iS !== -1 ? sh.getRange(2, iS + 1, n, 1).getValues() : null;
     const outR = iR !== -1 ? sh.getRange(2, iR + 1, n, 1).getValues() : null;
+    const styleJobs = [];
 
     for (let r = 0; r < n; r++) {
       const k = keyOf(claims[r][0], scs[r][0]);
@@ -557,17 +576,26 @@ function restoreOpsManualFromMainTempForSub06c_(ss, pic, opts) {
       if (outS && String(outS[r][0] || '').trim() === '' && String(rec.s || '').trim() !== '') { outS[r][0] = rec.s; restored++; }
       if (outR && String(outR[r][0] || '').trim() === '' && String(rec.r || '').trim() !== '') { outR[r][0] = rec.r; restored++; }
 
-      // Preserve style 1:1 from temp sheet (rich text, color, wrap, DV) for restored cells.
-      try { if (iU !== -1 && String(outU[r][0] || '').trim() !== '' && rec.rowNo) shBak.getRange(rec.rowNo, 6).copyTo(sh.getRange(r + 2, iU + 1), { contentsOnly: false }); } catch (eCu) {}
-      try { if (iT !== -1 && String(outT[r][0] || '').trim() !== '' && rec.rowNo) shBak.getRange(rec.rowNo, 7).copyTo(sh.getRange(r + 2, iT + 1), { contentsOnly: false }); } catch (eCt) {}
-      try { if (iS !== -1 && String(outS[r][0] || '').trim() !== '' && rec.rowNo) shBak.getRange(rec.rowNo, 8).copyTo(sh.getRange(r + 2, iS + 1), { contentsOnly: false }); } catch (eCs) {}
-      try { if (iR !== -1 && String(outR[r][0] || '').trim() !== '' && rec.rowNo) shBak.getRange(rec.rowNo, 9).copyTo(sh.getRange(r + 2, iR + 1), { contentsOnly: false }); } catch (eCr) {}
+      // Preserve style 1:1 from temp sheet (rich text, font color, wrap, DV)
+      // after value writes. If copyTo runs before setValues(), the later value
+      // batch can flatten rich text/font styling and recreate the shifted color
+      // issue during MAIN -> SUB restore.
+      if (rec.rowNo) {
+        if (iU !== -1 && outU && String(outU[r][0] || '').trim() !== '') styleJobs.push({ srcRow: rec.rowNo, srcCol: 6, dstRow: r + 2, dstCol: iU + 1 });
+        if (iT !== -1 && outT && String(outT[r][0] || '').trim() !== '') styleJobs.push({ srcRow: rec.rowNo, srcCol: 7, dstRow: r + 2, dstCol: iT + 1 });
+        if (iS !== -1 && outS && String(outS[r][0] || '').trim() !== '') styleJobs.push({ srcRow: rec.rowNo, srcCol: 8, dstRow: r + 2, dstCol: iS + 1 });
+        if (iR !== -1 && outR && String(outR[r][0] || '').trim() !== '') styleJobs.push({ srcRow: rec.rowNo, srcCol: 9, dstRow: r + 2, dstCol: iR + 1 });
+      }
     }
 
     try { if (outU) sh.getRange(2, iU + 1, n, 1).setValues(outU); } catch (e) {}
     try { if (outT) sh.getRange(2, iT + 1, n, 1).setValues(outT); } catch (e) {}
     try { if (outS) sh.getRange(2, iS + 1, n, 1).setValues(outS); } catch (e) {}
     try { if (outR) sh.getRange(2, iR + 1, n, 1).setValues(outR); } catch (e) {}
+    for (let j = 0; j < styleJobs.length; j++) {
+      const job = styleJobs[j];
+      try { shBak.getRange(job.srcRow, job.srcCol).copyTo(sh.getRange(job.dstRow, job.dstCol), { contentsOnly: false }); } catch (eCopy) {}
+    }
   }
 
   if (opts.deleteAfterRestore !== false) {
@@ -671,8 +699,10 @@ function restoreOpsManualColumnsRich06c_(ss, pic, snapshot) {
     const idxTs = __findHeaderIndexFlexible06_(header, 'Timestamp');
     const idxStatus = isEvBike ? -1 : __findHeaderIndexFlexible06_(header, 'Status');
     const idxRemarks = __findHeaderIndexFlexible06_(header, 'Remarks');
+    const idxAwb = __findHeaderIndexFlexible06_(header, 'AWB');
+    const idxTimestampAwb = __findHeaderIndexFlexible06_(header, 'Timestamp AWB');
 
-    if (idxUpdate === -1 && idxTs === -1 && idxStatus === -1 && idxRemarks === -1) continue;
+    if (idxUpdate === -1 && idxTs === -1 && idxStatus === -1 && idxRemarks === -1 && idxAwb === -1 && idxTimestampAwb === -1) continue;
 
     const n = lr - 1;
     const claims = sh.getRange(2, idxClaim + 1, n, 1).getValues();
@@ -691,6 +721,8 @@ function restoreOpsManualColumnsRich06c_(ss, pic, snapshot) {
 
     const rowsStatus = [];
     const mapStatus = Object.create(null);
+    const formulaJobs = { u: { rows: [], map: Object.create(null), idx: idxUpdate }, t: { rows: [], map: Object.create(null), idx: idxTs }, s: { rows: [], map: Object.create(null), idx: idxStatus }, r: { rows: [], map: Object.create(null), idx: idxRemarks }, a: { rows: [], map: Object.create(null), idx: idxAwb }, ta: { rows: [], map: Object.create(null), idx: idxTimestampAwb } };
+    const rowsAwb = [], mapAwb = Object.create(null), rowsTimestampAwb = [], mapTimestampAwb = Object.create(null), mapTimestampAwbFmt = Object.create(null);
 
     for (let i = 0; i < n; i++) {
       const claim = __claimKey06_(claims[i] && claims[i][0]);
@@ -700,6 +732,10 @@ function restoreOpsManualColumnsRich06c_(ss, pic, snapshot) {
       if (!rec) continue;
 
       const rno = i + 2;
+      [['u', rec.u], ['t', rec.t], ['s', rec.s], ['r', rec.r], ['a', rec.a], ['ta', rec.ta]].forEach(function(pair) {
+        const job = formulaJobs[pair[0]], cell = pair[1];
+        if (job.idx !== -1 && cell && cell.formula) { job.rows.push(rno); job.map[rno] = cell.formula; }
+      });
 
       if (idxUpdate !== -1 && rec.u && rec.u.rt) {
         rowsUpdate.push(rno);
@@ -723,6 +759,8 @@ function restoreOpsManualColumnsRich06c_(ss, pic, snapshot) {
         rowsStatus.push(rno);
         mapStatus[rno] = rec.s.v;
       }
+      if (idxAwb !== -1 && rec.a && rec.a.v != null && rec.a.v !== '') { rowsAwb.push(rno); mapAwb[rno] = rec.a.v; }
+      if (idxTimestampAwb !== -1 && rec.ta && rec.ta.v != null && rec.ta.v !== '') { rowsTimestampAwb.push(rno); mapTimestampAwb[rno] = rec.ta.v; if (rec.ta.fmt) mapTimestampAwbFmt[rno] = rec.ta.fmt; }
     }
 
     const applyRichSeg = (idxCol0, rowNums, rowMapObj) => {
@@ -758,6 +796,13 @@ function restoreOpsManualColumnsRich06c_(ss, pic, snapshot) {
       }
     };
 
+    const applyFormulaSeg = (idxCol0, rowNums, rowFormulaObj) => {
+      if (idxCol0 === -1 || !rowNums.length) return;
+      __groupConsecutiveRows_(rowNums).forEach(function(seg) {
+        try { sh.getRange(seg[0], idxCol0 + 1, seg.length, 1).setFormulas(seg.map(rn => [rowFormulaObj[rn]])); } catch (e) {}
+      });
+    };
+
     const applyNumFmtSeg = (idxCol0, rowNums, rowFmtObj) => {
       if (!rowNums.length) return;
       const segs = __groupConsecutiveRows_(rowNums);
@@ -787,6 +832,13 @@ function restoreOpsManualColumnsRich06c_(ss, pic, snapshot) {
     if (idxStatus !== -1) {
       applyValSeg(idxStatus, rowsStatus, mapStatus);
     }
+    if (idxAwb !== -1) applyValSeg(idxAwb, rowsAwb, mapAwb);
+    if (idxTimestampAwb !== -1) { applyValSeg(idxTimestampAwb, rowsTimestampAwb, mapTimestampAwb); if (Object.keys(mapTimestampAwbFmt).length) applyNumFmtSeg(idxTimestampAwb, rowsTimestampAwb, mapTimestampAwbFmt); }
+    // Formula restore is deliberately last: formulas recalculate from the newly routed row.
+    Object.keys(formulaJobs).forEach(function(key) {
+      const job = formulaJobs[key];
+      applyFormulaSeg(job.idx, job.rows, job.map);
+    });
   }
 }
 
@@ -1333,7 +1385,14 @@ function __getScSheetNames06_() {
   const scFarhanName = (opsPolicy && opsPolicy.SHEETS && opsPolicy.SHEETS.SC_FARHAN) ? opsPolicy.SHEETS.SC_FARHAN : 'SC - Farhan';
   const scMeilaniName = (opsPolicy && opsPolicy.SHEETS && opsPolicy.SHEETS.SC_MEILANI) ? opsPolicy.SHEETS.SC_MEILANI : 'SC - Meilani';
   const scIvanName = (opsPolicy && opsPolicy.SHEETS && opsPolicy.SHEETS.SC_IVAN) ? opsPolicy.SHEETS.SC_IVAN : 'SC - Meindar';
-  return [scFarhanName, scMeilaniName, scIvanName].filter(Boolean);
+  const scFallbackName = (opsPolicy && opsPolicy.SC_FALLBACK_SHEET) ? opsPolicy.SC_FALLBACK_SHEET : 'SC - Unmapped';
+  const seen = Object.create(null);
+  return [scFarhanName, scMeilaniName, scIvanName, scFallbackName].filter(function (name) {
+    const n = String(name || '').trim();
+    if (!n || seen[n]) return false;
+    seen[n] = true;
+    return true;
+  });
 }
 
 function __getBranchFromServiceCenter06_(serviceCenter) {
@@ -1346,6 +1405,8 @@ function __getBranchFromServiceCenter06_(serviceCenter) {
     ['Sitcomtara', 'sitcomtara'],
     ['iBox', 'ibox'],
     ['GSI', 'gsi'],
+    ['Rejeki Seluler', 'rejeki seluler'],
+    ['Rejeki Seluler', 'rejeki seluller'],
     ['Andalas', 'andalas'],
     ['Klikcare', 'klikcare'],
     ['J-Bros', 'j-bros'],
@@ -1358,6 +1419,8 @@ function __getBranchFromServiceCenter06_(serviceCenter) {
     ['Xiaomi Authorized', 'xiaomi authorized'],
     ['Samsung Exclusive', 'samsung exclusive'],
     ['Carlcare', 'carlcare'],
+    ['CV Berkah', 'cv berkah athallah'],
+    ['CV Berkah', 'cv berkah'],
     ['B-Store', 'b-store'],
     ['MDP', 'mdp'],
     ['Deltafone', 'deltasindo']
@@ -1374,8 +1437,8 @@ function __getMiddlePicFromServiceCenter06_(serviceCenter) {
   if (!sc) return 'Unknown';
 
   const map = [
-    ['Farhan', ['mitracare', 'sitcomtara', 'ibox', 'gsi']],
-    ['Meilani', ['unicom', 'xiaomi authorized', 'samsung exclusive', 'carlcare', 'andalas']],
+    ['Farhan', ['mitracare', 'sitcomtara', 'ibox', 'rejeki seluler', 'rejeki seluller']],
+    ['Meilani', ['unicom', 'xiaomi authorized', 'samsung exclusive', 'carlcare', 'andalas', 'gsi']],
     ['Meindar', ['klikcare', 'j-bros', 'makmur era abadi', 'manado mitra bersama', 'cv kayu awet sejahtera', 'gh store', 'mdp', 'deltasindo', 'ezcare', 'ez care', 'b-store']],
   ];
 
@@ -1462,7 +1525,7 @@ function __getReportBaseSourceSheets06_(ss) {
   const seen = Object.create(null);
   const base = (CONFIG && CONFIG.sheetsByPic && Array.isArray(CONFIG.sheetsByPic.adminOperational))
     ? CONFIG.sheetsByPic.adminOperational.slice()
-    : ['Submission','Ask Detail','OR - OLD','Start','Finish','SC - Farhan','SC - Meilani','SC - Meindar','PO','Exclusion'];
+    : ['Submission','Ask Detail','OR - OLD','Start','Finish','Reject Claim','SC - Farhan','SC - Meilani','SC - Meindar','PO','Exclusion'];
   const extras = ['SC - Unmapped', 'B2B', 'EV-Bike', 'Special Case'];
   const all = base.concat(extras);
   for (let i = 0; i < all.length; i++) {
@@ -1645,7 +1708,7 @@ function enforceOperationalLayout06_(ss) {
     const newExpired = ss.getSheetByName('Expired Claim');
     if (oldExpired && !newExpired) oldExpired.setName('Expired Claim');
   } catch (eRenameExpired) {}
-  const monthSheets = ['Submission', 'Ask Detail', 'Start', 'SC - Farhan', 'SC - Meilani', 'SC - Meindar', 'Finish', 'Expired Claim', 'PO', 'Exclusion'];
+  const monthSheets = ['Submission', 'Ask Detail', 'Start', 'SC - Farhan', 'SC - Meilani', 'SC - Meindar', 'Finish', 'Expired Claim', 'Reject Claim', 'PO', 'Exclusion'];
   let touched = 0;
   for (let i = 0; i < monthSheets.length; i++) {
     const sh = ss.getSheetByName(monthSheets[i]);
@@ -1653,7 +1716,7 @@ function enforceOperationalLayout06_(ss) {
     if (__ensureHeaderAtColumn06_(sh, 'Submission by Month', 2)) touched++;
     touched += __normalizeSubmissionByMonthColumn06_(sh);
   }
-  ['Start', 'Finish', 'Expired Claim'].forEach(name => {
+  ['Start', 'Finish', 'Expired Claim', 'Reject Claim', 'PO'].forEach(name => {
     const sh = ss.getSheetByName(name);
     if (!sh) return;
     if (__ensureHeaderAtColumn06_(sh, 'Service Center PIC', 14)) touched++;
@@ -1664,12 +1727,13 @@ function enforceOperationalLayout06_(ss) {
   const financeExcluded = ['Claim Amount', 'Claim Own Risk Amount', 'Nett Claim Amount', '% Approval'];
   const evDossB2bDeprecated = ['Status Type', 'Start Date', 'End Date', 'Details'];
   const stageRename = {
+    'Service Type': 'Claim Type',
     'Aging Position': 'Stage Aging',
     'Aging Post.': 'Stage Aging',
     'Aging Post': 'Stage Aging'
   };
 
-  const allCleanupSheets = ['Submission', 'Ask Detail', 'OR - OLD', 'Start', 'Finish', 'Expired Claim', 'SC - Farhan', 'SC - Meilani', 'SC - Meindar', 'SC - Unmapped', 'PO', 'Exclusion', 'B2B', 'EV-Bike', 'Doss', 'Special Case'];
+  const allCleanupSheets = ['Submission', 'Ask Detail', 'OR - OLD', 'Start', 'Finish', 'Expired Claim', 'Reject Claim', 'SC - Farhan', 'SC - Meilani', 'SC - Meindar', 'SC - Unmapped', 'PO', 'Exclusion', 'B2B', 'EV-Bike', 'Doss', 'Special Case'];
   allCleanupSheets.forEach(function(name) {
     const sh = ss.getSheetByName(name);
     if (!sh) return;
@@ -1677,7 +1741,7 @@ function enforceOperationalLayout06_(ss) {
     touched += __renameHeaderColumns06_(sh, stageRename);
   });
 
-  ['Submission', 'Ask Detail', 'Start', 'Finish', 'Expired Claim'].forEach(function(name) {
+  ['Submission', 'Ask Detail', 'Start', 'Finish', 'Expired Claim', 'Reject Claim'].forEach(function(name) {
     const sh = ss.getSheetByName(name);
     if (!sh) return;
     touched += __removeHeaderColumns06_(sh, financeExcluded, {});
@@ -1690,7 +1754,7 @@ function enforceOperationalLayout06_(ss) {
     touched += __removeHeaderColumns06_(sh, evDossB2bDeprecated, {});
   });
 
-  ['Start', 'Finish', 'Expired Claim'].forEach(function(name) {
+  ['Start', 'Finish', 'Expired Claim', 'Reject Claim'].forEach(function(name) {
     const sh = ss.getSheetByName(name);
     if (sh) touched += __fillBranchFromServiceCenter06_(sh);
   });
@@ -2330,7 +2394,8 @@ function applyFinishTypeInScSheets06_(ss) {
     orSet: new Set(typePolicy['OR'] || []),
     insurance: new Set(typePolicy['Insurance'] || []),
     est: new Set(typePolicy['SC - Est'] || []),
-    rcvd: new Set(typePolicy['SC - Rcvd'] || [])
+    rcvd: new Set(typePolicy['SC - Rcvd'] || []),
+    start: new Set(typePolicy['Start'] || [])
   };
 
   const resolveType = (statusVal) => {
@@ -2338,6 +2403,7 @@ function applyFinishTypeInScSheets06_(ss) {
     if (!s) return '';
     if (sets.onRep.has(s)) return 'SC - On Rep';
     if (sets.waitRep.has(s)) return 'SC - Wait Rep';
+    if (sets.start.has(s)) return 'Start';
     if (sets.finish.has(s)) return 'Finish';
     if (sets.orSet.has(s)) return 'OR';
     if (sets.insurance.has(s)) return 'Insurance';
@@ -2366,7 +2432,7 @@ function applyFinishTypeInScSheets06_(ss) {
   // Fallback list-based rule (may lose dropdown-chip styling if chips are required).
   const fallbackTypeOpts = (typeof getScTypeDropdownOptions_ === 'function')
     ? getScTypeDropdownOptions_()
-    : ['SC - Rcvd','SC - Est','Insurance','OR','Finish','SC - Wait Rep','SC - On Rep'];
+    : ['SC - Rcvd','Start','SC - Est','Insurance','OR','Finish','SC - Wait Rep','SC - On Rep'];
 
   const fallbackDvRule = SpreadsheetApp.newDataValidation()
     .requireValueInList(fallbackTypeOpts, true)
@@ -2768,10 +2834,8 @@ function reorderColumnsByHeaderPriority06_(sheet, headers, desiredHeaders) {
  * - Status Type (mandatory) utilities
  * - Last Status Date parsing/formatting (Sub flow: dd MMM yy, HH:mm)
  * - Sorting operational sheets while preserving filters
- * - WebApp Project movement tracking (Daily/Past) with snapshot sheets
  *
  * NOTE: This file does NOT assume Raw OLD/Raw NEW are snapshots.
- * Snapshot baseline is stored ONLY inside WebApp Project spreadsheet.
  * =========================
  */
 
@@ -2979,819 +3043,6 @@ function isSecondYearMarketValue06c_(monthPolicyAging) {
   return !isNaN(n) && n > 12;
 }
 
-
-/** =========================
- * WebApp Project Movement Tracking (Daily/Past)
- * Baseline snapshots are stored inside WebApp Project spreadsheet only.
- *
- * Expected caller supplies "current state" rows (already post-Sub updates)
- * as an array of objects:
- * {
- *   claimNumber, lastStatus, lastUpdateDatetime, activityLog, activityLogDatetime,
- *   position, statusType, branch
- * }
- * =========================
- */
-
-function __ensureSheetWithHeader06c_(ss, name, header, opts) {
-  const options = opts || {};
-  const strict = !!options.strict; // strict=true is safe for internal snapshot sheets
-
-  let sh = ss.getSheetByName(name);
-  if (!sh) {
-    sh = ss.insertSheet(name);
-    try { sh.getRange(1, 1, 1, header.length).setValues([header]); } catch (e0) {}
-    return sh;
-  }
-
-  const want = (header || []).map(__normalizeHeaderText06_);
-  const lc = sh.getLastColumn();
-  const probe = Math.max(want.length, Math.max(1, lc));
-  const cur = sh.getRange(1, 1, 1, probe).getValues()[0].map(__normalizeHeaderText06_);
-  const samePrefix = want.length && want.every((h, i) => cur[i] === h);
-
-  // If header is empty (new/blank sheet), set it.
-  const isHeaderBlank = cur.every(v => !String(v || '').trim());
-  if (isHeaderBlank) {
-    try { sh.getRange(1, 1, 1, want.length).setValues([want]); } catch (e1) {}
-    return sh;
-  }
-
-  // Daily/Past should never be wiped. Only snapshot sheets can be strict.
-  if (!samePrefix && strict) {
-    try {
-      sh.clearContents();
-      sh.getRange(1, 1, 1, want.length).setValues([want]);
-    } catch (e2) {}
-  }
-
-  return sh;
-}
-
-function __readSnapshotMap06c_(sheet) {
-  const lr = sheet.getLastRow();
-  const lc = sheet.getLastColumn();
-  if (lr < 2 || lc < 1) return Object.create(null);
-
-  const header = sheet.getRange(1, 1, 1, lc).getValues()[0].map(__normalizeHeaderText06_);
-  const idxClaim = __findHeaderIndexFlexible06_(header, 'Claim Number');
-  if (idxClaim === -1) return Object.create(null);
-
-  const n = lr - 1;
-  const vals = sheet.getRange(2, 1, n, lc).getValues();
-  const map = Object.create(null);
-  for (let i = 0; i < n; i++) {
-    const claim = String(vals[i][idxClaim] || '').trim().toUpperCase();
-    if (!claim) continue;
-    map[claim] = vals[i];
-  }
-  map.__header = header;
-  return map;
-}
-
-function __hashMovementRow06c_(obj) {
-  // Deterministic compact signature
-  const parts = [
-    obj.claimNumber || '',
-    obj.lastStatus || '',
-    String(obj.lastUpdateDatetime || ''),
-    obj.activityLog || '',
-    String(obj.activityLogDatetime || ''),
-    obj.position || '',
-    obj.statusType || '',
-    obj.branch || ''
-  ];
-  return parts.map(x => String(x)).join('||');
-}
-
-/**
- * Track movements to WebApp Project spreadsheet.
- *
- * opts:
- * - spreadsheetId (required)
- * - currentRows (required) array<object>
- * - dailySheetName (default: 'Daily')
- * - pastSheetName (default: 'Past')
- * - snapshotPrevName (default: '_SNAPSHOT_PREV')
- * - snapshotCurrName (default: '_SNAPSHOT_CURR')
- */
-function trackMovementsToWebAppProject06c_(opts) {
-  if (DRY_RUN) return { appended: 0, rolled: false };
-
-  const spreadsheetId = opts && opts.spreadsheetId;
-  const currentRows = (opts && opts.currentRows) ? opts.currentRows : [];
-  if (!spreadsheetId) return { appended: 0, rolled: false, error: 'missing_spreadsheetId' };
-  if (!Array.isArray(currentRows)) return { appended: 0, rolled: false, error: 'currentRows_not_array' };
-
-  const dailyName = (opts && opts.dailySheetName) || 'Daily';
-  const pastName = (opts && opts.pastSheetName) || 'Past';
-  const prevName = (opts && opts.snapshotPrevName) || '_SNAPSHOT_PREV';
-  const currName = (opts && opts.snapshotCurrName) || '_SNAPSHOT_CURR';
-
-  const lock = LockService.getScriptLock();
-  try { lock.tryLock(25000); } catch (e) { return { appended: 0, rolled: false, error: 'lock_failed' }; }
-
-  let ss;
-  try {
-    ss = SpreadsheetApp.openById(spreadsheetId);
-  } catch (e0) {
-    try { lock.releaseLock(); } catch (e) {}
-    return { appended: 0, rolled: false, error: 'open_failed' };
-  }
-
-  // Ensure sheets exist + headers.
-  const dailyHeader = ['Timestamp','Claim Number','Last Status','Last Update Datetime','Activity Log','Activity Log Datetime','Position','Status Type','Branch'];
-  const snapHeader = ['Claim Number','Last Status','Last Update Datetime','Activity Log','Activity Log Datetime','Position','Status Type','Branch','_hash'];
-
-  const shDaily = __ensureSheetWithHeader06c_(ss, dailyName, dailyHeader, { strict: false });
-  const shPast = __ensureSheetWithHeader06c_(ss, pastName, dailyHeader, { strict: false });
-  const shPrev = __ensureSheetWithHeader06c_(ss, prevName, snapHeader, { strict: true });
-  const shCurr = __ensureSheetWithHeader06c_(ss, currName, snapHeader, { strict: true });
-
-  // Daily rollover by date (Asia/Jakarta is expected via project settings).
-  const props = PropertiesService.getScriptProperties();
-  const key = 'WEBAPP_MOVEMENT_LAST_DATE__' + spreadsheetId;
-  const tz = (opts && opts.timezone) ? String(opts.timezone) : Session.getScriptTimeZone();
-  const today = Utilities.formatDate(new Date(), tz, 'yyyy-MM-dd');
-  const last = String(props.getProperty(key) || '').trim();
-  let rolled = false;
-  if (last && last !== today) {
-    const lrD = shDaily.getLastRow();
-    if (lrD > 1) {
-      const data = shDaily.getRange(2, 1, lrD - 1, dailyHeader.length).getValues();
-      const dest = shPast.getLastRow() + 1;
-      try { shPast.getRange(dest, 1, data.length, dailyHeader.length).setValues(data); } catch (e1) {}
-      try { shDaily.getRange(2, 1, lrD - 1, dailyHeader.length).clearContent(); } catch (e2) {}
-    }
-    rolled = true;
-  }
-  if (!last) props.setProperty(key, today);
-  if (rolled) props.setProperty(key, today);
-
-  // Read previous snapshot map.
-  const prevMap = __readSnapshotMap06c_(shPrev);
-
-  // Build snapshot curr values + detect diffs.
-  const appendedRows = [];
-  const snapVals = [];
-
-  for (let i = 0; i < currentRows.length; i++) {
-    const r = currentRows[i] || {};
-    const claim = String(r.claimNumber || '').trim();
-    if (!claim) continue;
-
-    const obj = {
-      claimNumber: claim,
-      lastStatus: r.lastStatus || '',
-      lastUpdateDatetime: r.lastUpdateDatetime || '',
-      activityLog: r.activityLog || '',
-      activityLogDatetime: r.activityLogDatetime || '',
-      position: r.position || '',
-      statusType: r.statusType || '',
-      branch: r.branch || ''
-    };
-    const hash = __hashMovementRow06c_(obj);
-
-    snapVals.push([
-      obj.claimNumber,
-      obj.lastStatus,
-      obj.lastUpdateDatetime,
-      obj.activityLog,
-      obj.activityLogDatetime,
-      obj.position,
-      obj.statusType,
-      obj.branch,
-      hash
-    ]);
-
-    const prev = prevMap[String(claim).toUpperCase()];
-    const prevHash = prev ? String(prev[8] || '') : '';
-    if (!prev || prevHash !== hash) {
-      appendedRows.push([
-        new Date(),
-        obj.claimNumber,
-        obj.lastStatus,
-        obj.lastUpdateDatetime,
-        obj.activityLog,
-        obj.activityLogDatetime,
-        obj.position,
-        obj.statusType,
-        obj.branch
-      ]);
-    }
-  }
-
-  // Append to Daily.
-  if (appendedRows.length) {
-    const dest = shDaily.getLastRow() + 1;
-    try { shDaily.getRange(dest, 1, appendedRows.length, dailyHeader.length).setValues(appendedRows); } catch (e3) {}
-  }
-
-  // Write curr snapshot.
-  try {
-    const lr = shCurr.getLastRow();
-    if (lr > 1) shCurr.getRange(2, 1, lr - 1, snapHeader.length).clearContent();
-  } catch (e4) {}
-  if (snapVals.length) {
-    try { shCurr.getRange(2, 1, snapVals.length, snapHeader.length).setValues(snapVals); } catch (e5) {}
-  }
-
-  // Replace prev = curr (overwrite), then clear curr to keep only one baseline.
-  try {
-    const lrP = shPrev.getLastRow();
-    if (lrP > 1) shPrev.getRange(2, 1, lrP - 1, snapHeader.length).clearContent();
-  } catch (e6) {}
-  if (snapVals.length) {
-    try { shPrev.getRange(2, 1, snapVals.length, snapHeader.length).setValues(snapVals); } catch (e7) {}
-  }
-
-  try { lock.releaseLock(); } catch (e8) {}
-  return { appended: appendedRows.length, rolled: rolled };
-}
-
-/**
- * Build movement-tracking current rows from operational sheets (post-run state).
- * Best-effort: only reads columns that exist.
- *
- * Output is compatible with trackMovementsToWebAppProject06c_({ currentRows }).
- */
-function buildMovementCurrentRowsFromOperationalSheets06c_(ss, pic) {
-  if (!ss) return [];
-
-  const isAdmin = (pic === 'Admin');
-  const ops = isAdmin ? (CONFIG.sheetsByPic && CONFIG.sheetsByPic.adminOperational) : (CONFIG.sheetsByPic && CONFIG.sheetsByPic.picOperational);
-  const sheetNames = (ops || []).slice().filter(Boolean);
-  if (!sheetNames.length) return [];
-
-  const out = [];
-
-  for (let i = 0; i < sheetNames.length; i++) {
-    const name = sheetNames[i];
-    const sh = ss.getSheetByName(name);
-    if (!sh) continue;
-
-    const lr = sh.getLastRow();
-    const lc = sh.getLastColumn();
-    if (lr < 2 || lc < 1) continue;
-
-    const header = sh.getRange(1, 1, 1, lc).getValues()[0].map(__normalizeHeaderText06_);
-
-    const idxClaim = __findHeaderIndexFlexible06_(header, 'Claim Number');
-    if (idxClaim === -1) continue;
-
-    let idxLastStatus = __findHeaderIndexFlexible06_(header, 'Last Status');
-    if (idxLastStatus === -1) idxLastStatus = __findHeaderIndexFlexible06_(header, 'Status');
-
-    const idxLastStatusDate = __findHeaderIndexFlexible06_(header, 'Last Status Date');
-    const idxActivityLog = __findHeaderIndexFlexible06_(header, 'Activity Log'); // optional
-    const idxActivityLogDt = __findHeaderIndexFlexible06_(header, 'Activity Log Datetime'); // optional
-    const idxStatusType = __findHeaderIndexFlexible06_(header, 'Status Type');
-    const idxBranch = __findHeaderIndexFlexible06_(header, 'Branch');
-
-    const n = lr - 1;
-    const vals = sh.getRange(2, 1, n, lc).getValues();
-
-    for (let r = 0; r < n; r++) {
-      const row = vals[r];
-      const claim = String(row[idxClaim] || '').trim();
-      if (!claim) continue;
-
-      const lastStatus = (idxLastStatus !== -1) ? String(row[idxLastStatus] || '').trim() : '';
-      const statusType = (idxStatusType !== -1) ? String(row[idxStatusType] || '').trim() : getStatusType06c_(lastStatus);
-
-      out.push({
-        claimNumber: claim,
-        lastStatus: lastStatus,
-        lastUpdateDatetime: (idxLastStatusDate !== -1) ? row[idxLastStatusDate] : '',
-        activityLog: (idxActivityLog !== -1) ? String(row[idxActivityLog] || '') : '',
-        activityLogDatetime: (idxActivityLogDt !== -1) ? row[idxActivityLogDt] : '',
-        position: name,
-        statusType: statusType,
-        branch: (idxBranch !== -1) ? String(row[idxBranch] || '') : ''
-      });
-    }
-  }
-
-  return out;
-}
-
-/** Convenience wrapper: build from operational sheets then write to WebApp Project. */
-function trackMovementsFromOperationalToWebAppProject06c_(mainSpreadsheet, pic, webappSpreadsheetId, opts) {
-  if (!mainSpreadsheet || !webappSpreadsheetId) return { appended: 0, rolled: false, error: 'missing_inputs' };
-  const currentRows = buildMovementCurrentRowsFromOperationalSheets06c_(mainSpreadsheet, pic);
-  return trackMovementsToWebAppProject06c_(Object.assign({}, opts || {}, {
-    spreadsheetId: webappSpreadsheetId,
-    currentRows: currentRows
-  }));
-}
-
-
-
-
-/** =====================================================================
- * Movement Claim Tracking (WebApp Project) — Snapshot-from-Raw implementation
- * Spec (Feb 2026):
- * - PREV snapshots are taken from Raw OLD/Raw NEW BEFORE SUB overwrites Raw
- * - CURR snapshots are taken AFTER SUB completes
- * - Daily rows are emitted on:
- *    - STATUS change (last_status differs) OR new claim (prev missing)
- *    - ACTIVITY change (activity_log differs AND activity_log_datetime is newer)
- * - If both occur for a claim, emit STATUS row first, then ACTIVITY row.
- * - Dedup is enforced via deterministic Event ID (hidden rightmost column).
- * ===================================================================== */
-
-/** Coerce Date/string/number to millis; returns NaN if invalid. */
-function __coerceMillis06c_(v) {
-  if (v == null || v === '') return NaN;
-  if (Object.prototype.toString.call(v) === '[object Date]') {
-    const t = v.getTime();
-    return isNaN(t) ? NaN : t;
-  }
-  if (typeof v === 'number') return isNaN(v) ? NaN : v;
-  const s = String(v).trim();
-  if (!s) return NaN;
-  try {
-    if (typeof parseClaimLastUpdatedDatetime06c_ === 'function') {
-      const d0 = parseClaimLastUpdatedDatetime06c_(s);
-      if (d0 && !isNaN(d0.getTime())) return d0.getTime();
-    }
-  } catch (e0) {}
-
-  // Controlled fallback:
-  // Only allow native Date parsing for unambiguous strings that contain a timezone.
-  // This avoids silent WIB shifts when the source string has no TZ indicator.
-  if (/[zZ]$/.test(s) || /[+-]\d{2}:?\d{2}/.test(s) || /\bGMT\b/i.test(s)) {
-    const d = new Date(s);
-    const t = d.getTime();
-    return isNaN(t) ? NaN : t;
-  }
-  return NaN;
-}
-
-/** Minutes -> "1d 12h 12m" (compact). */
-function __formatGapDhm06c_(minutes) {
-  const m0 = Number(minutes);
-  if (!isFinite(m0) || m0 < 0) return '';
-  const m = Math.floor(m0);
-  const d = Math.floor(m / 1440);
-  const h = Math.floor((m % 1440) / 60);
-  const mm = m % 60;
-  const parts = [];
-  if (d) parts.push(d + 'd');
-  if (h || d) parts.push(h + 'h');
-  parts.push(mm + 'm');
-  return parts.join(' ');
-}
-
-/** SHA-256 hex (short) */
-function __hashHexShort06c_(s) {
-  const bytes = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, String(s || ''), Utilities.Charset.UTF_8);
-  let hex = '';
-  for (let i = 0; i < bytes.length; i++) {
-    const b = (bytes[i] < 0) ? bytes[i] + 256 : bytes[i];
-    hex += ('0' + b.toString(16)).slice(-2);
-  }
-  return hex.slice(0, 16); // compact
-}
-
-function __webappOpenSs06c_() {
-  try {
-    if (typeof WEBAPP_MOVEMENT_POLICY === 'undefined' || !WEBAPP_MOVEMENT_POLICY) return null;
-    if (!WEBAPP_MOVEMENT_POLICY.ENABLE) return null;
-    const id = WEBAPP_MOVEMENT_POLICY.SPREADSHEET_ID;
-    if (!id) return null;
-    return SpreadsheetApp.openById(id);
-  } catch (e) {
-    return null;
-  }
-}
-
-/**
- * Ensure sheet exists and required headers are present (append missing headers).
- * Returns { sheet, header, idxByName } where idxByName maps required header -> 1-based column index.
- */
-function __ensureHeaders06c_(ss, sheetName, requiredHeaders) {
-  const sh = ss.getSheetByName(sheetName) || ss.insertSheet(sheetName);
-  const lc = Math.max(1, sh.getLastColumn());
-  const existing = sh.getRange(1, 1, 1, lc).getValues()[0].map(__normalizeHeaderText06_);
-  let header = existing.slice();
-
-  const missing = [];
-  for (let i = 0; i < requiredHeaders.length; i++) {
-    const h = requiredHeaders[i];
-    const idx = __findHeaderIndexFlexible06_(header, h);
-    if (idx === -1) missing.push(h);
-  }
-  if (!header.filter(Boolean).length) {
-    header = requiredHeaders.slice();
-    sh.getRange(1, 1, 1, header.length).setValues([header]);
-  } else if (missing.length) {
-    const startCol = header.length + 1;
-    header = header.concat(missing);
-    sh.getRange(1, startCol, 1, missing.length).setValues([missing]);
-  }
-
-  const idxByName = Object.create(null);
-  for (let i = 0; i < requiredHeaders.length; i++) {
-    const h = requiredHeaders[i];
-    const idx0 = __findHeaderIndexFlexible06_(header, h);
-    if (idx0 > -1) idxByName[h] = idx0 + 1; // 1-based
-  }
-
-  return { sheet: sh, header: header, idxByName: idxByName };
-}
-
-/** Overwrite a sheet as a clean table (header + rows). */
-function __overwriteTable06c_(ss, sheetName, headers, rows) {
-  const sh = ss.getSheetByName(sheetName) || ss.insertSheet(sheetName);
-  sh.clearContents();
-  const all = [headers].concat(rows || []);
-  if (!all.length) return 0;
-  sh.getRange(1, 1, all.length, headers.length).setValues(all);
-  return (all.length - 1);
-}
-
-/** Build snapshot rows (2D) from a Raw sheet. */
-function __buildSnapshotRowsFromRaw06c_(rawSheet) {
-  if (!rawSheet) return [];
-  const lr = rawSheet.getLastRow();
-  const lc = rawSheet.getLastColumn();
-  if (lr < 2 || lc < 1) return [];
-
-  const header = rawSheet.getRange(1, 1, 1, lc).getValues()[0].map(__normalizeHeaderText06_);
-
-  function idxAny(cands) {
-    for (let i = 0; i < cands.length; i++) {
-      const idx = __findHeaderIndexFlexible06_(header, cands[i]);
-      if (idx > -1) return idx;
-    }
-    return -1;
-  }
-
-  const idxClaim = idxAny(['claim_number', 'Claim Number', 'claim number']);
-  const idxStatus = idxAny(['claim_last_status_name', 'last_status', 'Last Status', 'Status']);
-  const idxLastUpd = idxAny(['last_update_datetime', 'claim_last_updated_datetime', 'Claim Last Updated Datetime', 'claim_last_updated', 'last_update', 'Last Update']);
-  const idxAct = idxAny(['last_activity_log_name', 'activity_log', 'Activity Log', 'last_activity_log', 'Last Activity Log']);
-  const idxActDt = idxAny(['last_activity_log_datetime', 'activity_log_timestamp', 'Activity Log Datetime', 'last_activity_log_date', 'Last Activity Log Date', 'last_activity_log_timestamp']);
-  const idxSc = idxAny(['repairer_location_store_name', 'sc_name', 'Service Center Name', 'SC Name', 'Service Center']);
-
-  if (idxClaim === -1) return [];
-
-  const n = lr - 1;
-  const vals = rawSheet.getRange(2, 1, n, lc).getValues();
-  const out = [];
-
-  for (let i = 0; i < n; i++) {
-    const claim = String(vals[i][idxClaim] || '').trim();
-    if (!claim) continue;
-
-    const lastStatus = (idxStatus > -1) ? String(vals[i][idxStatus] || '').trim() : '';
-    let lastUpd = (idxLastUpd > -1) ? vals[i][idxLastUpd] : '';
-    try { const p = (typeof parseClaimLastUpdatedDatetime06c_ === 'function') ? parseClaimLastUpdatedDatetime06c_(lastUpd) : null; if (p) lastUpd = p; } catch (eD1) {}
-    const act = (idxAct > -1) ? String(vals[i][idxAct] || '').trim() : '';
-    let actDt = (idxActDt > -1) ? vals[i][idxActDt] : '';
-    try { const p2 = (typeof parseClaimLastUpdatedDatetime06c_ === 'function') ? parseClaimLastUpdatedDatetime06c_(actDt) : null; if (p2) actDt = p2; } catch (eD2) {}
-    const scName = (idxSc > -1) ? String(vals[i][idxSc] || '').trim() : '';
-
-    let branch = '';
-    try { branch = __getBranchFromServiceCenter06_(scName); } catch (eB) { branch = ''; }
-
-    let position = '';
-    try { position = (typeof getPositionFromLastStatus_ === 'function') ? getPositionFromLastStatus_(lastStatus) : ''; } catch (eP) { position = ''; }
-
-    let statusType = '';
-    try {
-      if (typeof getStatusTypeFromLastStatus_ === 'function') statusType = getStatusTypeFromLastStatus_(lastStatus);
-      else if (typeof getStatusType06c_ === 'function') statusType = getStatusType06c_(lastStatus);
-      else if (typeof getStatusTypeFromLastStatus06b_ === 'function') statusType = getStatusTypeFromLastStatus06b_(lastStatus);
-    } catch (eS) { statusType = ''; }
-    if (!statusType) statusType = '';
-
-    out.push([
-      claim,
-      lastStatus,
-      lastUpd,
-      act,
-      actDt,
-      scName,
-      branch,
-      position,
-      statusType
-    ]);
-  }
-
-  return out;
-}
-
-/**
- * PREV snapshot: called BEFORE SUB overwrites Raw.
- * Overwrites SNAPSHOT_PREV_OLD and SNAPSHOT_PREV_NEW inside WebApp Project spreadsheet.
- */
-function webappMovementSnapshotPrevForSub06c_(masterSs, rawOldName, rawNewName) {
-  const webappSs = __webappOpenSs06c_();
-  if (!webappSs || !masterSs) return { ok: false, reason: 'webapp_or_master_missing' };
-
-  const policy = WEBAPP_MOVEMENT_POLICY;
-  const sheets = policy.SHEETS;
-
-  const rawOld = masterSs.getSheetByName(String(rawOldName || SUB_FLOW_SPEC.RAW_OLD_SHEET_NAME || 'Raw OLD'));
-  const rawNew = masterSs.getSheetByName(String(rawNewName || SUB_FLOW_SPEC.RAW_NEW_SHEET_NAME || 'Raw NEW'));
-
-  const rowsOld = __buildSnapshotRowsFromRaw06c_(rawOld);
-  const rowsNew = __buildSnapshotRowsFromRaw06c_(rawNew);
-
-  __overwriteTable06c_(webappSs, sheets.SNAPSHOT_PREV_OLD, policy.SNAPSHOT_COLUMNS, rowsOld);
-  __overwriteTable06c_(webappSs, sheets.SNAPSHOT_PREV_NEW, policy.SNAPSHOT_COLUMNS, rowsNew);
-
-  return { ok: true, prevOld: rowsOld.length, prevNew: rowsNew.length };
-}
-
-/**
- * CURR snapshot + movement diff:
- * - Overwrites SNAPSHOT_CURR_OLD / SNAPSHOT_CURR_NEW
- * - Appends movement events into Daily (dedup by Event ID)
- */
-function webappMovementSnapshotCurrAndTrackForSub06c_(masterSs, rawOldName, rawNewName) {
-  const webappSs = __webappOpenSs06c_();
-  if (!webappSs || !masterSs) return { ok: false, reason: 'webapp_or_master_missing' };
-
-  const policy = WEBAPP_MOVEMENT_POLICY;
-  const sheets = policy.SHEETS;
-
-  const rawOld = masterSs.getSheetByName(String(rawOldName || SUB_FLOW_SPEC.RAW_OLD_SHEET_NAME || 'Raw OLD'));
-  const rawNew = masterSs.getSheetByName(String(rawNewName || SUB_FLOW_SPEC.RAW_NEW_SHEET_NAME || 'Raw NEW'));
-
-  const rowsOld = __buildSnapshotRowsFromRaw06c_(rawOld);
-  const rowsNew = __buildSnapshotRowsFromRaw06c_(rawNew);
-
-  __overwriteTable06c_(webappSs, sheets.SNAPSHOT_CURR_OLD, policy.SNAPSHOT_COLUMNS, rowsOld);
-  __overwriteTable06c_(webappSs, sheets.SNAPSHOT_CURR_NEW, policy.SNAPSHOT_COLUMNS, rowsNew);
-
-  const existing = __loadExistingEventIds06c_(webappSs, sheets.DAILY, sheets.PAST);
-
-  const now = new Date();
-
-  const r1 = __diffSnapshotsAndAppendDaily06c_(webappSs, {
-    db: 'OLD',
-    prevSheetName: sheets.SNAPSHOT_PREV_OLD,
-    currSheetName: sheets.SNAPSHOT_CURR_OLD,
-    dailySheetName: sheets.DAILY,
-    requiredDailyHeaders: policy.DAILY_COLUMNS,
-    existingEventIds: existing,
-    now: now
-  });
-
-  const r2 = __diffSnapshotsAndAppendDaily06c_(webappSs, {
-    db: 'NEW',
-    prevSheetName: sheets.SNAPSHOT_PREV_NEW,
-    currSheetName: sheets.SNAPSHOT_CURR_NEW,
-    dailySheetName: sheets.DAILY,
-    requiredDailyHeaders: policy.DAILY_COLUMNS,
-    existingEventIds: existing,
-    now: now
-  });
-
-  return {
-    ok: true,
-    currOld: rowsOld.length,
-    currNew: rowsNew.length,
-    appendedOld: r1.appended,
-    appendedNew: r2.appended,
-    skippedOld: r1.skipped,
-    skippedNew: r2.skipped
-  };
-}
-
-function __getPastEventScanMaxRows06c_() {
-  try {
-    if (typeof WEBAPP_MOVEMENT_POLICY !== 'undefined' && WEBAPP_MOVEMENT_POLICY) {
-      const n = Number(WEBAPP_MOVEMENT_POLICY.PAST_EVENT_SCAN_MAX_ROWS || 0);
-      if (isFinite(n) && n > 0) return Math.floor(n);
-    }
-  } catch (e) {}
-  return 5000;
-}
-
-/** Load existing Event IDs from Daily and Past. */
-function __loadExistingEventIds06c_(webappSs, dailyName, pastName) {
-  const set = Object.create(null);
-
-  function loadOne(name, maxRows) {
-    const sh = webappSs.getSheetByName(name);
-    if (!sh) return;
-    const lr = sh.getLastRow();
-    const lc = sh.getLastColumn();
-    if (lr < 2 || lc < 1) return;
-    const header = sh.getRange(1, 1, 1, lc).getValues()[0].map(__normalizeHeaderText06_);
-    const idxEvent = __findHeaderIndexFlexible06_(header, 'Event ID');
-    if (idxEvent === -1) return;
-    const nAll = lr - 1;
-    const n = (maxRows && maxRows > 0) ? Math.min(nAll, maxRows) : nAll;
-    if (n <= 0) return;
-    const startRow = lr - n + 1;
-    const vals = sh.getRange(startRow, idxEvent + 1, n, 1).getValues();
-    for (let i = 0; i < n; i++) {
-      const v = String(vals[i][0] || '').trim();
-      if (v) set[v] = true;
-    }
-  }
-
-  loadOne(dailyName, 0);
-  loadOne(pastName, __getPastEventScanMaxRows06c_());
-  return set;
-}
-
-/**
- * Diff prev/curr snapshot sheets and append events to Daily.
- * opts:
- * - db: 'OLD'|'NEW'
- * - prevSheetName, currSheetName
- * - dailySheetName
- * - requiredDailyHeaders (policy order)
- * - existingEventIds: object-as-set (mutated)
- * - now: Date
- */
-function __diffSnapshotsAndAppendDaily06c_(webappSs, opts) {
-  const db = String(opts.db || '').trim().toUpperCase();
-  const prevSh = webappSs.getSheetByName(opts.prevSheetName);
-  const currSh = webappSs.getSheetByName(opts.currSheetName);
-  if (!prevSh || !currSh) return { appended: 0, skipped: 0, reason: 'missing_snapshot' };
-
-  const prevMap = __readSnapshotMap06c_(prevSh);
-  const currMap = __readSnapshotMap06c_(currSh);
-
-  const header = (currMap && currMap.__header) ? currMap.__header : (currSh.getRange(1, 1, 1, currSh.getLastColumn()).getValues()[0].map(__normalizeHeaderText06_));
-  const idxClaim = __findHeaderIndexFlexible06_(header, 'Claim Number');
-  const idxLastStatus = __findHeaderIndexFlexible06_(header, 'Last Status');
-  const idxLastUpd = __findHeaderIndexFlexible06_(header, 'Last Update Datetime');
-  const idxAct = __findHeaderIndexFlexible06_(header, 'Activity Log');
-  const idxActDt = __findHeaderIndexFlexible06_(header, 'Activity Log Datetime');
-  const idxSc = __findHeaderIndexFlexible06_(header, 'Service Center Name');
-  const idxBranch = __findHeaderIndexFlexible06_(header, 'Branch');
-  const idxPos = __findHeaderIndexFlexible06_(header, 'Position');
-  const idxSt = __findHeaderIndexFlexible06_(header, 'Status Type');
-
-  // Ensure Daily headers exist.
-  const dailyMeta = __ensureHeaders06c_(webappSs, opts.dailySheetName, opts.requiredDailyHeaders);
-  const dailySh = dailyMeta.sheet;
-  const idxDaily = dailyMeta.idxByName;
-
-  const existing = opts.existingEventIds || Object.create(null);
-
-  function s(v) { return String(v == null ? '' : v).trim(); }
-  function upper(v) { return s(v).toUpperCase(); }
-
-  const rowsToAppend = [];
-  let skipped = 0;
-
-  // Iterate curr keys (ignore deletions).
-  Object.keys(currMap).forEach(k => {
-    if (k === '__header') return;
-    const claimKey = k; // already upper
-    const afterRow = currMap[claimKey];
-    if (!afterRow) return;
-
-    const beforeRow = prevMap[claimKey];
-
-    const afterStatus = (idxLastStatus > -1) ? s(afterRow[idxLastStatus]) : '';
-    const afterLastUpd = (idxLastUpd > -1) ? afterRow[idxLastUpd] : '';
-    const afterAct = (idxAct > -1) ? s(afterRow[idxAct]) : '';
-    const afterActDt = (idxActDt > -1) ? afterRow[idxActDt] : '';
-    const afterSc = (idxSc > -1) ? s(afterRow[idxSc]) : '';
-    const afterBranch = (idxBranch > -1) ? s(afterRow[idxBranch]) : '';
-    const afterPos = (idxPos > -1) ? s(afterRow[idxPos]) : '';
-    const afterStatusType = (idxSt > -1) ? s(afterRow[idxSt]) : '';
-
-    let statusChanged = false;
-    let activityChanged = false;
-
-    let beforeStatus = '';
-    let beforeLastUpd = '';
-    let beforeAct = '';
-    let beforeActDt = '';
-
-    if (!beforeRow) {
-      // New claim in current snapshot => treat as STATUS event
-      statusChanged = true;
-    } else {
-      beforeStatus = (idxLastStatus > -1) ? s(beforeRow[idxLastStatus]) : '';
-      beforeLastUpd = (idxLastUpd > -1) ? beforeRow[idxLastUpd] : '';
-      beforeAct = (idxAct > -1) ? s(beforeRow[idxAct]) : '';
-      beforeActDt = (idxActDt > -1) ? beforeRow[idxActDt] : '';
-
-      statusChanged = upper(afterStatus) !== upper(beforeStatus);
-
-      if (upper(afterAct) !== upper(beforeAct)) {
-        const tAfter = __coerceMillis06c_(afterActDt);
-        const tBefore = __coerceMillis06c_(beforeActDt);
-        // Guard: require "newer" when both parse; otherwise accept change if after has datetime and before doesn't.
-        if (isFinite(tAfter) && isFinite(tBefore)) activityChanged = tAfter > tBefore;
-        else if (isFinite(tAfter) && !isFinite(tBefore)) activityChanged = true;
-        else activityChanged = true; // last-resort, still record change
-      }
-    }
-
-    // Emit STATUS row
-    if (statusChanged) {
-      const bMs = __coerceMillis06c_(beforeLastUpd);
-      const aMs = __coerceMillis06c_(afterLastUpd);
-      const gapMin = (isFinite(bMs) && isFinite(aMs)) ? Math.max(0, Math.floor((aMs - bMs) / 60000)) : '';
-      const gapDisp = (gapMin === '') ? '' : __formatGapDhm06c_(gapMin);
-
-      const base = [db, claimKey, 'STATUS', upper(beforeStatus), String(isFinite(bMs) ? bMs : ''), upper(afterStatus), String(isFinite(aMs) ? aMs : '')].join('|');
-      const eventId = 'E' + __hashHexShort06c_(base);
-
-      if (existing[eventId]) {
-        skipped++;
-      } else {
-        existing[eventId] = true;
-        const row = new Array(dailyMeta.header.length).fill('');
-        row[idxDaily['Timestamp'] - 1] = opts.now;
-        row[idxDaily['DB'] - 1] = db;
-        row[idxDaily['Claim Number'] - 1] = claimKey;
-        row[idxDaily['Change Type'] - 1] = 'STATUS';
-
-        row[idxDaily['Last Status (Before)'] - 1] = beforeStatus || '';
-        row[idxDaily['Last Update Datetime (Before)'] - 1] = beforeLastUpd || '';
-        row[idxDaily['Last Status (After)'] - 1] = afterStatus || '';
-        row[idxDaily['Last Update Datetime (After)'] - 1] = afterLastUpd || '';
-        row[idxDaily['Gap Time Status (Minutes)'] - 1] = (gapMin === '' ? '' : gapMin);
-        row[idxDaily['Gap Time Status'] - 1] = gapDisp;
-
-        // Activity fields blank (strict)
-        row[idxDaily['Activity Log'] - 1] = '';
-        row[idxDaily['Activity Log Datetime'] - 1] = '';
-
-        // Context from AFTER
-        row[idxDaily['Service Center Name'] - 1] = afterSc;
-        row[idxDaily['Branch'] - 1] = afterBranch;
-        row[idxDaily['Position'] - 1] = afterPos;
-        row[idxDaily['Status Type'] - 1] = afterStatusType;
-
-        row[idxDaily['Event ID'] - 1] = eventId;
-        rowsToAppend.push(row);
-      }
-    }
-
-    // Emit ACTIVITY row
-    if (activityChanged) {
-      const aMs = __coerceMillis06c_(afterActDt);
-      const base = [db, claimKey, 'ACTIVITY', afterAct, String(isFinite(aMs) ? aMs : '')].join('|');
-      const eventId = 'E' + __hashHexShort06c_(base);
-
-      if (existing[eventId]) {
-        skipped++;
-      } else {
-        existing[eventId] = true;
-        const row = new Array(dailyMeta.header.length).fill('');
-        row[idxDaily['Timestamp'] - 1] = opts.now;
-        row[idxDaily['DB'] - 1] = db;
-        row[idxDaily['Claim Number'] - 1] = claimKey;
-        row[idxDaily['Change Type'] - 1] = 'ACTIVITY';
-
-        // Status fields blank (strict)
-        row[idxDaily['Last Status (Before)'] - 1] = '';
-        row[idxDaily['Last Update Datetime (Before)'] - 1] = '';
-        row[idxDaily['Last Status (After)'] - 1] = '';
-        row[idxDaily['Last Update Datetime (After)'] - 1] = '';
-        row[idxDaily['Gap Time Status (Minutes)'] - 1] = '';
-        row[idxDaily['Gap Time Status'] - 1] = '';
-
-        row[idxDaily['Activity Log'] - 1] = afterAct;
-        row[idxDaily['Activity Log Datetime'] - 1] = afterActDt;
-
-        // Context from AFTER
-        row[idxDaily['Service Center Name'] - 1] = afterSc;
-        row[idxDaily['Branch'] - 1] = afterBranch;
-        row[idxDaily['Position'] - 1] = afterPos;
-        row[idxDaily['Status Type'] - 1] = afterStatusType;
-
-        row[idxDaily['Event ID'] - 1] = eventId;
-        rowsToAppend.push(row);
-      }
-    }
-  });
-
-  if (!rowsToAppend.length) return { appended: 0, skipped: skipped };
-
-  // Sort emitted rows: STATUS before ACTIVITY for same claim, then timestamp stable.
-  rowsToAppend.sort((a, b) => {
-    const ca = String(a[idxDaily['Claim Number'] - 1] || '');
-    const cb = String(b[idxDaily['Claim Number'] - 1] || '');
-    if (ca < cb) return -1;
-    if (ca > cb) return 1;
-    const ta = String(a[idxDaily['Change Type'] - 1] || '');
-    const tb = String(b[idxDaily['Change Type'] - 1] || '');
-    if (ta === tb) return 0;
-    if (ta === 'STATUS') return -1;
-    if (tb === 'STATUS') return 1;
-    return 0;
-  });
-
-  const startRow = dailySh.getLastRow() + 1;
-  dailySh.getRange(startRow, 1, rowsToAppend.length, dailyMeta.header.length).setValues(rowsToAppend);
-  return { appended: rowsToAppend.length, skipped: skipped };
-}
 
 /***************************************************************
  * Consolidated from legacy 06d_IntegratedMaintenance.gs,
@@ -4320,3 +3571,28 @@ function runtimePreflight06f_(contextTag) {
   return { ok: false, issues: issues };
 }
 // ---- END MERGED: 06f_RuntimeAssertions.gs ----
+
+/** Restore named Raw backup fields to any operational sheet that exposes them. */
+function restoreNamedOpsFieldsFromRaw06c_(ss, rawSheet, headerIndexRaw, pic, names) {
+  if (DRY_RUN || !ss || !rawSheet) return 0;
+  const idxClaimRaw = headerIndexRaw[CONFIG.headers.claimNumber];
+  if (idxClaimRaw == null) return 0;
+  const n = rawSheet.getLastRow() - 1; if (n < 1) return 0;
+  const raw = rawSheet.getRange(2, 1, n, rawSheet.getLastColumn()).getValues();
+  const map = Object.create(null);
+  raw.forEach(function(row) { const key = __claimKey06_(row[idxClaimRaw]); if (key) map[key] = row; });
+  let restored = 0;
+  getOperationalSheetsForBackup_(pic).forEach(function(name) {
+    const sh = ss.getSheetByName(name); if (!sh || sh.getLastRow() < 2) return;
+    const hdr = sh.getRange(1, 1, 1, sh.getLastColumn()).getValues()[0];
+    const iClaim = __findHeaderIndexFlexible06_(hdr, 'Claim Number'); if (iClaim === -1) return;
+    const count = sh.getLastRow() - 1, rows = sh.getRange(2, 1, count, sh.getLastColumn()).getValues();
+    (names || []).forEach(function(field) {
+      const rawIdx = headerIndexRaw[field], opsIdx = __findHeaderIndexFlexible06_(hdr, field);
+      if (rawIdx == null || opsIdx === -1) return;
+      const out = rows.map(function(row) { const saved = map[__claimKey06_(row[iClaim])]; const v = saved ? saved[rawIdx] : ''; if ((row[opsIdx] === '' || row[opsIdx] == null) && v !== '' && v != null) { restored++; return [v]; } return [row[opsIdx]]; });
+      sh.getRange(2, opsIdx + 1, count, 1).setValues(out);
+    });
+  });
+  return restored;
+}

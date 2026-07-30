@@ -330,6 +330,14 @@ function runPipeline_(pic, fileIds, opts) {
   // Ensure required operational column layout (Submission by Month @ B, Service Center PIC @ N on Start/Finish).
   try { if (typeof enforceOperationalLayout06_ === 'function') enforceOperationalLayout06_(ss); } catch (eLay) {}
 
+  // MAIN is intentionally split after the durable Raw/manual snapshots are complete.
+  // The continuation reads Raw Data, so it does not depend on in-memory state from this execution.
+  if (flowName === 'main' && options.deferRouting === true) {
+    const token = scheduleMainPipelineStage2_(profileName, rawSheet.getSheetId(), rawValues.length, getRunId_());
+    setProgress_(0.50, 'Execution 1 complete; pending execution 2.');
+    return { severity: 'INFO', message: 'MAIN stage 1 complete; routing queued.', staged: true, stageToken: token, rawRows: rawValues.length, routedTotal: 0 };
+  }
+
 // Clear operational sheets and route
   setProgress_(0.60, 'Clearing operational sheets…');
   const segClr = startSegment_('CLR', 'Clear operational sheets');
@@ -365,6 +373,7 @@ function runPipeline_(pic, fileIds, opts) {
   // Round-trip restore operational fields from Raw backup AFTER clear+route.
   if (PIPELINE_FLAGS.ENABLE_BACKUP_FROM_OPS && didFullBackup) {
     try { restoreOpsFieldsFromRawBackup_(ss, rawSheet, headerIndexRaw, profileName); } catch (e) {}
+    try { restoreNamedOpsFieldsFromRaw06c_(ss, rawSheet, headerIndexRaw, profileName, ['AWB', 'Timestamp AWB']); } catch (eAwbRestore) {}
   }
 
   // Restore Update Status rich text in operational sheets
@@ -463,9 +472,8 @@ function runPipeline_(pic, fileIds, opts) {
     }
   }
 
-  // Re-apply strict Submission Date/Month after optional sheet processors
-  // so newly rebuilt rows (e.g. B2B on FORM - MAIN) are not left blank.
-  try { applyStrictSubmissionDateAndMonth06b_(ss, rawValues, headerIndexRaw); } catch (eSubFix2) { try { logLine_('WARN', 'Submission date/month strict re-sync failed', '', String(eSubFix2), 'WARN'); } catch (e2) {} }
+  // Re-apply strict Submission Date/Month after optional sheet processors that are safe for generic sync.
+  try { applyStrictSubmissionDateAndMonth06b_(ss, rawValues, headerIndexRaw, { sheets: ['EV-Bike', 'Doss', 'Special Case'] }); } catch (eSubFix2) { try { logLine_('WARN', 'Submission date/month strict re-sync failed', '', String(eSubFix2), 'WARN'); } catch (e2) {} }
 
   // Defensive sanitizer for known validation regressions:
   // - Submission Date turning into checkbox
@@ -804,7 +812,7 @@ function enrichOperationalSheetsFromRaw06_(ss, rawValues, headerIndexRaw, pic, o
   if (typeof applyRawHeaderAliases_ === 'function') headerIndexRaw = applyRawHeaderAliases_(headerIndexRaw);
 
   let sheets = getOperationalSheetNames06b_(pic);
-  sheets = Array.from(new Set((sheets || []).concat(['B2B'])));
+  sheets = Array.from(new Set(sheets || []));
 
   // Flow context for formatting decisions (default: main)
   const flowName = ((opts && (opts.flow || opts.Flow || opts.flowName)) || (typeof RUNTIME !== 'undefined' && RUNTIME ? RUNTIME.flowName : '') || 'main')
@@ -883,8 +891,8 @@ function enrichOperationalSheetsFromRaw06_(ss, rawValues, headerIndexRaw, pic, o
     if (!financeExcludedSheets.has(sheetName)) {
       try { ensureHeadersAtEnd06_(sh, mandatoryFinanceHeaders); } catch (e) {}
     }
-    if (sheetName === 'Start' || sheetName === 'Finish' || sheetName === 'Expired Claim') {
-      try { ensureHeadersAtEnd06_(sh, ['Service Type']); } catch (e) {}
+    if (sheetName === 'Start' || sheetName === 'Finish' || sheetName === 'Expired Claim' || sheetName === 'Reject Claim') {
+      try { ensureHeadersAtEnd06_(sh, ['Claim Type']); } catch (e) {}
     }
 
     // Re-read header after possible insertions
@@ -924,7 +932,7 @@ function enrichOperationalSheetsFromRaw06_(ss, rawValues, headerIndexRaw, pic, o
     const idxPmOps = resolveOpsColIdx06_(hidx, ['PM Name']);
     const idxApmOps = resolveOpsColIdx06_(hidx, ['APM Name']);
     const idxAgingPostOps = (sheetName === 'Submission') ? -1 : resolveOpsColIdx06_(hidx, ['Stage Aging', 'Aging Position', 'Aging Post.', 'Aging Post']);
-    const idxServiceTypeOps = resolveOpsColIdx06_(hidx, ['Service Type']);
+    const idxServiceTypeOps = resolveOpsColIdx06_(hidx, ['Claim Type', 'Service Type']);
 
 
     const lastStatuses = (idxLastStatusOps !== -1)
@@ -996,7 +1004,12 @@ function enrichOperationalSheetsFromRaw06_(ss, rawValues, headerIndexRaw, pic, o
         const idxServiceRaw = (sheetName === 'Start' || sheetName === 'Finish' || sheetName === 'Expired Claim') ? idxCheckinServiceTypeRaw : null;
         const rawServiceType = idxServiceRaw != null ? rawGet(idxServiceRaw) : '';
         const statusForService = lastStatuses ? String((lastStatuses[r] && lastStatuses[r][0]) || '').trim() : '';
-        outServiceType[r] = [ (typeof resolveServiceTypeFromStatus_ === 'function') ? resolveServiceTypeFromStatus_(sheetName, rawServiceType, statusForService) : rawServiceType ];
+        const rejectClaimType = (sheetName === 'Reject Claim' && typeof REJECT_CLAIM_TYPE_BY_LAST_STATUS !== 'undefined')
+          ? (REJECT_CLAIM_TYPE_BY_LAST_STATUS[statusForService] || '')
+          : null;
+        outServiceType[r] = [ rejectClaimType != null
+          ? rejectClaimType
+          : ((typeof resolveServiceTypeFromStatus_ === 'function') ? resolveServiceTypeFromStatus_(sheetName, rawServiceType, statusForService) : rawServiceType) ];
       }
 
       if (outProduct) outProduct[r] = [ idxProductRaw != null ? rawGet(idxProductRaw) : '' ];
@@ -1180,7 +1193,7 @@ function shouldRunWeeklyReportBaseForSub06b_() {
 }
 
 
-function applyStrictSubmissionDateAndMonth06b_(ss, rawValues, headerIndexRaw) {
+function applyStrictSubmissionDateAndMonth06b_(ss, rawValues, headerIndexRaw, opts) {
   if (!ss || !rawValues || !rawValues.length || !headerIndexRaw) return;
   if (typeof applyRawHeaderAliases_ === 'function') headerIndexRaw = applyRawHeaderAliases_(headerIndexRaw);
 
@@ -1201,12 +1214,12 @@ function applyStrictSubmissionDateAndMonth06b_(ss, rawValues, headerIndexRaw) {
   }
 
   const flowName = String((typeof RUNTIME !== 'undefined' && RUNTIME && RUNTIME.flowName) ? RUNTIME.flowName : 'main').trim().toLowerCase();
-  const targetSheets = [
-    'Submission', 'Ask Detail', 'OR - OLD', 'Start', 'Finish', 'Expired Claim',
+  let targetSheets = (opts && Array.isArray(opts.sheets) && opts.sheets.length) ? opts.sheets.slice() : [
+    'Submission', 'Ask Detail', 'OR - OLD', 'Start', 'Finish', 'Expired Claim', 'Reject Claim',
     'SC - Farhan', 'SC - Meilani', 'SC - Meindar', 'SC - Unmapped', 'PO',
-    'Exclusion', 'B2B', 'EV-Bike', 'Doss'
+    'Exclusion', 'EV-Bike', 'Doss'
   ];
-  if (flowName === 'main') targetSheets.push('Special Case');
+  if (flowName === 'main' && targetSheets.indexOf('Special Case') === -1 && !(opts && Array.isArray(opts.sheets))) targetSheets.push('Special Case');
   targetSheets.forEach(function(name) {
     const sh = ss.getSheetByName(name);
     if (!sh) return;
@@ -1702,4 +1715,129 @@ function tagOverviewFlow06b_(ss, profileName, flowName) {
   if (DRY_RUN) return false;
   sh.getRange(rowTarget, idxFlow + 1).setValue(flowName);
   return true;
+}
+
+
+/** Durable MAIN continuation. It is deliberately independent of stage-1 memory. */
+function scheduleMainPipelineStage2_(profileName, rawSheetId, rawRows, runId) {
+  const props = PropertiesService.getScriptProperties();
+  // Reuse stage-1 RunID so Log - Main is one continuous audit trail.
+  const token = String(runId || getRunId_() || Utilities.getUuid());
+  props.setProperty('MAIN_PIPELINE_STAGE2', JSON.stringify({ token: token, profile: profileName, rawSheetId: rawSheetId, rawRows: rawRows, createdAt: Date.now() }));
+  ScriptApp.getProjectTriggers().forEach(function(t) {
+    if (t.getHandlerFunction && t.getHandlerFunction() === 'runMainPipelineStage2_') ScriptApp.deleteTrigger(t);
+  });
+  ScriptApp.newTrigger('runMainPipelineStage2_').timeBased().after(60 * 1000).create();
+  try { logLine_('MAIN_STAGE1_PENDING_STAGE2', 'Execution 1 complete; pending execution 2', 'runId=' + token, 'rows=' + rawRows + ' trigger=one-shot', 'INFO'); } catch (e) {}
+  return token;
+}
+
+function runMainPipelineStage2_() {
+  return withLock_(function() {
+    const props = PropertiesService.getScriptProperties();
+    const payload = props.getProperty('MAIN_PIPELINE_STAGE2');
+    if (!payload) return { severity: 'INFO', message: 'No pending MAIN stage 2.' };
+    const state = JSON.parse(payload);
+    const maxAgeMs = 30 * 60 * 1000;
+    if (!state.createdAt || Date.now() - Number(state.createdAt) > maxAgeMs) {
+      props.deleteProperty('MAIN_PIPELINE_STAGE2');
+      throw new Error('Pending MAIN stage 2 expired; refusing stale route.');
+    }
+    // Do not call clearLogSheet_ here: stage 2 must append to stage 1's Log - Main run.
+    resetRunState_();
+    setLogRunContext_('MAIN', state.token);
+    try { if (typeof RUNTIME !== 'undefined' && RUNTIME) RUNTIME.flowName = 'main'; } catch (eFlow) {}
+    try { logLine_('MAIN_STAGE2_START', 'Execution 2 started', 'runId=' + state.token, 'continuing stage 1 log', 'INFO'); } catch (eLogStart) {}
+    const ssId = CONFIG.spreadsheets[resolveSpreadsheetKey_(state.profile || 'Master')];
+    const ss = SpreadsheetApp.openById(ssId);
+    const rawSheet = ss.getSheetByName(CONFIG.masterRawSheetName || 'Raw Data');
+    if (!rawSheet || rawSheet.getSheetId() !== state.rawSheetId) throw new Error('Raw Data changed before MAIN stage 2.');
+    const lr = rawSheet.getLastRow(), lc = rawSheet.getLastColumn();
+    if (lr < 2 || lc < 1) throw new Error('Raw Data is empty before MAIN stage 2.');
+    const header = getRawHeader_(rawSheet);
+    let index = buildHeaderIndex_(header);
+    if (typeof applyRawHeaderAliases_ === 'function') index = applyRawHeaderAliases_(index);
+    const rows = rawSheet.getRange(2, 1, lr - 1, lc).getValues();
+    const pre = preflightRoutableCount_(rows, index, null);
+    if (!pre.total) throw new Error('No routable rows in MAIN stage 2: ' + pre.reason);
+
+    const profile = state.profile || 'Master';
+    // Match direct MAIN semantics: a non-critical enrichment failure must be
+    // visible in Log - Main but must not prevent later finalizers from running.
+    const runBestEffort = function(step, fn) {
+      try {
+        return fn();
+      } catch (err) {
+        try { logLine_('WARN', 'MAIN_STAGE2_' + step, 'Step failed; continuing remaining finalizers.', String(err), 'WARN'); } catch (eLog) {}
+        return null;
+      }
+    };
+    setProgress_(0.55, 'Execution 2: clearing operational sheets…');
+    logLine_('MAIN_STAGE2_CLEAR', 'Clear operational sheets', 'rows=' + rows.length, '', 'INFO');
+    clearOperationalSheets_(ss, profile, { skipManualSnapshot: true });
+    setProgress_(0.65, 'Execution 2: routing claims…');
+    logLine_('MAIN_STAGE2_ROUTE', 'Route Raw Data to operational sheets', '', '', 'INFO');
+    const route = routeRawToOperationalSheetsInMemory_(ss, rows, index, profile);
+    runBestEffort('TEMPLATE', function() { applyTemplateRowToOperationalSheets_(ss, profile); });
+    setProgress_(0.75, 'Execution 2: restoring manual data…');
+    logLine_('MAIN_STAGE2_RESTORE', 'Restore manual values, formulas, and formatting', 'routed=' + route.total, '', 'INFO');
+    runBestEffort('RESTORE_FIELDS', function() { restoreOpsFieldsFromRawBackup_(ss, rawSheet, index, profile); });
+    runBestEffort('RESTORE_AWB', function() { restoreNamedOpsFieldsFromRaw06c_(ss, rawSheet, index, profile, ['AWB', 'Timestamp AWB']); });
+    runBestEffort('RESTORE_UPDATE_STATUS', function() { applyUpdateStatusRichTextToOperational_(ss, rawSheet, index, profile); });
+    runBestEffort('RESTORE_REMARKS', function() { applyRemarksRichTextToOperational_(ss, rawSheet, index, profile); });
+    // Read (but retain) the stage-1 style snapshot; SUB 09:00 owns its final deletion.
+    runBestEffort('RESTORE_MAIN_TEMP', function() { restoreOpsManualFromMainTempForSub06c_(ss, profile, { deleteAfterRestore: false }); });
+    // Stage 1 persisted the complete manual snapshot before clearing. Restore it
+    // here as well so split MAIN has the same manual-field recovery as direct MAIN.
+    runBestEffort('RESTORE_BACKUP', function() {
+      if (typeof restoreOpsManualFromBackupSheet06c_ === 'function') restoreOpsManualFromBackupSheet06c_(ss, profile);
+    });
+    // Keep this after every restore, matching direct MAIN, so a copied template
+    // or manual style cannot overwrite the marker color.
+    runBestEffort('HIGHLIGHT', function() { applyOperationalClaimHighlightsByRaw_(ss, rows, index, profile); });
+    setProgress_(0.85, 'Execution 2: enriching and optional sheets…');
+    logLine_('MAIN_STAGE2_ENRICH', 'Enrich operational and optional sheets', '', '', 'INFO');
+    runBestEffort('ENRICH', function() { enrichOperationalSheetsFromRaw06_(ss, rows, index, profile, { flow: 'main' }); });
+    runBestEffort('SUBMISSION_SYNC', function() { applyStrictSubmissionDateAndMonth06b_(ss, rows, index); });
+    runBestEffort('SC_BRANCH', function() { autofillBranchInScSheets06_(ss); });
+    runBestEffort('SC_TYPE', function() { applyFinishTypeInScSheets06_(ss); });
+    runBestEffort('B2B', function() { processB2B_(ss, rows, index, profile); });
+    runBestEffort('SPECIAL_CASE', function() { processSpecialCase_(ss, rows, index, profile); });
+    runBestEffort('EV_BIKE', function() { processEVBike_(ss, rows, index, profile); });
+    runBestEffort('DOSS', function() { if (typeof processDoss_ === 'function') processDoss_(ss, rows, index, profile); });
+    runBestEffort('OPTIONAL_SUBMISSION_SYNC', function() { applyStrictSubmissionDateAndMonth06b_(ss, rows, index, { sheets: ['EV-Bike', 'Doss', 'Special Case'] }); });
+    runBestEffort('SANITIZE', function() { sanitizeProblematicDataValidations06_(ss, profile); });
+    runBestEffort('EXCLUSION_TAT', function() { recomputeExclusionTat_(ss, profile); });
+    runBestEffort('RAW_REORDER', function() { reorderRawDataColumns06_(rawSheet); });
+    runBestEffort('TRASH', function() {
+      if (PIPELINE_FLAGS && PIPELINE_FLAGS.TRASH_UPLOADED_FILES && (typeof DRY_RUN === 'undefined' || !DRY_RUN)) {
+        if (typeof flushTrashQueueBestEffort_ === 'function') flushTrashQueueBestEffort_('MAIN');
+      }
+    });
+    setProgress_(0.95, 'Execution 2: sorting and refreshing reports…');
+    logLine_('MAIN_STAGE2_FINALIZE', 'Sort sheets and refresh Report Base', '', '', 'INFO');
+    runBestEffort('SORT', function() { sortOperationalSheetsPreserveFilter06b_(ss, profile); });
+    runBestEffort('REPORT_BASE', function() { if (typeof refreshReportBaseFromOperational06_ === 'function') refreshReportBaseFromOperational06_(ss); });
+    runBestEffort('WEEKLY_REPORT_BASE', function() {
+      if (shouldRunWeeklyReportBaseNow06b_('main', 'EMAIL_MAIN')) {
+        SpreadsheetApp.flush();
+        Utilities.sleep(3000);
+        if (typeof fillWeeklyReportBase === 'function') fillWeeklyReportBase('', '', ss);
+      }
+    });
+    const managedSheets = getOperationalSheetNames06b_(profile).concat(['B2B', 'EV-Bike', 'Doss', 'Special Case', 'Daily Report Base', 'Weekly Report Base']);
+    const seenSheets = Object.create(null);
+    managedSheets.forEach(function(name) {
+      if (!name || seenSheets[name]) return;
+      seenSheets[name] = true;
+      const sh = ss.getSheetByName(name);
+      runBestEffort('FILTER_' + name, function() {
+        if (sh && typeof __expandSheetFilterToUsedRange06_ === 'function') __expandSheetFilterToUsedRange06_(sh);
+      });
+    });
+    props.deleteProperty('MAIN_PIPELINE_STAGE2');
+    setProgress_(1.0, 'MAIN stage 2 complete.');
+    try { logLine_('MAIN_STAGE2', 'Route/restore complete', 'routed=' + route.total, 'token=' + state.token, 'INFO'); } catch (e) {}
+    return { severity: 'INFO', message: 'MAIN stage 2 complete.', routedTotal: route.total || 0 };
+  });
 }

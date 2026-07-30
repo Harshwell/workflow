@@ -223,9 +223,53 @@ function __setDbLinkRichTextSegments_(sh, colIndex0, rowNums, urlMap) {
   }
 }
 
+function __sortOptionalSheetBySubmissionDate05c_(sh) {
+  if (!sh || __isDryRun05c__()) return false;
+  const lastRow = sh.getLastRow();
+  const lastCol = sh.getLastColumn();
+  if (lastRow <= 2 || lastCol < 1) return false;
+
+  const header = __getHeaderRow05c_(sh);
+  const idxH = buildHeaderIndex_(header);
+  const idxSubmissionDate = idxH['Submission Date'];
+  if (idxSubmissionDate == null) return false;
+
+  const submissionDateCol = idxSubmissionDate + 1;
+  try {
+    if (typeof __expandSheetFilterToUsedRange06_ === 'function') __expandSheetFilterToUsedRange06_(sh);
+    const filter = (typeof sh.getFilter === 'function') ? sh.getFilter() : null;
+    if (filter && typeof filter.getRange === 'function') {
+      const fr = filter.getRange();
+      const frStartCol = fr.getColumn();
+      const frEndCol = frStartCol + fr.getNumColumns() - 1;
+      if (fr.getNumRows() > 1 && submissionDateCol >= frStartCol && submissionDateCol <= frEndCol) {
+        fr.offset(1, 0, fr.getNumRows() - 1, fr.getNumColumns())
+          .sort([{ column: submissionDateCol - frStartCol + 1, ascending: true }]);
+        return true;
+      }
+    }
+    sh.getRange(2, 1, lastRow - 1, lastCol).sort([{ column: submissionDateCol, ascending: true }]);
+    return true;
+  } catch (e) {
+    try { if (typeof logLine_ === 'function') logLine_('WARN', 'Optional sheet Submission Date sort failed', sh.getName ? sh.getName() : '', String(e), 'WARN'); } catch (eLog) {}
+    return false;
+  }
+}
+
 /** =========================
  *  Optional sheets
  *  ========================= */
+
+
+function getB2BExcludedStatuses05c_() {
+  const base = (typeof getSpecialCaseExcludedStatuses_ === 'function')
+    ? getSpecialCaseExcludedStatuses_()
+    : new Set();
+  const out = new Set();
+  try { base.forEach(function(v) { out.add(String(v || '').trim().toUpperCase()); }); } catch (e) {}
+  ['DONE_EXPIRED', 'CLAIM_EXPIRE', 'CLAIM_EXPIRE_WALKIN'].forEach(function(v) { out.add(v); });
+  return out;
+}
 
 /** Optional: B2B — enabled by default. Set RUNTIME.enableB2B = false to disable. */
 function __getB2BStatusRouteBucket05c_(status) {
@@ -358,7 +402,7 @@ function processB2B_(ss, rawValues, headerIndexRaw, pic) { // `pic` kept for bac
   }
 
   const OPTIONAL_FLAGS = (typeof __OPTIONAL_FLAGS !== 'undefined' && __OPTIONAL_FLAGS) ? __OPTIONAL_FLAGS : {};
-  const EXCLUDED_LAST_STATUSES = getSpecialCaseExcludedStatuses_();
+  const EXCLUDED_LAST_STATUSES = getB2BExcludedStatuses05c_();
 
   const idxBP = headerIndexRaw[h.businessPartner];
   const idxClaim = headerIndexRaw[h.claimNumber];
@@ -408,13 +452,16 @@ function processB2B_(ss, rawValues, headerIndexRaw, pic) { // `pic` kept for bac
   const idxQL = headerIndexRaw['Q-L (Months)'];
 
   const idxProduct = headerIndexRaw[h.productName];
+  const idxDeviceBrand = (headerIndexRaw[h.deviceBrand] != null) ? headerIndexRaw[h.deviceBrand] : headerIndexRaw['device_brand'];
+  const idxImei = (headerIndexRaw[h.imeiNumber] != null) ? headerIndexRaw[h.imeiNumber] : ((headerIndexRaw[h.imei] != null) ? headerIndexRaw[h.imei] : headerIndexRaw['imei_number']);
   const idxBusinessCategory =
     (headerIndexRaw['id_business_partner_category_name'] != null) ? headerIndexRaw['id_business_partner_category_name'] :
     (headerIndexRaw[h.businessPartnerCategoryName] != null) ? headerIndexRaw[h.businessPartnerCategoryName] :
     headerIndexRaw['Business Category'];
 
   const idxSumInsured = headerIndexRaw[h.sumInsured];
-  const idxOwnRisk = headerIndexRaw[h.ownRiskAmount];
+  const idxClaimAmount = (headerIndexRaw[h.claimAmount] != null) ? headerIndexRaw[h.claimAmount] : headerIndexRaw['claim_amount'];
+  const idxOwnRisk = (headerIndexRaw[h.claimOwnRiskAmount] != null) ? headerIndexRaw[h.claimOwnRiskAmount] : headerIndexRaw[h.ownRiskAmount];
   const idxNett = headerIndexRaw[h.nettClaimAmount];
 
   let headerRow = __getHeaderRow05c_(sh);
@@ -497,15 +544,21 @@ function processB2B_(ss, rawValues, headerIndexRaw, pic) { // `pic` kept for bac
 
     set('Q-L (Months)', (idxQL != null) ? (normalizeInt_(row[idxQL]) ?? '') : '');
 
-    // Product
+    // Product / device identity
     set('Product', (idxProduct != null) ? row[idxProduct] : '');
+    set('Device Brand', (idxDeviceBrand != null) ? row[idxDeviceBrand] : '');
+    set('IMEI/SN', (idxImei != null && typeof normalizeImeiSnText_ === 'function') ? normalizeImeiSnText_(row[idxImei]) : ((idxImei != null) ? String(row[idxImei] || '').replace(/,/g, '') : ''));
 
     // Money fields (force numeric)
     const sumIns = (idxSumInsured != null) ? normalizeNumber_(row[idxSumInsured]) : null;
+    const claimAmt = (idxClaimAmount != null) ? normalizeNumber_(row[idxClaimAmount]) : null;
     const orAmt = (idxOwnRisk != null) ? normalizeNumber_(row[idxOwnRisk]) : null;
     const nett = (idxNett != null) ? normalizeNumber_(row[idxNett]) : null;
 
     set('Sum Insured', (sumIns != null) ? sumIns : '');
+    set('Sum Insured Amount', (sumIns != null) ? sumIns : '');
+    set('Claim Amount', (claimAmt != null) ? claimAmt : ((nett != null) ? nett : ''));
+    set('Claim Own Risk Amount', (orAmt != null) ? orAmt : '');
     if (idxH['OR Amount'] != null) set('OR Amount', (orAmt != null) ? orAmt : '');
     set('Nett Claim Amount', (nett != null) ? nett : '');
 
@@ -514,30 +567,92 @@ function processB2B_(ss, rawValues, headerIndexRaw, pic) { // `pic` kept for bac
   }
 
   if (!rows.length) return 0;
-  // Rebuild list only when we have replacement rows.
-  // Prevent accidental "header-only" sheet when source window is temporarily empty.
-  clearSheetDataHard_(sh, { bufferRows: 1200 });
-  safeSetValues_(sh.getRange(2, 1, rows.length, header.length), rows);
 
-  // DB Link as RichText (avoid #ERROR!, display "LINK")
-  __setDbLinkRichTextRange_(sh, dbLinkCol0, 2, dbUrls);
+  const claimCol0 = idxH['Claim Number'];
+  if (claimCol0 == null) return 0;
 
-  applyOperationalColumnSchema_(sh, header, 2, rows.length, { orIsMoney: false });
-  applyDbLinkFormatting_(sh, header, rows.length, 2);
+  const existingRowCount = Math.max(sh.getLastRow() - 1, 0);
+  const existingVals = existingRowCount > 0
+    ? sh.getRange(2, 1, existingRowCount, header.length).getValues()
+    : [];
+  const existingMap = Object.create(null);
+  for (let i = 0; i < existingVals.length; i++) {
+    const key = String(existingVals[i][claimCol0] || '').trim().toUpperCase();
+    if (key && existingMap[key] == null) existingMap[key] = i + 2;
+  }
+
+  const protectedHeaders = new Set(['Update Status', 'Timestamp', 'Status', 'Remarks', 'AWB', 'Timestamp AWB'].map(function (h) { return h.toLowerCase(); }));
+  const controlledIdx = [];
+  for (let c = 0; c < header.length; c++) {
+    const hName = String(header[c] || '').trim();
+    if (!hName || protectedHeaders.has(hName.toLowerCase())) continue;
+    controlledIdx.push(c);
+  }
+
+  const rowMap = {};
+  const updateUrlMap = {};
+  const updatedRowNums = [];
+  const appendRows = [];
+  const appendUrls = [];
+
+  for (let r = 0; r < rows.length; r++) {
+    const out = rows[r];
+    const claimKey = String(out[claimCol0] || '').trim().toUpperCase();
+    if (!claimKey) continue;
+
+    const existingRowNum = existingMap[claimKey];
+    if (existingRowNum != null) {
+      const base = existingVals[existingRowNum - 2] ? existingVals[existingRowNum - 2].slice() : new Array(header.length).fill('');
+      for (let ci = 0; ci < controlledIdx.length; ci++) {
+        const col = controlledIdx[ci];
+        base[col] = out[col];
+      }
+      rowMap[existingRowNum] = base;
+      updateUrlMap[existingRowNum] = dbUrls[r];
+      updatedRowNums.push(existingRowNum);
+    } else {
+      appendRows.push(out);
+      appendUrls.push(dbUrls[r]);
+    }
+  }
+
+  if (updatedRowNums.length && !__isDryRun05c__()) {
+    __writeRowSegments_(sh, updatedRowNums, rowMap, header.length);
+    if (dbLinkCol0 != null) __setDbLinkRichTextSegments_(sh, dbLinkCol0, updatedRowNums, updateUrlMap);
+    const segs = __groupConsecutive_(updatedRowNums);
+    for (let s = 0; s < segs.length; s++) {
+      const seg = segs[s];
+      applyOperationalColumnSchema_(sh, header, seg[0], seg.length, { orIsMoney: false });
+      applyDbLinkFormatting_(sh, header, seg.length, seg[0]);
+    }
+  }
+
+  if (appendRows.length && !__isDryRun05c__()) {
+    const startRow = Math.max(sh.getLastRow() + 1, 2);
+    safeSetValues_(sh.getRange(startRow, 1, appendRows.length, header.length), appendRows);
+    if (dbLinkCol0 != null) __setDbLinkRichTextRange_(sh, dbLinkCol0, startRow, appendUrls);
+    applyOperationalColumnSchema_(sh, header, startRow, appendRows.length, { orIsMoney: false });
+    applyDbLinkFormatting_(sh, header, appendRows.length, startRow);
+  }
+
+  const writtenRows = updatedRowNums.length + appendRows.length;
   try {
     if (typeof logLine_ === 'function') {
       logLine_(
         'INFO',
         'B2B_METRICS',
-        'rows=' + rows.length
+        'rows=' + writtenRows
           + ' raw=' + rawMatchedCount
+          + ' updated=' + updatedRowNums.length
+          + ' appended=' + appendRows.length
+          + ' preserved_existing=' + Math.max(existingRowCount - updatedRowNums.length, 0)
           + ' skip_excluded_raw=' + skippedExcludedRawCount,
         '',
         'INFO'
       );
     }
   } catch (eM) {}
-  return rows.length;
+  return writtenRows;
 }
 
 /** Special Case excluded statuses (ongoing only) */
@@ -1272,6 +1387,7 @@ function updateTokenOptionalSheetFromSubRaw05c_(sh, rawValues, headerIndexRaw, o
     safeSetValues_(sh.getRange(2, 1, values.length, header.length), values);
     if (dbLinkCol0 != null && touchedRows.length) __setDbLinkRichTextSegments_(sh, dbLinkCol0, touchedRows, urlMap);
   }
+  __sortOptionalSheetBySubmissionDate05c_(sh);
   return changed;
 }
 
@@ -1547,24 +1663,27 @@ function processEVBike_(ss, rawValues, headerIndexRaw, pic, opts) { // `pic` kep
     }
   } catch (eDvEv) {}
 
-  // Never overwrite manual Status dropdown column on EV-Bike.
-  // Write left/right segments around "Status" when column exists.
-  const idxStatus = (idxH['Status'] != null) ? idxH['Status'] : -1;
-  if (idxStatus === -1) {
-    safeSetValues_(sh.getRange(2, 1, values.length, header.length), values);
-  } else {
-    if (idxStatus > 0) {
-      const left = values.map(r => r.slice(0, idxStatus));
-      safeSetValues_(sh.getRange(2, 1, values.length, idxStatus), left);
-    }
-    if (idxStatus < header.length - 1) {
-      const right = values.map(r => r.slice(idxStatus + 1));
-      safeSetValues_(sh.getRange(2, idxStatus + 2, values.length, header.length - idxStatus - 1), right);
+  // SUB optional refresh is an overlay only: never touch user-managed/dropdown columns.
+  // This prevents source Last Status from being written into an Update Status validation column.
+  const protectedHeaders = new Set(['Status', 'Update Status', 'Timestamp', 'Timestamp Status', 'Remarks']);
+  const writable = [];
+  for (let c = 0; c < header.length; c++) {
+    if (!protectedHeaders.has(String(header[c] || '').trim())) writable.push(c);
+  }
+  let start = -1;
+  for (let i = 0; i <= writable.length; i++) {
+    const col = i < writable.length ? writable[i] : null;
+    if (start === -1 && col != null) { start = col; continue; }
+    if (start !== -1 && (col == null || col !== writable[i - 1] + 1)) {
+      const width = writable[i - 1] - start + 1;
+      safeSetValues_(sh.getRange(2, start + 1, values.length, width), values.map(r => r.slice(start, start + width)));
+      start = col == null ? -1 : col;
     }
   }
 
   // Apply RichText hyperlink only for touched rows
   if (dbLinkCol0 != null && touchedRowNums.length) __setDbLinkRichTextSegments_(sh, dbLinkCol0, touchedRowNums, urlMap);
+  __sortOptionalSheetBySubmissionDate05c_(sh);
   try {
     if (typeof logLine_ === 'function') {
       logLine_(

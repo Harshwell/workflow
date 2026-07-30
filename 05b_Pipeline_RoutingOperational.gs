@@ -174,6 +174,17 @@ function uniq05a_(arr) {
  *  Routing core
  *  ========================= */
 
+
+function isRejectClaimTarget05b_(statusVal, lastActivityAgingVal, lastUpdateVal) {
+  const status = String(statusVal || '').toLowerCase();
+  if (status.indexOf('reject') === -1) return false;
+  const aging = (typeof normalizeInt_ === 'function') ? normalizeInt_(lastActivityAgingVal) : Number(lastActivityAgingVal);
+  if (aging != null && !isNaN(aging)) return aging <= 30;
+  const d = (typeof coerceDateTime_ === 'function') ? coerceDateTime_(lastUpdateVal) : (lastUpdateVal instanceof Date ? lastUpdateVal : null);
+  if (!d || isNaN(d.getTime())) return false;
+  return ((new Date().getTime() - d.getTime()) / 86400000) <= 30;
+}
+
 function compileRoutingIndex_(routingMap) {
   const idx = {};
   Object.keys(routingMap).forEach(sheetName => {
@@ -190,6 +201,36 @@ function compileRoutingIndex_(routingMap) {
     });
   });
   return idx;
+}
+
+/**
+ * Some statuses intentionally belong to more than one operational queue.
+ * Keep these business-critical fan-out routes explicit so a future routing-map
+ * change cannot silently turn them into a single-destination route.
+ */
+function enforceRequiredMultiDestinationTargets05b_(status, targets, opsPolicy) {
+  const statusKey = String(status || '').trim();
+  const out = Array.isArray(targets) ? targets.slice() : [];
+  if (statusKey !== 'COURIER_PICKUP_START_DONE') return uniq05a_(out);
+
+  const sheets = (opsPolicy && opsPolicy.SHEETS) ? opsPolicy.SHEETS : {};
+  const startSheet = String(sheets.START || 'Start').trim();
+  const scSheets = [
+    String(sheets.SC_FARHAN || 'SC - Farhan').trim(),
+    String(sheets.SC_MEILANI || 'SC - Meilani').trim(),
+    String(sheets.SC_IVAN || sheets.SC_IVAN_NAME || 'SC - Meindar').trim()
+  ].filter(Boolean);
+
+  if (startSheet) out.push(startSheet);
+
+  const hasScTarget = out.some(function (name) {
+    return scSheets.indexOf(String(name || '').trim()) > -1;
+  });
+  if (!hasScTarget) {
+    scSheets.forEach(function (name) { out.push(name); });
+  }
+
+  return uniq05a_(out);
 }
 
 
@@ -334,6 +375,7 @@ function applyOperationalColumnSchema_(sh, header, startRow, nRows, opts) {
 
   opts = opts || {};
   const orIsMoney = !!opts.orIsMoney;
+  const sheetName = String(opts.sheetName || (sh && typeof sh.getName === 'function' ? sh.getName() : '') || '').trim();
 
   const idx = buildHeaderIndex_(header);
   const fmt = (colName, numberFormat, align) => {
@@ -366,7 +408,7 @@ function applyOperationalColumnSchema_(sh, header, startRow, nRows, opts) {
   fmt('Last Status Aging', __FORMATS.INT, 'right');
   fmt('ALA', __FORMATS.INT, 'right');
   fmt('Activity Log Aging', __FORMATS.INT, 'right');
-  fmt('TAT', __FORMATS.INT, 'right');
+  fmt('TAT', sheetName === 'Submission' ? (__FORMATS.DECIMAL1 || '#,##0.0') : __FORMATS.INT, 'right');
   fmt('Q-L (Months)', __FORMATS.INT, 'right');
   fmt('M-L (Months)', __FORMATS.INT, 'right');
   fmt('M-Q (Months)', __FORMATS.INT, 'right');
@@ -869,6 +911,18 @@ function normalizeColor_(c) {
   return s;
 }
 
+function __sanitizeSheetFillColor05b_(c) {
+  const s = String(c || '').trim();
+  // SpreadsheetApp setBackgrounds is strict: invalid/blank strings can fail the whole
+  // batch, while setNotes still succeeds. Return null to clear a fill safely.
+  if (!s) return null;
+  if (/^#[0-9a-fA-F]{6}$/.test(s) || /^#[0-9a-fA-F]{3}$/.test(s)) return s;
+  // Named colors are accepted inconsistently across Apps Script surfaces; keep only
+  // simple names as a best-effort fallback and reject formula/rich strings.
+  if (/^[a-zA-Z]+$/.test(s)) return s.toLowerCase();
+  return null;
+}
+
 function formatLogDate05b_(v) {
   const d = (typeof coerceDateOnly_ === 'function') ? coerceDateOnly_(v) : (v instanceof Date ? v : null);
   if (d) {
@@ -1006,7 +1060,7 @@ function applyOperationalClaimHighlightsByRaw_(ss, rawValues, headerIndexRaw, pi
     if (marker === 'firstMonthPolicy') return policy.firstMonthPolicy.bg;
     if (marker === 'remaining1Month') return policy.remaining1Month.bg;
     if (marker === 'migrationPolicy') return policy.migrationPolicy.bg;
-    return '';
+    return null;
   };
 
   const isMarkerBg_ = (bg) => {
@@ -1107,10 +1161,11 @@ const __setNotes05b__ = (range, matrix, sheetName) => {
       const desiredBg = desiredBgFromMarker_(marker);
 
       if (desiredBg) {
-        if (normalizeColor_(bgs[i][0]) !== normalizeColor_(desiredBg)) { bgs[i][0] = desiredBg; bgChanged = true; }
+        const safeBg = __sanitizeSheetFillColor05b_(desiredBg);
+        if (normalizeColor_(bgs[i][0]) !== normalizeColor_(safeBg)) { bgs[i][0] = safeBg; bgChanged = true; }
       } else {
         // Clear only our marker colors to avoid wiping user formatting.
-        if (isMarkerBg_(bgs[i][0]) && !__shouldPreserveSubHighlight05b_(pic, bgs[i][0], notes[i][0])) { bgs[i][0] = ''; bgChanged = true; }
+        if (isMarkerBg_(bgs[i][0]) && !__shouldPreserveSubHighlight05b_(pic, bgs[i][0], notes[i][0])) { bgs[i][0] = null; bgChanged = true; }
       }
     }
 
@@ -1154,7 +1209,8 @@ function buildSheetWriters_(ss, routingMap, headerIndexRaw, pic) {
     orSet: new Set(typePolicy['OR'] || []),
     insurance: new Set(typePolicy['Insurance'] || []),
     est: new Set(typePolicy['SC - Est'] || []),
-    rcvd: new Set(typePolicy['SC - Rcvd'] || [])
+    rcvd: new Set(typePolicy['SC - Rcvd'] || []),
+    start: new Set(typePolicy['Start'] || [])
   } : null;
 
   // Precedence (specific > general):
@@ -1164,6 +1220,7 @@ function buildSheetWriters_(ss, routingMap, headerIndexRaw, pic) {
     if (!s || !typeSets) return '';
     if (typeSets.onRep && typeSets.onRep.has(s)) return 'SC - On Rep';
     if (typeSets.waitRep && typeSets.waitRep.has(s)) return 'SC - Wait Rep';
+    if (typeSets.start && typeSets.start.has(s)) return 'Start';
     if (typeSets.finish && typeSets.finish.has(s)) return 'Finish';
     if (typeSets.orSet && typeSets.orSet.has(s)) return 'OR';
     if (typeSets.insurance && typeSets.insurance.has(s)) return 'Insurance';
@@ -1258,7 +1315,7 @@ function buildSheetWriters_(ss, routingMap, headerIndexRaw, pic) {
         set('Partner Name', getRaw(rawRow, h.businessPartner));
         set('Insurance', normalizeInsuranceShort05b_(getRawAny(rawRow, [h.insuranceName, h.insurance, 'insurance_name', 'insurance'])));
         set('Device Type', getRawAny(rawRow, [h.deviceType, 'device_type', 'deviceType']));
-        set('Store Name', getRawAny(rawRow, ['3. All Transaction - qoala_policy_number → outlet_name', 'outlet_name', 'store_name', 'Store Name']));
+        set('Store Name', getRawAny(rawRow, ['3. All Transaction - qoala_policy_number → outlet_name', 'outlet_name', 'outlet name']));
         set('PA Name', getRawAny(rawRow, ['3. All Transaction - qoala_policy_number → pa_name', 'pa_name', 'PA Name']));
         set('SPA Name', getRawAny(rawRow, ['3. All Transaction - qoala_policy_number → spa_name', 'spa_name', 'SPA Name']));
         set('Service Center', getRawAny(rawRow, [h.serviceCenter, h.serviceCenterName, h.scName, 'service_center', 'service_center_name', 'sc_name']));
@@ -1274,11 +1331,13 @@ function buildSheetWriters_(ss, routingMap, headerIndexRaw, pic) {
           set('Aging Position', agingPostRaw);
           set('Aging Post.', agingPostRaw);
         }
-        if (idxH['Service Type'] != null) {
+        if (idxH['Claim Type'] != null || idxH['Service Type'] != null) {
           const serviceTypeRaw = (sheetName === 'Start' || sheetName === 'Finish' || sheetName === 'Expired Claim')
             ? getRawAny(rawRow, [h.deviceCheckinOptionName, 'device_checkin_option_name'])
             : '';
-          set('Service Type', (typeof resolveServiceTypeFromStatus_ === 'function') ? resolveServiceTypeFromStatus_(sheetName, serviceTypeRaw, lastStatusVal) : serviceTypeRaw);
+          const claimType = (sheetName === 'Reject Claim' && typeof REJECT_CLAIM_TYPE_BY_LAST_STATUS !== 'undefined') ? (REJECT_CLAIM_TYPE_BY_LAST_STATUS[String(lastStatusVal || '').trim()] || '') : ((typeof resolveServiceTypeFromStatus_ === 'function') ? resolveServiceTypeFromStatus_(sheetName, serviceTypeRaw, lastStatusVal) : serviceTypeRaw);
+          set('Claim Type', claimType);
+          set('Service Type', claimType);
         }
         // - Device Brand / IMEI
         set('Device Brand', getRawAny(rawRow, [h.deviceBrand, 'device_brand', 'brand']));
@@ -1472,7 +1531,8 @@ function buildSheetWriters_(ss, routingMap, headerIndexRaw, pic) {
   return writers;
 }
 
-function clearOperationalSheets_(ss, pic) {
+function clearOperationalSheets_(ss, pic, opts) {
+  opts = opts || {};
   const __MANUAL_HEADERS = ['Update Status', 'Timestamp', 'Status', 'Remarks'];
   if (typeof globalThis.__OPS_MANUAL_SNAPSHOT05B === 'undefined') globalThis.__OPS_MANUAL_SNAPSHOT05B = null;
 
@@ -1484,41 +1544,47 @@ function clearOperationalSheets_(ss, pic) {
     if (ss.getSheetByName('SC - Unmapped') && sheets.indexOf('SC - Unmapped') === -1) sheets.push('SC - Unmapped');
   } catch (e) {}
 
-  // Snapshot manual operational columns before clear.
-  const snapshot = Object.create(null);
-  sheets.forEach(name => {
-    const sh = ss.getSheetByName(name);
-    if (!sh) return;
-    const lr = sh.getLastRow();
-    const lc = sh.getLastColumn();
-    if (lr < 2 || lc < 1) return;
-    const header = sh.getRange(1, 1, 1, lc).getValues()[0].map(v => String(v || '').trim());
-    const idx = buildHeaderIndex_(header);
-    const idxClaim = (idx['Claim Number'] != null) ? idx['Claim Number'] : -1;
-    if (idxClaim < 0) return;
-    const rows = sh.getRange(2, 1, lr - 1, lc).getValues();
-    const byClaim = Object.create(null);
-    for (let r = 0; r < rows.length; r++) {
-      const row = rows[r] || [];
-      const claim = String(row[idxClaim] || '').trim().toUpperCase();
-      if (!claim) continue;
-      if (!byClaim[claim]) byClaim[claim] = {};
-      for (let i = 0; i < __MANUAL_HEADERS.length; i++) {
-        const h = __MANUAL_HEADERS[i];
-        const c = idx[h];
-        byClaim[claim][h] = (c != null) ? row[c] : '';
+  // The normal one-stage pipeline needs this lightweight snapshot. MAIN stage 2 already
+  // has a durable snapshot from stage 1, so repeating full-sheet reads here wastes runtime.
+  if (!opts.skipManualSnapshot) {
+    const snapshot = Object.create(null);
+    sheets.forEach(name => {
+      const sh = ss.getSheetByName(name);
+      if (!sh) return;
+      const lr = sh.getLastRow();
+      const lc = sh.getLastColumn();
+      if (lr < 2 || lc < 1) return;
+      const header = sh.getRange(1, 1, 1, lc).getValues()[0].map(v => String(v || '').trim());
+      const idx = buildHeaderIndex_(header);
+      const idxClaim = (idx['Claim Number'] != null) ? idx['Claim Number'] : -1;
+      if (idxClaim < 0) return;
+      const rows = sh.getRange(2, 1, lr - 1, lc).getValues();
+      const byClaim = Object.create(null);
+      for (let r = 0; r < rows.length; r++) {
+        const row = rows[r] || [];
+        const claim = String(row[idxClaim] || '').trim().toUpperCase();
+        if (!claim) continue;
+        if (!byClaim[claim]) byClaim[claim] = {};
+        for (let i = 0; i < __MANUAL_HEADERS.length; i++) {
+          const h = __MANUAL_HEADERS[i];
+          const c = idx[h];
+          byClaim[claim][h] = (c != null) ? row[c] : '';
+        }
       }
-    }
-    snapshot[name] = byClaim;
-  });
-  globalThis.__OPS_MANUAL_SNAPSHOT05B = snapshot;
+      snapshot[name] = byClaim;
+    });
+    globalThis.__OPS_MANUAL_SNAPSHOT05B = snapshot;
+  }
 
   sheets.forEach(name => {
     const sh = ss.getSheetByName(name);
     if (!sh) return;
     const buffer = (name === 'Ask Detail') ? 1500 : 400;
-    // clearFormat() does not remove data validations (dropdowns stay intact)
-    clearSheetDataHard_(sh, { bufferRows: buffer, clearFormats: true, preserveTemplateRow: true });
+    // Hard-clear all routed data rows, including row 2. Preserving row 2 as a
+    // format template can shift stale manual styling (for example blue
+    // Update Status text) onto a different claim after MAIN/SUB rerouting.
+    // User-managed cell styles are restored by claim from the backup snapshots.
+    clearSheetDataHard_(sh, { bufferRows: buffer, clearFormats: true, preserveTemplateRow: false, clearEntireDataArea: true });
 
 // FIX: clearSheetDataHard_ with preserveTemplateRow=true preserves row 2's format AND DV
 // as a template (intentional for Status dropdown chip style). However, if Submission Date
@@ -1592,6 +1658,8 @@ function routeRawToOperationalSheetsInMemory_(ss, rawValues, headerIndexRaw, pic
   const idxClaim = headerIndexRaw[h.claimNumber];
   const idxLastStatus = headerIndexRaw[h.lastStatus];
   const idxDaysAging = headerIndexRaw[h.daysAgingFromSubmission];
+  const idxLastActivityAging = (headerIndexRaw[h.lastStatusAging] != null) ? headerIndexRaw[h.lastStatusAging] : headerIndexRaw['days_aging_from_last_activity'];
+  const idxLastUpdate = (headerIndexRaw[h.lastUpdateDatetime] != null) ? headerIndexRaw[h.lastUpdateDatetime] : ((headerIndexRaw['last_update_datetime'] != null) ? headerIndexRaw['last_update_datetime'] : headerIndexRaw['claim_last_updated_datetime']);
   const idxPartnerName = headerIndexRaw[h.businessPartner];
   const idxScName = headerIndexRaw[h.scName];
 
@@ -1617,10 +1685,28 @@ function routeRawToOperationalSheetsInMemory_(ss, rawValues, headerIndexRaw, pic
     }
 
     let targets = (routingIndex[statusVal] || []).slice();
+    targets = enforceRequiredMultiDestinationTargets05b_(statusVal, targets, opsPolicy);
+
+    if (isRejectClaimTarget05b_(statusVal, idxLastActivityAging != null ? rawRow[idxLastActivityAging] : '', idxLastUpdate != null ? rawRow[idxLastUpdate] : '')) {
+      targets = ['Reject Claim'];
+    }
 
     // Patch B1: force Finish statuses into SC routing.
-    if (isFinishStatus05a_(statusVal)) {
+    if (targets.indexOf('Reject Claim') === -1 && isFinishStatus05a_(statusVal)) {
       targets = uniq05a_(targets.concat([scFarhanName, scMeilaniName, scIvanName, scFallbackName]));
+    }
+
+    // EzCare Apple project: from 15 Jul 2026 (inclusive), Apple device brand/type is Farhan;
+    // all other EzCare claims retain the existing Meindar mapping.
+    const scNameForOverride = (idxScName != null) ? String(rawRow[idxScName] || '') : '';
+    const isEzCare = /ez\s*care/i.test(scNameForOverride);
+    const subDateIdx = headerIndexRaw[h.claimSubmissionDate] != null ? headerIndexRaw[h.claimSubmissionDate] : headerIndexRaw['claim_submission_date'];
+    const brandIdx = headerIndexRaw[h.deviceBrand] != null ? headerIndexRaw[h.deviceBrand] : headerIndexRaw['device_brand'];
+    const typeIdx = headerIndexRaw[h.deviceType] != null ? headerIndexRaw[h.deviceType] : headerIndexRaw['device_type'];
+    const subDate = subDateIdx != null ? coerceDateOnly_(rawRow[subDateIdx]) : null;
+    const isApple = /apple/i.test(String((brandIdx != null ? rawRow[brandIdx] : '') || '')) || /apple/i.test(String((typeIdx != null ? rawRow[typeIdx] : '') || ''));
+    if (isEzCare && isApple && subDate && subDate.getTime() >= new Date(2026, 6, 15).getTime()) {
+      targets = targets.filter(x => x !== scMeilaniName && x !== scIvanName && x !== scFallbackName).concat([scFarhanName]);
     }
 
     // SC sheet split by sc_name keywords (only if targets include SC sheets)
@@ -1632,6 +1718,10 @@ function routeRawToOperationalSheetsInMemory_(ss, rawValues, headerIndexRaw, pic
     if (exclusiveTokenClaim && targets.length) {
       targets = targets.filter(function(name) { return name !== scFallbackName; });
     }
+
+    // Final guard after all SC-specific filters/overrides: this status must
+    // remain visible in Start and in the selected SC universe destination.
+    targets = enforceRequiredMultiDestinationTargets05b_(statusVal, targets, opsPolicy);
 
     // NOTE: previously there were EV-Bike / PIC suppressions. Those are intentionally removed.
     // We always route all incoming data in the single master workflow.
@@ -1729,7 +1819,7 @@ function routeRawToOperationalSheetsInMemory_(ss, rawValues, headerIndexRaw, pic
     }
 
     // Column formatting minimal (does not touch data validations)
-    applyOperationalColumnSchema_(sh, header, startRow, n, { orIsMoney: false });
+    applyOperationalColumnSchema_(sh, header, startRow, n, { orIsMoney: false, sheetName: sheetName });
 
     // DB Link RichText if supported
     if (typeof applyDbLinkRichTextFromWriter_ === 'function') {
