@@ -11,6 +11,7 @@
 
 const SC_MEILANI_CONFIG = Object.freeze({
   sourceSpreadsheetId: '1zRlYrSRssv9LVcPKEq90CmmvTRsZoN_TqfIg2pNufbc',
+  destinationSpreadsheetId: '1dU9dt01Ld_ykMJWQxupvIHyLXV6ArnGeXCBV72q31lU',
   menuName: 'SC Meilani',
   logSheetName: 'Log SC-Meilani',
   headerRow: 1,
@@ -157,7 +158,7 @@ function scMeilaniWithLock_(flowName, runner) {
   }
 
   const startedAt = new Date();
-  const destinationSpreadsheet = SpreadsheetApp.getActiveSpreadsheet();
+  const destinationSpreadsheet = SpreadsheetApp.openById(SC_MEILANI_CONFIG.destinationSpreadsheetId);
   const sourceSpreadsheet = SpreadsheetApp.openById(SC_MEILANI_CONFIG.sourceSpreadsheetId);
   const ctx = {
     flowName: flowName,
