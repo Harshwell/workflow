@@ -14,6 +14,7 @@ const SC_MEILANI_CONFIG = Object.freeze({
   menuName: 'SC Meilani',
   logSheetName: 'Log SC-Meilani',
   headerRow: 1,
+  headerScanRows: 20,
   allowedBranches: Object.freeze([
     'Xiaomi Authorized',
     'Unicom',
@@ -98,7 +99,7 @@ function runSCMeilaniSalvage() {
   return scMeilaniWithLock_('SALVAGE', function (ctx) {
     const cfg = SC_MEILANI_CONFIG;
     const sourceSheet = scMeilaniRequireSheet_(ctx.sourceSpreadsheet, cfg.salvage.sourceSheetName);
-    const sourceMeta = scMeilaniReadSourceMeta_(sourceSheet);
+    const sourceMeta = scMeilaniReadSourceMeta_(sourceSheet, ['Claim Number', 'Branch', cfg.salvage.yosHeader, cfg.salvage.remarksHeader]);
     const branchCol = scMeilaniRequireHeader_(sourceMeta.headerMap, 'Branch');
     const yosCol = scMeilaniRequireHeader_(sourceMeta.headerMap, cfg.salvage.yosHeader);
     const remarksCol = scMeilaniRequireHeader_(sourceMeta.headerMap, cfg.salvage.remarksHeader);
@@ -107,7 +108,7 @@ function runSCMeilaniSalvage() {
     cfg.salvage.targets.forEach(function (target) {
       const targetSheet = scMeilaniRequireSheet_(ctx.destinationSpreadsheet, target.sheetName);
       const targetMeta = scMeilaniReadTargetMeta_(targetSheet);
-      const rowNumbers = scMeilaniCollectRowNumbers_(sourceMeta.values, function (row) {
+      const rowNumbers = scMeilaniCollectRowNumbers_(sourceMeta, function (row) {
         return scMeilaniIsAllowedBranch_(row[branchCol])
           && scMeilaniMatchesYear_(row[yosCol], target.year)
           && scMeilaniEqualsText_(row[remarksCol], cfg.salvage.requiredRemarksValue);
@@ -127,13 +128,13 @@ function runSCMeilaniSalvageRepair() {
     const cfg = SC_MEILANI_CONFIG;
     const sourceSheet = scMeilaniRequireSheet_(ctx.sourceSpreadsheet, cfg.repair.sourceSheetName);
     const targetSheet = scMeilaniRequireSheet_(ctx.destinationSpreadsheet, cfg.repair.targetSheetName);
-    const sourceMeta = scMeilaniReadSourceMeta_(sourceSheet);
+    const sourceMeta = scMeilaniReadSourceMeta_(sourceSheet, ['Claim Number', 'Branch', 'Last Status']);
     const targetMeta = scMeilaniReadTargetMeta_(targetSheet);
     const branchCol = scMeilaniRequireHeader_(sourceMeta.headerMap, 'Branch');
     const lastStatusCol = scMeilaniRequireHeader_(sourceMeta.headerMap, 'Last Status');
     const allowedStatuses = scMeilaniToKeySet_(cfg.repair.allowedLastStatuses);
 
-    const rowNumbers = scMeilaniCollectRowNumbers_(sourceMeta.values, function (row) {
+    const rowNumbers = scMeilaniCollectRowNumbers_(sourceMeta, function (row) {
       return scMeilaniIsAllowedBranch_(row[branchCol])
         && allowedStatuses[scMeilaniStatusKey_(row[lastStatusCol])] === true;
     });
@@ -174,14 +175,17 @@ function scMeilaniWithLock_(flowName, runner) {
   }
 }
 
-function scMeilaniReadSourceMeta_(sheet) {
+function scMeilaniReadSourceMeta_(sheet, requiredHeaders) {
   const values = sheet.getDataRange().getValues();
   if (!values.length) throw new Error('Source sheet kosong: ' + sheet.getName());
 
-  const headerValues = values[SC_MEILANI_CONFIG.headerRow - 1] || [];
+  const headerRowIndex = scMeilaniFindBestHeaderRowIndex_(values, requiredHeaders);
+  const headerValues = values[headerRowIndex] || [];
   return {
     sheet: sheet,
     values: values,
+    headerRowIndex: headerRowIndex,
+    headerRowNumber: headerRowIndex + 1,
     headerValues: headerValues,
     headerMap: scMeilaniBuildHeaderMap_(headerValues),
   };
@@ -189,18 +193,24 @@ function scMeilaniReadSourceMeta_(sheet) {
 
 function scMeilaniReadTargetMeta_(sheet) {
   const lastColumn = Math.max(sheet.getLastColumn(), SC_MEILANI_CONFIG.outputHeaders.length, 1);
-  const headerValues = sheet.getRange(SC_MEILANI_CONFIG.headerRow, 1, 1, lastColumn).getValues()[0];
+  const scanRowCount = Math.max(Math.min(sheet.getMaxRows(), SC_MEILANI_CONFIG.headerScanRows), 1);
+  const scanValues = sheet.getRange(1, 1, scanRowCount, lastColumn).getValues();
+  const headerRowIndex = scMeilaniFindBestHeaderRowIndex_(scanValues, ['Claim Number']);
+  const headerRowNumber = headerRowIndex + 1;
+  const headerValues = sheet.getRange(headerRowNumber, 1, 1, lastColumn).getValues()[0];
   const headerMap = scMeilaniBuildHeaderMap_(headerValues);
 
   SC_MEILANI_CONFIG.outputHeaders.forEach(function (header, index) {
     if (scMeilaniFindHeaderIndex_(headerMap, header) == null) {
-      sheet.getRange(SC_MEILANI_CONFIG.headerRow, index + 1).setValue(header);
+      sheet.getRange(headerRowNumber, index + 1).setValue(header);
     }
   });
 
-  const refreshedHeaders = sheet.getRange(SC_MEILANI_CONFIG.headerRow, 1, 1, Math.max(sheet.getLastColumn(), SC_MEILANI_CONFIG.outputHeaders.length)).getValues()[0];
+  const refreshedHeaders = sheet.getRange(headerRowNumber, 1, 1, Math.max(sheet.getLastColumn(), SC_MEILANI_CONFIG.outputHeaders.length)).getValues()[0];
   return {
     sheet: sheet,
+    headerRowIndex: headerRowIndex,
+    headerRowNumber: headerRowNumber,
     headerValues: refreshedHeaders,
     headerMap: scMeilaniBuildHeaderMap_(refreshedHeaders),
   };
@@ -208,10 +218,10 @@ function scMeilaniReadTargetMeta_(sheet) {
 
 function scMeilaniMirrorRows_(sourceSheet, sourceMeta, targetSheet, targetMeta, sourceRowNumbers, outputHeaders) {
   scMeilaniValidateMirrorHeaders_(sourceMeta, targetMeta, outputHeaders);
-  scMeilaniClearBody_(targetSheet);
+  scMeilaniClearBody_(targetSheet, targetMeta.headerRowNumber);
   if (!sourceRowNumbers.length) return 0;
 
-  const targetStartRow = SC_MEILANI_CONFIG.headerRow + 1;
+  const targetStartRow = targetMeta.headerRowNumber + 1;
   const sourceCols = outputHeaders.map(function (header) {
     return scMeilaniRequireHeader_(sourceMeta.headerMap, header) + 1;
   });
@@ -240,28 +250,52 @@ function scMeilaniValidateMirrorHeaders_(sourceMeta, targetMeta, outputHeaders) 
   });
 
   if (missingSource.length) {
-    throw new Error('Header source tidak ditemukan di "' + sourceMeta.sheet.getName() + '": ' + missingSource.join(', '));
+    throw new Error('Header source tidak ditemukan di "' + sourceMeta.sheet.getName() + '" row ' + sourceMeta.headerRowNumber + ': ' + missingSource.join(', '));
   }
   if (missingTarget.length) {
-    throw new Error('Header target tidak ditemukan di "' + targetMeta.sheet.getName() + '": ' + missingTarget.join(', '));
+    throw new Error('Header target tidak ditemukan di "' + targetMeta.sheet.getName() + '" row ' + targetMeta.headerRowNumber + ': ' + missingTarget.join(', '));
   }
 }
 
-function scMeilaniClearBody_(sheet) {
-  const headerRow = SC_MEILANI_CONFIG.headerRow;
+function scMeilaniClearBody_(sheet, headerRow) {
+  const effectiveHeaderRow = headerRow || SC_MEILANI_CONFIG.headerRow;
   const lastRow = sheet.getLastRow();
   const lastColumn = Math.max(sheet.getLastColumn(), 1);
-  if (lastRow <= headerRow) return;
-  sheet.getRange(headerRow + 1, 1, lastRow - headerRow, lastColumn).clear();
+  if (lastRow <= effectiveHeaderRow) return;
+  sheet.getRange(effectiveHeaderRow + 1, 1, lastRow - effectiveHeaderRow, lastColumn).clear();
 }
 
-function scMeilaniCollectRowNumbers_(values, predicate) {
+function scMeilaniCollectRowNumbers_(sourceMeta, predicate) {
+  const values = sourceMeta.values || [];
   const out = [];
-  for (let r = SC_MEILANI_CONFIG.headerRow; r < values.length; r++) {
+  for (let r = sourceMeta.headerRowIndex + 1; r < values.length; r++) {
     const row = values[r] || [];
     if (predicate(row)) out.push(r + 1);
   }
   return out;
+}
+
+function scMeilaniFindBestHeaderRowIndex_(values, requiredHeaders) {
+  const scanLimit = Math.min(values.length, SC_MEILANI_CONFIG.headerScanRows || 20);
+  let bestIndex = SC_MEILANI_CONFIG.headerRow - 1;
+  let bestScore = -1;
+
+  for (let r = 0; r < scanLimit; r++) {
+    const map = scMeilaniBuildHeaderMap_(values[r] || []);
+    let score = 0;
+    SC_MEILANI_CONFIG.outputHeaders.forEach(function (header) {
+      if (scMeilaniFindHeaderIndex_(map, header) != null) score += 1;
+    });
+    (requiredHeaders || []).forEach(function (header) {
+      if (scMeilaniFindHeaderIndex_(map, header) != null) score += 5;
+    });
+    if (score > bestScore) {
+      bestScore = score;
+      bestIndex = r;
+    }
+  }
+
+  return bestIndex;
 }
 
 function scMeilaniBuildHeaderMap_(headers) {
@@ -332,13 +366,17 @@ function scMeilaniStatusKey_(value) {
 
 function scMeilaniHeaderKey_(value) {
   return String(value == null ? '' : value)
+    .replace(/[\u200B-\u200D\uFEFF]/g, '')
+    .replace(/\u00A0/g, ' ')
     .trim()
     .toLowerCase()
-    .replace(/\s+/g, ' ');
+    .replace(/[_\s]+/g, ' ');
 }
 
 function scMeilaniNormalizeText_(value) {
   return String(value == null ? '' : value)
+    .replace(/[\u200B-\u200D\uFEFF]/g, '')
+    .replace(/\u00A0/g, ' ')
     .trim()
     .toLowerCase()
     .replace(/\s+/g, ' ');
