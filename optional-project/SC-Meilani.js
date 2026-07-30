@@ -15,6 +15,11 @@ const SC_MEILANI_CONFIG = Object.freeze({
   logSheetName: 'Log SC-Meilani',
   headerRow: 1,
   headerScanRows: 20,
+  fallbackColumns: Object.freeze({
+    Branch: 6,
+    YoS: 8,
+    Remarks: 20,
+  }),
   allowedBranches: Object.freeze([
     'Xiaomi Authorized',
     'Unicom',
@@ -100,9 +105,9 @@ function runSCMeilaniSalvage() {
     const cfg = SC_MEILANI_CONFIG;
     const sourceSheet = scMeilaniRequireSheet_(ctx.sourceSpreadsheet, cfg.salvage.sourceSheetName);
     const sourceMeta = scMeilaniReadSourceMeta_(sourceSheet, ['Claim Number', 'Branch', cfg.salvage.yosHeader, cfg.salvage.remarksHeader]);
-    const branchCol = scMeilaniRequireHeader_(sourceMeta.headerMap, 'Branch');
-    const yosCol = scMeilaniRequireHeader_(sourceMeta.headerMap, cfg.salvage.yosHeader);
-    const remarksCol = scMeilaniRequireHeader_(sourceMeta.headerMap, cfg.salvage.remarksHeader);
+    const branchCol = scMeilaniRequireSourceColumn_(sourceMeta, 'Branch', cfg.fallbackColumns.Branch);
+    const yosCol = scMeilaniRequireSourceColumn_(sourceMeta, cfg.salvage.yosHeader, cfg.fallbackColumns.YoS);
+    const remarksCol = scMeilaniRequireSourceColumn_(sourceMeta, cfg.salvage.remarksHeader, cfg.fallbackColumns.Remarks);
 
     const results = [];
     cfg.salvage.targets.forEach(function (target) {
@@ -130,8 +135,8 @@ function runSCMeilaniSalvageRepair() {
     const targetSheet = scMeilaniRequireSheet_(ctx.destinationSpreadsheet, cfg.repair.targetSheetName);
     const sourceMeta = scMeilaniReadSourceMeta_(sourceSheet, ['Claim Number', 'Branch', 'Last Status']);
     const targetMeta = scMeilaniReadTargetMeta_(targetSheet);
-    const branchCol = scMeilaniRequireHeader_(sourceMeta.headerMap, 'Branch');
-    const lastStatusCol = scMeilaniRequireHeader_(sourceMeta.headerMap, 'Last Status');
+    const branchCol = scMeilaniRequireSourceColumn_(sourceMeta, 'Branch', cfg.fallbackColumns.Branch);
+    const lastStatusCol = scMeilaniRequireSourceColumn_(sourceMeta, 'Last Status');
     const allowedStatuses = scMeilaniToKeySet_(cfg.repair.allowedLastStatuses);
 
     const rowNumbers = scMeilaniCollectRowNumbers_(sourceMeta, function (row) {
@@ -308,6 +313,28 @@ function scMeilaniBuildHeaderMap_(headers) {
   return map;
 }
 
+function scMeilaniRequireSourceColumn_(sourceMeta, canonicalHeader, fallbackColumnNumber) {
+  const idx = scMeilaniFindHeaderIndex_(sourceMeta.headerMap, canonicalHeader);
+  if (idx != null) return idx;
+
+  if (fallbackColumnNumber && fallbackColumnNumber > 0) {
+    return fallbackColumnNumber - 1;
+  }
+
+  throw new Error(
+    'Header source tidak ditemukan di "' + sourceMeta.sheet.getName() +
+    '" row ' + sourceMeta.headerRowNumber + ': ' + canonicalHeader +
+    '. Header terbaca: ' + scMeilaniPreviewHeaders_(sourceMeta.headerValues)
+  );
+}
+
+function scMeilaniPreviewHeaders_(headers) {
+  return (headers || [])
+    .map(function (header) { return String(header == null ? '' : header).trim(); })
+    .filter(function (header) { return !!header; })
+    .slice(0, 30)
+    .join(' | ');
+}
 function scMeilaniRequireHeader_(headerMap, canonicalHeader) {
   const idx = scMeilaniFindHeaderIndex_(headerMap, canonicalHeader);
   if (idx == null) throw new Error('Header wajib tidak ditemukan: ' + canonicalHeader);
