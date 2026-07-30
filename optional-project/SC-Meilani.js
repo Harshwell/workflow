@@ -235,17 +235,62 @@ function scMeilaniMirrorRows_(sourceSheet, sourceMeta, targetSheet, targetMeta, 
     return scMeilaniRequireHeader_(targetMeta.headerMap, header) + 1;
   });
 
-  for (let i = 0; i < sourceRowNumbers.length; i++) {
-    for (let h = 0; h < outputHeaders.length; h++) {
-      const sourceCell = sourceSheet.getRange(sourceRowNumbers[i], sourceCols[h]);
-      const targetCell = targetSheet.getRange(targetStartRow + i, targetCols[h]);
-      sourceCell.copyTo(targetCell, { contentsOnly: false });
-    }
+  for (let h = 0; h < outputHeaders.length; h++) {
+    scMeilaniWriteMirroredColumn_(sourceSheet, targetSheet, sourceRowNumbers, sourceCols[h], targetStartRow, targetCols[h]);
   }
 
   return sourceRowNumbers.length;
 }
 
+function scMeilaniWriteMirroredColumn_(sourceSheet, targetSheet, sourceRowNumbers, sourceColumn, targetStartRow, targetColumn) {
+  const values = [];
+  const richTextValues = [];
+  const numberFormats = [];
+  const backgrounds = [];
+  const fontColors = [];
+  const fontFamilies = [];
+  const fontSizes = [];
+  const fontWeights = [];
+  const fontStyles = [];
+  const horizontalAlignments = [];
+  const verticalAlignments = [];
+  const wraps = [];
+
+  for (let i = 0; i < sourceRowNumbers.length; i++) {
+    const sourceCell = sourceSheet.getRange(sourceRowNumbers[i], sourceColumn);
+    values.push([sourceCell.getValue()]);
+    richTextValues.push([sourceCell.getRichTextValue()]);
+    numberFormats.push([sourceCell.getNumberFormat()]);
+    backgrounds.push([sourceCell.getBackground()]);
+    fontColors.push([sourceCell.getFontColor()]);
+    fontFamilies.push([sourceCell.getFontFamily()]);
+    fontSizes.push([sourceCell.getFontSize()]);
+    fontWeights.push([sourceCell.getFontWeight()]);
+    fontStyles.push([sourceCell.getFontStyle()]);
+    horizontalAlignments.push([sourceCell.getHorizontalAlignment()]);
+    verticalAlignments.push([sourceCell.getVerticalAlignment()]);
+    wraps.push([sourceCell.getWrap()]);
+  }
+
+  const targetRange = targetSheet.getRange(targetStartRow, targetColumn, sourceRowNumbers.length, 1);
+  targetRange.setValues(values);
+  targetRange.setNumberFormats(numberFormats);
+  targetRange.setBackgrounds(backgrounds);
+  targetRange.setFontColors(fontColors);
+  targetRange.setFontFamilies(fontFamilies);
+  targetRange.setFontSizes(fontSizes);
+  targetRange.setFontWeights(fontWeights);
+  targetRange.setFontStyles(fontStyles);
+  targetRange.setHorizontalAlignments(horizontalAlignments);
+  targetRange.setVerticalAlignments(verticalAlignments);
+  targetRange.setWraps(wraps);
+
+  try {
+    targetRange.setRichTextValues(richTextValues);
+  } catch (err) {
+    // Values and visual formats are already written; rich text can fail on some formula-driven cells.
+  }
+}
 function scMeilaniValidateMirrorHeaders_(sourceMeta, targetMeta, outputHeaders) {
   const missingSource = [];
   const missingTarget = [];
