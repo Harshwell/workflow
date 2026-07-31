@@ -92,6 +92,17 @@ const CONFIG = {
     "SERVICE_CENTER_CLAIM_WAITING_REPAIR",
     "SERVICE_CENTER_CLAIM_ON_PROGRESS",
     "SERVICE_CENTER_CLAIM_CHANGE_IMEI",
+    "QOALA_CLAIM_APPROVE_REPAIR",
+    "QOALA_CLAIM_APPROVE_REPLACE",
+    "INSURANCE_CLAIM_REVIEW",
+    "INSURANCE_CLAIM_ASK_DETAIL_ADDITIONAL",
+    "QOALA_CLAIM_RESUBMIT_DOCUMENT_ADDITIONAL",
+    "CLAIM_EXPIRE_INSURANCE",
+    "QOALA_CLAIM_REOPEN_INSURANCE_CASHLESS",
+    "CUSTOMER_WAITING_PAYMENT_DEDUCTIBLE_EXCESS_FEE_REPAIR",
+    "CUSTOMER_APPROVE_DEDUCTIBLE_EXCESS_FEE_REPAIR",
+    "CUSTOMER_APPROVE_DEDUCTIBLE_EXCESS_FEE_REPAIR_EXPIRED",
+    "CUSTOMER_PAID_DEDUCTIBLE_EXCESS_FEE_REPAIR",
   ]),
 
   ALLOWED_STATUSES: new Set([
@@ -108,6 +119,7 @@ const CONFIG = {
     scName: "Service Center Name",
     scBranch: "Service Center Branch",
     lastStatus: "Last Status",
+    lastStatusType: "Last Status Type",
     lastStatusDate: "Last Status Date",
     lastStatusAging: "Last Status Aging",
     remarks: "Remarks",
@@ -122,6 +134,7 @@ const CONFIG = {
     scName: ["Service Center Name", "Service Center", "SC Name", "SC"],
     scBranch: ["Service Center Branch", "SC Branch", "Branch"],
     lastStatus: ["Last Status", "Status Terakhir"],
+    lastStatusType: ["Last Status Type", "Status Type", "Type Status"],
     lastStatusDate: ["Last Status Date", "Status Date", "Last Update", "Last Updated"],
     lastStatusAging: ["Last Status Aging", "Last Status Aging (days)", "Status Aging", "Aging", "Aging (days)"],
     submissionDate: ["Submission Date", "Claim Submitted Datetime", "Submitted Datetime"],
@@ -221,6 +234,17 @@ const LAST_STATUS_LABELS = {
   SERVICE_CENTER_CLAIM_WAITING_REPAIR: "Waiting for Service Center to Start Repair",
   SERVICE_CENTER_CLAIM_ON_PROGRESS: "Repair On Progress",
   SERVICE_CENTER_CLAIM_CHANGE_IMEI: "IMEI Changed",
+  QOALA_CLAIM_APPROVE_REPAIR: "Repair cost accepted",
+  QOALA_CLAIM_APPROVE_REPLACE: "Claim Proposed for Replacement",
+  INSURANCE_CLAIM_REVIEW: "Waiting Insurance Review",
+  INSURANCE_CLAIM_ASK_DETAIL_ADDITIONAL: "Insurance Ask Detail",
+  QOALA_CLAIM_RESUBMIT_DOCUMENT_ADDITIONAL: "Qoala Submit Document",
+  CLAIM_EXPIRE_INSURANCE: "Claim Expired",
+  QOALA_CLAIM_REOPEN_INSURANCE_CASHLESS: "Reopen Claim",
+  CUSTOMER_WAITING_PAYMENT_DEDUCTIBLE_EXCESS_FEE_REPAIR: "Waiting for Payment of Additional Fee",
+  CUSTOMER_APPROVE_DEDUCTIBLE_EXCESS_FEE_REPAIR: "Customer Agreed to the Additional Fee",
+  CUSTOMER_APPROVE_DEDUCTIBLE_EXCESS_FEE_REPAIR_EXPIRED: "Claim Expired",
+  CUSTOMER_PAID_DEDUCTIBLE_EXCESS_FEE_REPAIR: "Customer paid the additional fee",
   INSURANCE_APPROVED: "Claim Approved by Insurance",
   INSURANCE_CLAIM_APPROVE_REPAIR: "Claim Approved by Insurance",
   SERVICE_CENTER_CLAIM_DONE_REPAIR_WALKIN: "Repair Completed",
@@ -246,6 +270,55 @@ const LAST_STATUS_LABELS = {
   WAITING_WALKIN_START: "Customer On The Way",
   WAITING_COURIER_START: "Courier On The Way",
   COURIER_PICKUP_START_DONE: "Delivered to Service Center",
+};
+
+const LAST_STATUS_TYPE_OPTIONS = [
+  "Start - Walkin",
+  "Start - Pickup",
+  "SC - Receive",
+  "SC - Estimate",
+  "SC - Repair",
+  "Insurance",
+  "Payment OR Cust",
+  "Finish - Walkin",
+  "Finish - Pickup",
+];
+
+const LAST_STATUS_TYPE_MAP = {
+  QOALA_CLAIM_APPROVE_WALKIN: "Start - Walkin",
+  WAITING_WALKIN_START: "Start - Walkin",
+  CLAIM_EXPIRE_WALKIN: "Start - Walkin",
+  QOALA_CLAIM_REOPEN_WALKIN: "Start - Walkin",
+  QOALA_CLAIM_APPROVE_PICKUP: "Start - Pickup",
+  WAITING_PICKUP_START: "Start - Pickup",
+  COURIER_PICKUP_START: "Start - Pickup",
+  COURIER_PICKUP_START_DONE: "Start - Pickup",
+  SERVICE_CENTER_CLAIM_RECEIVE: "SC - Receive",
+  SERVICE_CENTER_CLAIM_ESTIMATE: "SC - Estimate",
+  QOALA_CLAIM_RESUBMIT_ESTIMATE: "SC - Estimate",
+  SERVICE_CENTER_CLAIM_RESUBMIT_ESTIMATE: "SC - Estimate",
+  SERVICE_CENTER_CLAIM_WAITING_REPAIR: "SC - Repair",
+  SERVICE_CENTER_CLAIM_ON_PROGRESS: "SC - Repair",
+  SERVICE_CENTER_CLAIM_CHANGE_IMEI: "SC - Repair",
+  QOALA_CLAIM_APPROVE_REPAIR: "Insurance",
+  QOALA_CLAIM_APPROVE_REPLACE: "Insurance",
+  INSURANCE_CLAIM_REVIEW: "Insurance",
+  INSURANCE_CLAIM_APPROVE_REPAIR: "Insurance",
+  INSURANCE_CLAIM_ASK_DETAIL_ADDITIONAL: "Insurance",
+  QOALA_CLAIM_RESUBMIT_DOCUMENT_ADDITIONAL: "Insurance",
+  CLAIM_EXPIRE_INSURANCE: "Insurance",
+  QOALA_CLAIM_REOPEN_INSURANCE_CASHLESS: "Insurance",
+  CUSTOMER_WAITING_PAYMENT_DEDUCTIBLE_EXCESS_FEE_REPAIR: "Payment OR Cust",
+  CUSTOMER_APPROVE_DEDUCTIBLE_EXCESS_FEE_REPAIR: "Payment OR Cust",
+  CUSTOMER_APPROVE_DEDUCTIBLE_EXCESS_FEE_REPAIR_EXPIRED: "Payment OR Cust",
+  CUSTOMER_PAID_DEDUCTIBLE_EXCESS_FEE_REPAIR: "Payment OR Cust",
+  SERVICE_CENTER_CLAIM_DONE_REPAIR_WALKIN: "Finish - Walkin",
+  SERVICE_CENTER_CLAIM_WAITING_WALKIN_FINISH: "Finish - Walkin",
+  SERVICE_CENTER_CLAIM_DONE: "Finish - Walkin",
+  SERVICE_CENTER_CLAIM_DONE_REPAIR_PICKUP: "Finish - Pickup",
+  SERVICE_CENTER_CLAIM_WAITING_PICKUP_FINISH: "Finish - Pickup",
+  COURIER_CLAIM_PICKUP_FINISH: "Finish - Pickup",
+  COURIER_CLAIM_PICKUP_FINISH_DONE: "Finish - Pickup",
 };
 
 const RUNTIME_CACHE = {
@@ -1165,6 +1238,7 @@ function _appendToDestination_(ctx, destSheet, rows) {
   var out = [];
   var richLinks = [];
   var hasBranchColumn = colMap.scBranch != null;
+  var hasLastStatusTypeColumn = colMap.lastStatusType != null;
 
   for (var rowIndex = 0; rowIndex < rows.length; rowIndex++) {
     var row = rows[rowIndex];
@@ -1176,6 +1250,9 @@ function _appendToDestination_(ctx, destSheet, rows) {
     outRow[colMap.imeiSn] = row.imeiSn;
     outRow[colMap.scName] = row.serviceCenterName;
     outRow[colMap.lastStatus] = _translateLastStatus_(row.lastStatus);
+    if (hasLastStatusTypeColumn) {
+      outRow[colMap.lastStatusType] = _translateLastStatusType_(row.lastStatus);
+    }
 
     var dateValue = _coerceToDate_(row.lastStatusDate);
     outRow[colMap.lastStatusDate] = dateValue || (row.lastStatusDate || "");
@@ -1212,6 +1289,8 @@ function _prepareDestinationSheets_(ctx) {
     base = ctx.destSS.insertSheet(baseName);
     _initializeFallbackSheet_(base);
   }
+
+  _ensureLastStatusTypeColumn_(base);
 
   // Remove all duplicated sheets, keep Unmapped only.
   var deletedSheets = 0;
@@ -1333,6 +1412,7 @@ function _initializeFallbackSheet_(sheet) {
     CONFIG.DEST_COLUMNS.imeiSn,
     CONFIG.DEST_COLUMNS.scName,
     CONFIG.DEST_COLUMNS.lastStatus,
+    CONFIG.DEST_COLUMNS.lastStatusType,
     CONFIG.DEST_COLUMNS.lastStatusDate,
     CONFIG.DEST_COLUMNS.lastStatusAging,
     CONFIG.DEST_COLUMNS.remarks,
@@ -1340,6 +1420,53 @@ function _initializeFallbackSheet_(sheet) {
   ]];
   sheet.getRange(1, 1, 1, header[0].length).setValues(header);
   sheet.setFrozenRows(1);
+  _applyLastStatusTypeValidation_(sheet);
+}
+
+function _ensureLastStatusTypeColumn_(sheet) {
+  var header = _getSheetHeaderRow_(sheet);
+  var existingIdx = _findHeaderIndex_(header, CONFIG.DEST_HEADER_CANDIDATES.lastStatusType);
+  if (existingIdx >= 0) {
+    _applyLastStatusTypeValidation_(sheet);
+    return existingIdx;
+  }
+
+  var lastStatusIdx = _findHeaderIndex_(header, CONFIG.DEST_HEADER_CANDIDATES.lastStatus);
+  var insertAfter = lastStatusIdx >= 0 ? lastStatusIdx + 1 : Math.max(sheet.getLastColumn(), 1);
+  sheet.insertColumnAfter(insertAfter);
+  var insertedColumn = insertAfter + 1;
+  sheet.getRange(1, insertedColumn).setValue(CONFIG.DEST_COLUMNS.lastStatusType);
+  _applyLastStatusTypeValidation_(sheet);
+  return insertedColumn - 1;
+}
+
+function _applyLastStatusTypeValidation_(sheet) {
+  try {
+    var header = _getSheetHeaderRow_(sheet);
+    var idx = _findHeaderIndex_(header, CONFIG.DEST_HEADER_CANDIDATES.lastStatusType);
+    if (idx < 0) return;
+    var maxRows = Math.max(sheet.getMaxRows() - 1, 1);
+    var rule = SpreadsheetApp.newDataValidation()
+      .requireValueInList(LAST_STATUS_TYPE_OPTIONS, true)
+      .setAllowInvalid(false)
+      .build();
+    sheet.getRange(2, idx + 1, maxRows, 1).setDataValidation(rule);
+  } catch (e) {
+    // ignore validation setup issue
+  }
+}
+
+function _translateLastStatusType_(status) {
+  var raw = String(status || "").trim();
+  if (!raw) return "";
+
+  var exactKey = raw.toUpperCase();
+  if (LAST_STATUS_TYPE_MAP[exactKey]) return LAST_STATUS_TYPE_MAP[exactKey];
+
+  var normalizedKey = exactKey.replace(/[^A-Z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+  if (LAST_STATUS_TYPE_MAP[normalizedKey]) return LAST_STATUS_TYPE_MAP[normalizedKey];
+
+  return "";
 }
 
 function _sortDestinationSheets_(ctx) {
