@@ -61,7 +61,7 @@ const CONFIG = {
     "MEA", "MMB", "MDP", "Deltasindo", "Carlcare", "B-Store", "Multikom", "CV Berkah", "Rejeki Seluler", "Unmapped"
   ],
   VALID_PICS: new Set(["FARHAN", "MEILANI", "MEINDAR"]),
-  AUTO_MANAGED_DEST_SHEETS: new Set(["CV Berkah", "Rejeki Seluler"]),
+  AUTO_MANAGED_DEST_SHEETS: new Set(["CV Berkah", "Rejeki Seluler", "EzCare"]),
   PHASES: Object.freeze({
     START: "START",
     MIDDLE: "MIDDLE",
@@ -1329,6 +1329,14 @@ function _prepareDestinationSheets_(ctx) {
 
   // Refresh registry after structural changes.
   ctx.destRegistry = _buildSheetRegistry_(ctx.destSS);
+
+  var selectedPic = String((ctx.controls && ctx.controls.selectedPic) || "").trim().toUpperCase();
+  if (selectedPic === "FARHAN" || selectedPic === "MEINDAR") {
+    var hadEzCareSheet = !!ctx.destRegistry.byName.EzCare;
+    _ensureDestSheet_(ctx, "EzCare");
+    if (!hadEzCareSheet) createdSheets += 1;
+    ctx.destRegistry = _buildSheetRegistry_(ctx.destSS);
+  }
 
   return {
     deletedSheets: deletedSheets,
