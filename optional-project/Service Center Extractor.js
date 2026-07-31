@@ -61,7 +61,7 @@ const CONFIG = {
     "MEA", "MMB", "MDP", "Deltasindo", "Carlcare", "B-Store", "Multikom", "CV Berkah", "Rejeki Seluler", "Unmapped"
   ],
   VALID_PICS: new Set(["FARHAN", "MEILANI", "MEINDAR"]),
-  AUTO_MANAGED_DEST_SHEETS: new Set(["CV Berkah", "Rejeki Seluler"]),
+  AUTO_MANAGED_DEST_SHEETS: new Set(["CV Berkah", "Rejeki Seluler", "EzCare"]),
   PHASES: Object.freeze({
     START: "START",
     MIDDLE: "MIDDLE",
@@ -1330,6 +1330,14 @@ function _prepareDestinationSheets_(ctx) {
   // Refresh registry after structural changes.
   ctx.destRegistry = _buildSheetRegistry_(ctx.destSS);
 
+  var selectedPic = String((ctx.controls && ctx.controls.selectedPic) || "").trim().toUpperCase();
+  if (selectedPic === "FARHAN" || selectedPic === "MEINDAR") {
+    var hadEzCareSheet = !!ctx.destRegistry.byName.EzCare;
+    _ensureDestSheet_(ctx, "EzCare");
+    if (!hadEzCareSheet) createdSheets += 1;
+    ctx.destRegistry = _buildSheetRegistry_(ctx.destSS);
+  }
+
   return {
     deletedSheets: deletedSheets,
     clearedRowsOnUnmapped: clearedRows,
@@ -1779,9 +1787,10 @@ function _resolvePicOverride_(row, mappedPic) {
   var sc = _compactNorm_(row && row.serviceCenterName);
   if (sc.indexOf("cvberkah") >= 0 || sc.indexOf("rejekiseluler") >= 0 || sc.indexOf("rejekiseluller") >= 0) return "FARHAN";
   var isEzCare = sc.indexOf("ezcare") >= 0;
-  var isApple = /apple/i.test(String((row && row.deviceBrand) || "")) || /apple/i.test(String((row && row.deviceType) || ""));
-  var submitted = new Date((row && row.submissionDate) || "");
-  if (isEzCare && isApple && !isNaN(submitted.getTime()) && submitted.getTime() >= new Date(2026, 6, 15).getTime()) return "FARHAN";
+  if (isEzCare) {
+    var isAppleBrand = /apple/i.test(String((row && row.deviceBrand) || ""));
+    return isAppleBrand ? "FARHAN" : "MEINDAR";
+  }
   return String(mappedPic || "").trim().toUpperCase();
 }
 
