@@ -1779,9 +1779,10 @@ function _resolvePicOverride_(row, mappedPic) {
   var sc = _compactNorm_(row && row.serviceCenterName);
   if (sc.indexOf("cvberkah") >= 0 || sc.indexOf("rejekiseluler") >= 0 || sc.indexOf("rejekiseluller") >= 0) return "FARHAN";
   var isEzCare = sc.indexOf("ezcare") >= 0;
-  var isApple = /apple/i.test(String((row && row.deviceBrand) || "")) || /apple/i.test(String((row && row.deviceType) || ""));
-  var submitted = new Date((row && row.submissionDate) || "");
-  if (isEzCare && isApple && !isNaN(submitted.getTime()) && submitted.getTime() >= new Date(2026, 6, 15).getTime()) return "FARHAN";
+  if (isEzCare) {
+    var isAppleBrand = /apple/i.test(String((row && row.deviceBrand) || ""));
+    return isAppleBrand ? "FARHAN" : "MEINDAR";
+  }
   return String(mappedPic || "").trim().toUpperCase();
 }
 
