@@ -167,7 +167,7 @@ const CONFIG = {
     { sheet: "Mitracare", tokens: ["mitracare", "digimap"] },
     { sheet: "Sitcomtara", tokens: ["sitcomtara", "sitcom tara"] },
     { sheet: "iBox", tokens: ["ibox", "i box"] },
-    { sheet: "Meilani", tokens: ["gsi"] },
+    { sheet: "GSI", tokens: ["gsi"] },
     { sheet: "Multikom", tokens: ["multikom"] },
     { sheet: "Andalas", tokens: ["andalas"] },
     { sheet: "Klikcare", tokens: ["klikcare"] },
@@ -1770,6 +1770,7 @@ function _resolveDestByMapping_(ctx, serviceCenterName) {
 
 function _resolveSpecialDestination_(compactSc) {
   var sc = String(compactSc || "");
+  if (sc.indexOf("gsi") >= 0) return { sheetName: "GSI", pic: "MEILANI" };
   if (sc.indexOf("cvberkah") >= 0) return { sheetName: "CV Berkah", pic: "FARHAN" };
   if (sc.indexOf("rejekiseluler") >= 0 || sc.indexOf("rejekiseluller") >= 0) return { sheetName: "Rejeki Seluler", pic: "FARHAN" };
   return null;
