@@ -12,7 +12,7 @@
 const SC_MEILANI_CONFIG = Object.freeze({
   sourceSpreadsheetId: '1zRlYrSRssv9LVcPKEq90CmmvTRsZoN_TqfIg2pNufbc',
   destinationSpreadsheetId: '1dU9dt01Ld_ykMJWQxupvIHyLXV6ArnGeXCBV72q31lU',
-  scriptVersion: '2026-08-03-salvage-batch-log-5',
+  scriptVersion: '2026-08-03-cooperative-stop-6',
   menuName: 'SC Meilani',
   logSheetName: 'Log SC-Meilani',
   headerRow: 1,
@@ -135,7 +135,7 @@ function runSCMeilaniSalvage() {
         return scMeilaniIsAllowedBranch_(row[branchCol])
           && scMeilaniMatchesYear_(row[yosCol], target.year)
           && scMeilaniEqualsText_(row[remarksCol], cfg.salvage.requiredRemarksValue);
-      });
+      }, ctx);
       scMeilaniLogStep_(ctx.destinationSpreadsheet, ctx.flowName, 'Filter target ' + target.sheetName, rowNumbers.length ? 'SUCCESS' : 'SKIPPED', rowNumbers.length, 'Filter completed for target year ' + target.year + '.', 'sourceRows=' + sourceRows + ', matched=' + rowNumbers.length, ctx.startedAt);
 
       const written = scMeilaniMirrorRows_(sourceSheet, sourceMeta, targetSheet, targetMeta, rowNumbers, cfg.outputHeaders, ctx);
@@ -167,11 +167,12 @@ function runSCMeilaniSalvageRepair() {
 
     const sourceRows = Math.max(sourceMeta.values.length - sourceMeta.headerRowNumber, 0);
     scMeilaniLogStep_(ctx.destinationSpreadsheet, ctx.flowName, 'Filter Salvage Repair source', 'START', sourceRows, 'Filtering Raw NEW rows by branch and repair last status.', 'allowedBranches=' + cfg.allowedBranches.join(', ') + ', allowedStatuses=' + cfg.repair.allowedLastStatuses.length, ctx.startedAt);
-    const sourceSnapshot = scMeilaniCollectRepairRecords_(sourceMeta, columnMap, allowedStatuses, targetIndex);
+    const sourceSnapshot = scMeilaniCollectRepairRecords_(sourceMeta, columnMap, allowedStatuses, targetIndex, ctx);
     scMeilaniWriteReasonLogs_(ctx, 'Filter Salvage Repair source', 'SKIPPED', sourceSnapshot.skippedByReason);
     scMeilaniWriteReasonLogs_(ctx, 'Filter Salvage Repair source', 'FAILED', sourceSnapshot.failedByReason);
     scMeilaniLogStep_(ctx.destinationSpreadsheet, ctx.flowName, 'Filter Salvage Repair source', 'SUCCESS', sourceSnapshot.validRecords.length, 'Filtering completed.', 'sourceRows=' + sourceRows + ', valid=' + sourceSnapshot.validRecords.length + ', skipped=' + sourceSnapshot.skippedCount + ', failed=' + sourceSnapshot.failedCount, ctx.startedAt);
 
+    scMeilaniCheckStop_(ctx, 'SALVAGE_REPAIR before upsert');
     const writeResult = scMeilaniUpsertRepairRecords_(targetSheet, targetMeta, columnMap, targetIndex, sourceSnapshot.validRecords, ctx);
     const verify = scMeilaniVerifyRepairResult_(targetSheet, targetMeta, cfg.repair.identifierHeader, sourceSnapshot.validRecords);
     scMeilaniLogStep_(ctx.destinationSpreadsheet, ctx.flowName, 'Post-write verification', verify.missingClaims.length || verify.duplicateCount ? 'FAILED' : 'SUCCESS', verify.matchedSourceClaims, 'Target verification completed.', 'targetClaims=' + verify.targetClaims + ', duplicateTargetAfter=' + verify.duplicateCount + ', missingAfter=' + verify.missingClaims.join(' | '), ctx.startedAt);
@@ -192,12 +193,19 @@ function runSCMeilaniSalvageRepair() {
   });
 }
 function scMeilaniWithLock_(flowName, runner) {
+  const stopRequestedAtMs = scMeilaniRequestPreviousRunsStop_(flowName);
   const lock = LockService.getScriptLock();
-  if (!lock.tryLock(30000)) {
-    throw new Error('Run dibatalkan: proses lain masih berjalan.');
+  let lockAcquired = false;
+  const waitStartedAt = new Date();
+  try {
+    lock.waitLock(300000);
+    lockAcquired = true;
+  } catch (lockErr) {
+    throw new Error('Run dibatalkan: proses sebelumnya belum berhenti setelah 5 menit. Stop signal sudah dikirim pada ' + new Date(stopRequestedAtMs).toISOString() + '. Detail: ' + scMeilaniErrorMessage_(lockErr));
   }
 
   const startedAt = new Date();
+  const runId = scMeilaniCreateRunId_(flowName, startedAt);
   let destinationSpreadsheet = null;
 
   try {
@@ -209,7 +217,8 @@ function scMeilaniWithLock_(flowName, runner) {
     } else {
       scMeilaniResetLog_(destinationSpreadsheet);
     }
-    scMeilaniLogStep_(destinationSpreadsheet, flowName, 'Runtime bootstrap', 'START', 0, 'Run started.', 'scriptVersion=' + SC_MEILANI_CONFIG.scriptVersion + ', logMode=' + (preservedLog ? 'PRESERVED_RUN_ALL' : 'RESET'), startedAt);
+    scMeilaniRegisterActiveRun_(runId, flowName, startedAt);
+    scMeilaniLogStep_(destinationSpreadsheet, flowName, 'Runtime bootstrap', 'START', 0, 'Run started; previous run stop signal sent before acquiring lock.', 'scriptVersion=' + SC_MEILANI_CONFIG.scriptVersion + ', runId=' + runId + ', stopRequestedAt=' + new Date(stopRequestedAtMs).toISOString() + ', lockWaitSeconds=' + Math.round((startedAt.getTime() - waitStartedAt.getTime()) / 1000) + ', logMode=' + (preservedLog ? 'PRESERVED_RUN_ALL' : 'RESET'), startedAt);
 
     const sourceSpreadsheet = SpreadsheetApp.openById(SC_MEILANI_CONFIG.sourceSpreadsheetId);
     const ctx = {
@@ -217,21 +226,88 @@ function scMeilaniWithLock_(flowName, runner) {
       destinationSpreadsheet: destinationSpreadsheet,
       sourceSpreadsheet: sourceSpreadsheet,
       startedAt: startedAt,
+      startedAtMs: startedAt.getTime(),
+      runId: runId,
     };
 
+    scMeilaniCheckStop_(ctx, 'Runtime before runner');
     scMeilaniToast_(destinationSpreadsheet, flowName + ' berjalan...');
     const result = runner(ctx);
+    scMeilaniCheckStop_(ctx, 'Runtime before completion');
     scMeilaniLogStep_(destinationSpreadsheet, flowName, 'Runtime completion', 'SUCCESS', scMeilaniResultCount_(result), 'Run completed.', JSON.stringify(result), startedAt);
     return result;
   } catch (err) {
     if (destinationSpreadsheet) {
-      scMeilaniLogStep_(destinationSpreadsheet, flowName, 'Runtime failure', 'FAILED', 0, 'Run failed.', scMeilaniErrorMessage_(err), startedAt);
-      scMeilaniToast_(destinationSpreadsheet, flowName + ' gagal: ' + scMeilaniErrorMessage_(err));
+      const isStop = scMeilaniIsStopError_(err);
+      scMeilaniLogStep_(destinationSpreadsheet, flowName, 'Runtime failure', isStop ? 'SKIPPED' : 'FAILED', 0, isStop ? 'Run stopped by newer execution.' : 'Run failed.', scMeilaniErrorMessage_(err), startedAt);
+      scMeilaniToast_(destinationSpreadsheet, flowName + (isStop ? ' dihentikan oleh run baru.' : ' gagal: ' + scMeilaniErrorMessage_(err)));
     }
     throw err;
   } finally {
-    lock.releaseLock();
+    scMeilaniClearActiveRun_(runId);
+    if (lockAcquired) lock.releaseLock();
   }
+}
+function scMeilaniRequestPreviousRunsStop_(flowName) {
+  const nowMs = Date.now();
+  try {
+    PropertiesService.getScriptProperties().setProperties({
+      SC_MEILANI_STOP_REQUESTED_AT_MS: String(nowMs),
+      SC_MEILANI_STOP_REQUESTED_BY_FLOW: String(flowName || ''),
+    }, false);
+  } catch (err) {}
+  return nowMs;
+}
+
+function scMeilaniCreateRunId_(flowName, startedAt) {
+  try {
+    return String(flowName || 'RUN') + '-' + Utilities.getUuid();
+  } catch (err) {
+    return String(flowName || 'RUN') + '-' + String(startedAt.getTime()) + '-' + String(Math.floor(Math.random() * 1e9));
+  }
+}
+
+function scMeilaniRegisterActiveRun_(runId, flowName, startedAt) {
+  try {
+    PropertiesService.getScriptProperties().setProperties({
+      SC_MEILANI_ACTIVE_RUN_ID: String(runId || ''),
+      SC_MEILANI_ACTIVE_FLOW: String(flowName || ''),
+      SC_MEILANI_ACTIVE_STARTED_AT_MS: String(startedAt ? startedAt.getTime() : Date.now()),
+    }, false);
+  } catch (err) {}
+}
+
+function scMeilaniClearActiveRun_(runId) {
+  try {
+    const props = PropertiesService.getScriptProperties();
+    if (props.getProperty('SC_MEILANI_ACTIVE_RUN_ID') === String(runId || '')) {
+      props.deleteProperty('SC_MEILANI_ACTIVE_RUN_ID');
+      props.deleteProperty('SC_MEILANI_ACTIVE_FLOW');
+      props.deleteProperty('SC_MEILANI_ACTIVE_STARTED_AT_MS');
+    }
+  } catch (err) {}
+}
+
+function scMeilaniCheckStop_(ctx, checkpoint) {
+  if (!ctx || !ctx.startedAtMs) return;
+  let stopMs = 0;
+  let stopBy = '';
+  try {
+    const props = PropertiesService.getScriptProperties();
+    stopMs = Number(props.getProperty('SC_MEILANI_STOP_REQUESTED_AT_MS') || 0);
+    stopBy = props.getProperty('SC_MEILANI_STOP_REQUESTED_BY_FLOW') || '';
+  } catch (err) {
+    return;
+  }
+  if (stopMs > ctx.startedAtMs) {
+    const err = new Error('SC_MEILANI_STOP_REQUESTED: dihentikan oleh run baru. checkpoint=' + String(checkpoint || '') + ', requestedBy=' + stopBy + ', requestedAt=' + new Date(stopMs).toISOString() + ', currentRunId=' + String(ctx.runId || ''));
+    err.scMeilaniStopped = true;
+    throw err;
+  }
+}
+
+function scMeilaniIsStopError_(err) {
+  return !!(err && (err.scMeilaniStopped || String(err.message || '').indexOf('SC_MEILANI_STOP_REQUESTED') >= 0));
 }
 function scMeilaniValidateRuntime_() {
   if (!String(SC_MEILANI_CONFIG.sourceSpreadsheetId || '').trim()) {
@@ -313,6 +389,7 @@ function scMeilaniMirrorRows_(sourceSheet, sourceMeta, targetSheet, targetMeta, 
     return out;
   });
 
+  scMeilaniCheckStop_(ctx, 'Mirror before write ' + targetSheet.getName());
   scMeilaniEnsureRows_(targetSheet, targetMeta.headerRowNumber + matrix.length);
   scMeilaniLogStepSafe_(ctx, 'Batch mirror ' + targetSheet.getName(), 'START', matrix.length, 'Writing matched rows in one batch.', 'columns=' + lastTargetCol);
   targetSheet.getRange(targetStartRow, 1, matrix.length, lastTargetCol).setValues(matrix);
@@ -451,7 +528,7 @@ function scMeilaniBuildTargetIdentifierIndex_(targetSheet, targetMeta, identifie
   };
 }
 
-function scMeilaniCollectRepairRecords_(sourceMeta, columnMap, allowedStatuses, targetIndex) {
+function scMeilaniCollectRepairRecords_(sourceMeta, columnMap, allowedStatuses, targetIndex, ctx) {
   const cfg = SC_MEILANI_CONFIG;
   const records = [];
   const seenSource = {};
@@ -462,6 +539,7 @@ function scMeilaniCollectRepairRecords_(sourceMeta, columnMap, allowedStatuses, 
   let duplicateTargetSkipped = 0;
 
   for (let r = sourceMeta.headerRowIndex + 1; r < sourceMeta.values.length; r++) {
+    if ((r - sourceMeta.headerRowIndex) % 250 === 0) scMeilaniCheckStop_(ctx, 'Collect repair records row ' + (r + 1));
     const row = sourceMeta.values[r] || [];
     const rowNumber = r + 1;
     try {
@@ -543,7 +621,8 @@ function scMeilaniUpsertRepairRecords_(targetSheet, targetMeta, columnMap, targe
   let updated = 0;
   let failed = 0;
 
-  records.forEach(function (record) {
+  records.forEach(function (record, index) {
+    if (index % 250 === 0) scMeilaniCheckStop_(ctx, 'Prepare upsert record ' + (index + 1));
     try {
       const targetRow = targetIndex.rowByKey[record.claimKey];
       if (!targetRow) {
@@ -569,6 +648,7 @@ function scMeilaniUpsertRepairRecords_(targetSheet, targetMeta, columnMap, targe
   });
 
   if (updated > 0) {
+    scMeilaniCheckStop_(ctx, 'Before batch update existing rows');
     try {
       scMeilaniLogStep_(ctx.destinationSpreadsheet, ctx.flowName, 'Batch update existing rows', 'START', updated, 'Writing existing target rows in one batch.', 'loadedRows=' + existingValues.length + ', columns=' + lastColumn, ctx.startedAt);
       scMeilaniWriteExistingRepairColumns_(targetSheet, dataStartRow, existingValues, columnMap);
@@ -584,6 +664,7 @@ function scMeilaniUpsertRepairRecords_(targetSheet, targetMeta, columnMap, targe
 
   let appended = 0;
   if (appendRows.length) {
+    scMeilaniCheckStop_(ctx, 'Before batch append new rows');
     const startRow = Math.max(targetSheet.getLastRow() + 1, targetMeta.headerRowNumber + 1);
     scMeilaniEnsureRows_(targetSheet, startRow + appendRows.length - 1);
     try {
@@ -797,10 +878,11 @@ function scMeilaniClearBody_(sheet, headerRow) {
   sheet.getRange(effectiveHeaderRow + 1, 1, lastRow - effectiveHeaderRow, lastColumn).clear();
 }
 
-function scMeilaniCollectRowNumbers_(sourceMeta, predicate) {
+function scMeilaniCollectRowNumbers_(sourceMeta, predicate, ctx) {
   const values = sourceMeta.values || [];
   const out = [];
   for (let r = sourceMeta.headerRowIndex + 1; r < values.length; r++) {
+    if ((r - sourceMeta.headerRowIndex) % 250 === 0) scMeilaniCheckStop_(ctx, 'Collect row numbers row ' + (r + 1));
     const row = values[r] || [];
     if (predicate(row)) out.push(r + 1);
   }
