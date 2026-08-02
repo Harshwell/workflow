@@ -34,8 +34,8 @@ const CONFIG = {
   ]),
 
   OVERVIEW_SHEET: "Overview",
-  PULLING_TIME_CELL_A1: "D1:E1",
-  PULLING_TIME_RAW_CELL_A1: "F1",
+  PULLING_TIME_CELL_A1: "F5",
+  PULLING_TIME_LEGACY_RANGES_A1: ["D1:E1", "F1"],
   PROGRESS_CELL_A1: "F3",
   DURATION_CELL_A1: "F4",
   CONTROL_RANGE_PIC: "G2:G4",
@@ -401,9 +401,7 @@ function runServiceCenterTransfer() {
     ctx.overviewSheet = overview;
 
     if (overview) {
-      var pullTs = Utilities.formatDate(new Date(), ctx.tz, "yyyy-MM-dd HH:mm:ss");
-      overview.getRange(CONFIG.PULLING_TIME_CELL_A1).setValue("Pulling Time: " + pullTs);
-      overview.getRange(CONFIG.PULLING_TIME_RAW_CELL_A1).clearContent();
+      _writePullingTime_(overview);
     }
 
     _setProgress_(ctx, "Running: opening destination workbook...");
@@ -1301,6 +1299,7 @@ function _prepareDestinationSheets_(ctx) {
   }
 
   _ensureLastStatusTypeColumn_(base);
+  _applyDestinationSheetTemplate_(base);
 
   // Remove all duplicated sheets, keep Unmapped only.
   var deletedSheets = 0;
@@ -1414,8 +1413,18 @@ function _ensureDestSheet_(ctx, requestedSheetName) {
   if (existing) return existing;
 
   if (CONFIG.AUTO_MANAGED_DEST_SHEETS && CONFIG.AUTO_MANAGED_DEST_SHEETS.has(requestedSheetName)) {
-    var managedSheet = ctx.destSS.insertSheet(requestedSheetName);
-    _initializeFallbackSheet_(managedSheet);
+    var templateSheet = ctx.destRegistry.byName[CONFIG.UNMAPPED_SHEET_NAME];
+    var managedSheet;
+    if (templateSheet) {
+      managedSheet = templateSheet.copyTo(ctx.destSS);
+      managedSheet.setName(requestedSheetName);
+      _clearSheetBody_(managedSheet);
+    } else {
+      managedSheet = ctx.destSS.insertSheet(requestedSheetName);
+      _initializeFallbackSheet_(managedSheet);
+    }
+    _ensureLastStatusTypeColumn_(managedSheet);
+    _applyDestinationSheetTemplate_(managedSheet);
     ctx.destRegistry.byName[requestedSheetName] = managedSheet;
     ctx.destRegistry.sheetNames.push(requestedSheetName);
     return managedSheet;
@@ -1453,6 +1462,32 @@ function _initializeFallbackSheet_(sheet) {
   sheet.getRange(1, 1, 1, header[0].length).setValues(header);
   sheet.setFrozenRows(1);
   _applyLastStatusTypeValidation_(sheet);
+  _applyDestinationSheetTemplate_(sheet);
+}
+
+function _clearSheetBody_(sheet) {
+  var lastRow = sheet.getLastRow();
+  if (lastRow <= 1) return;
+  var lastCol = Math.max(sheet.getLastColumn(), 1);
+  sheet.getRange(2, 1, lastRow - 1, lastCol).clearContent();
+}
+
+function _applyDestinationSheetTemplate_(sheet) {
+  if (!sheet) return;
+  var lastCol = Math.max(sheet.getLastColumn(), 1);
+  var maxRows = Math.max(sheet.getMaxRows(), 2);
+  try { sheet.setFrozenRows(1); } catch (e1) {}
+  try {
+    sheet.getRange(1, 1, 1, lastCol)
+      .setBackground("#0b5394")
+      .setFontColor("#ffffff")
+      .setFontWeight("bold")
+      .setHorizontalAlignment("center")
+      .setVerticalAlignment("middle")
+      .setWrap(true);
+  } catch (e2) {}
+  try { sheet.getRange(1, 1, maxRows, lastCol).setFontFamily("Arial").setFontSize(10); } catch (e3) {}
+  try { sheet.getRange(2, 1, Math.max(maxRows - 1, 1), lastCol).setVerticalAlignment("middle"); } catch (e4) {}
 }
 
 function _ensureLastStatusTypeColumn_(sheet) {
@@ -1469,6 +1504,7 @@ function _ensureLastStatusTypeColumn_(sheet) {
   var insertedColumn = insertAfter + 1;
   sheet.getRange(1, insertedColumn).setValue(CONFIG.DEST_COLUMNS.lastStatusType);
   _applyLastStatusTypeValidation_(sheet);
+  _applyDestinationSheetTemplate_(sheet);
   return insertedColumn - 1;
 }
 
@@ -1996,6 +2032,20 @@ function _compactNorm_(value) {
 /* =========================
  *  UI / TIMING / GENERIC HELPERS
  * ========================= */
+
+function _writePullingTime_(overview) {
+  if (!overview) return;
+  var range = overview.getRange(CONFIG.PULLING_TIME_CELL_A1);
+  range.setValue(new Date());
+  range.setNumberFormat("yyyy-mm-dd hh:mm:ss");
+
+  var legacyRanges = CONFIG.PULLING_TIME_LEGACY_RANGES_A1 || [];
+  for (var i = 0; i < legacyRanges.length; i++) {
+    var a1 = String(legacyRanges[i] || "").trim();
+    if (!a1 || a1 === CONFIG.PULLING_TIME_CELL_A1) continue;
+    try { overview.getRange(a1).clearContent(); } catch (e) {}
+  }
+}
 
 function _setProgress_(ctx, message) {
   if (!ctx || !ctx.overviewSheet) return;
