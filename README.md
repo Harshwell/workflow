@@ -46,7 +46,7 @@ Update kontrak MAIN/SUB/FORM:
 - `Store Name` operational diisi dari `Raw Data.outlet_name`.
 - `B2B` MAIN hanya dari `id_business_partner_category_name = B2B Partnership`; SUB hanya update `Last Status` dan `Service Center` pada claim existing.
 - `Special Case` MAIN menampung semua claim yang punya flag; status done/closed tidak lagi otomatis dipruning dari sheet ini.
-- `optional-project/Service Center Extractor` menambahkan sheet routing `Samsung Exclusive` untuk Samsung Authorized by Unicom Pontianak/Samarinda/Banjarmasin dan override Deltasindo untuk Sorong/Office.
+- `optional-project/Service Center Extractor` menambahkan sheet routing `Samsung Exclusive` untuk Samsung Authorized by Unicom Pontianak/Samarinda/Banjarmasin dan override Deltasindo untuk Sorong/Office ke sheet `Deltafone`.
 
 ---
 

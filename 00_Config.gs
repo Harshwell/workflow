@@ -142,7 +142,7 @@ const BRANCH_KEYWORDS = Object.freeze({
   'CV Berkah': ['cv berkah athallah', 'cv berkah'],
   'B-Store': ['b-store', 'bstore'],
   'EzCare': ['ezcare', 'ez care'],
-  'Deltasindo': ['deltasindo'],
+  'Deltafone': ['deltasindo'],
   'MDP': ['mdp']
 });
 

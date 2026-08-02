@@ -58,10 +58,10 @@ const CONFIG = {
 
   DEST_SHEETS_TO_CLEAR: [
     "Samsung Exclusive", "Unicom", "Sitcomtara", "Mitracare", "EzCare", "iBox", "GSI", "Andalas", "Klikcare", "J-Bros",
-    "MEA", "MMB", "MDP", "Deltasindo", "Carlcare", "B-Store", "Multikom", "CV Berkah", "Rejeki Seluler", "Unmapped"
+    "MEA", "MMB", "MDP", "Deltafone", "Carlcare", "B-Store", "Multikom", "CV Berkah", "Rejeki Seluler", "Unmapped"
   ],
   VALID_PICS: new Set(["FARHAN", "MEILANI", "MEINDAR"]),
-  AUTO_MANAGED_DEST_SHEETS: new Set(["CV Berkah", "Rejeki Seluler", "EzCare"]),
+  AUTO_MANAGED_DEST_SHEETS: new Set(["CV Berkah", "Rejeki Seluler", "EzCare", "GSI", "Deltafone"]),
   PHASES: Object.freeze({
     START: "START",
     MIDDLE: "MIDDLE",
@@ -175,7 +175,7 @@ const CONFIG = {
     { sheet: "MEA", tokens: ["makmur era abadi"], regex: /\bmea\b/ },
     { sheet: "MMB", tokens: ["manado mitra bersama"], regex: /\bmmb\b/ },
     { sheet: "MDP", regex: /\bmdp\b/ },
-    { sheet: "Deltasindo", tokens: ["deltasindo"] },
+    { sheet: "Deltafone", tokens: ["deltasindo"] },
     { sheet: "Samsung Exclusive", tokens: ["samsung authorized by unicom", "samsung authorized service centre by unicom", "samsung authorized service center by unicom"] },
     { sheet: "Unicom", tokens: ["unicom", "xiaomi", "samsung"] },
     { sheet: "EzCare", tokens: ["ezcare", "ez care"] },
@@ -216,8 +216,8 @@ const CONFIG = {
     "samsung authorized service centre by unicom banjarmasin service centre": "Samsung Exclusive",
     "samsung authorized service center by unicom banjarmasin service center": "Samsung Exclusive",
     "samsung authorized service center by unicom banjarmasin service centre": "Samsung Exclusive",
-    "pt deltasindo sagita mandiri sorong papua barat": "Deltasindo",
-    "pt deltasindo sagita mandiri office": "Deltasindo",
+    "pt deltasindo sagita mandiri sorong papua barat": "Deltafone",
+    "pt deltasindo sagita mandiri office": "Deltafone",
   },
 
 };
@@ -731,6 +731,16 @@ function _readServiceCenterMapping_(srcSS, selectedPic) {
     if (!rawName && !rawPic) continue;
     if (!rawName || !rawPic) continue;
     if (!CONFIG.VALID_PICS.has(rawPic)) continue;
+
+    var normalizedName = _norm_(rawName);
+    var compactName = _compactNorm_(rawName);
+    if (normalizedName === "gsi" || compactName.indexOf("gsi") >= 0) {
+      rawName = "GSI";
+      rawPic = "MEILANI";
+    } else if (normalizedName.indexOf("deltasindo") >= 0 || normalizedName.indexOf("deltafone") >= 0 || compactName.indexOf("deltasindo") >= 0 || compactName.indexOf("deltafone") >= 0) {
+      rawName = "Deltafone";
+      rawPic = "MEINDAR";
+    }
     if (selectedPic && rawPic !== selectedPic) continue;
     out.push({ name: rawName, pic: rawPic });
   }
@@ -1338,6 +1348,20 @@ function _prepareDestinationSheets_(ctx) {
     ctx.destRegistry = _buildSheetRegistry_(ctx.destSS);
   }
 
+  if (selectedPic === "MEILANI") {
+    var hadGsiSheet = !!ctx.destRegistry.byName.GSI;
+    _ensureDestSheet_(ctx, "GSI");
+    if (!hadGsiSheet) createdSheets += 1;
+    ctx.destRegistry = _buildSheetRegistry_(ctx.destSS);
+  }
+
+  if (selectedPic === "MEINDAR") {
+    var hadDeltafoneSheet = !!ctx.destRegistry.byName.Deltafone;
+    _ensureDestSheet_(ctx, "Deltafone");
+    if (!hadDeltafoneSheet) createdSheets += 1;
+    ctx.destRegistry = _buildSheetRegistry_(ctx.destSS);
+  }
+
   return {
     deletedSheets: deletedSheets,
     clearedRowsOnUnmapped: clearedRows,
@@ -1771,6 +1795,7 @@ function _resolveDestByMapping_(ctx, serviceCenterName) {
 function _resolveSpecialDestination_(compactSc) {
   var sc = String(compactSc || "");
   if (sc.indexOf("gsi") >= 0) return { sheetName: "GSI", pic: "MEILANI" };
+  if (sc.indexOf("deltasindo") >= 0 || sc.indexOf("deltafone") >= 0) return { sheetName: "Deltafone", pic: "MEINDAR" };
   if (sc.indexOf("cvberkah") >= 0) return { sheetName: "CV Berkah", pic: "FARHAN" };
   if (sc.indexOf("rejekiseluler") >= 0 || sc.indexOf("rejekiseluller") >= 0) return { sheetName: "Rejeki Seluler", pic: "FARHAN" };
   return null;
@@ -1780,7 +1805,7 @@ function _resolveAliasMappingTarget_(normalizedSc, compactSc) {
   var s = String(normalizedSc || "");
   var c = String(compactSc || "");
   if (s.indexOf("ez care") >= 0 || c.indexOf("ezcare") >= 0) return "ezcare";
-  if (s.indexOf("deltasindo") >= 0 || c.indexOf("deltasindo") >= 0) return "deltasindo";
+  if (s.indexOf("deltasindo") >= 0 || s.indexOf("deltafone") >= 0 || c.indexOf("deltasindo") >= 0 || c.indexOf("deltafone") >= 0) return "deltafone";
   return "";
 }
 
