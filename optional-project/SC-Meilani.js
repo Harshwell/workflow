@@ -12,7 +12,7 @@
 const SC_MEILANI_CONFIG = Object.freeze({
   sourceSpreadsheetId: '1zRlYrSRssv9LVcPKEq90CmmvTRsZoN_TqfIg2pNufbc',
   destinationSpreadsheetId: '1dU9dt01Ld_ykMJWQxupvIHyLXV6ArnGeXCBV72q31lU',
-  scriptVersion: '2026-08-03-salvage-repair-batch-upsert-log-3',
+  scriptVersion: '2026-08-03-salvage-repair-raw-new-header-4',
   menuName: 'SC Meilani',
   logSheetName: 'Log SC-Meilani',
   headerRow: 1,
@@ -74,15 +74,15 @@ const SC_MEILANI_CONFIG = Object.freeze({
     'Submission Month': Object.freeze(['Submission Month', 'Submitted Month', 'Submission by Month', 'Month', 'claim_submission_month', 'submitted_month']),
     'Claim Number': Object.freeze(['Claim Number', 'Claim No', 'Claim', 'claim_number']),
     'DB Link': Object.freeze(['DB Link', 'Dashboard Link', 'Link', 'dashboard_link', 'db_link', 'dblink', 'database_link']),
-    'Approval Date': Object.freeze(['Approval Date', 'Approved Date', 'Insurance Approval Date', 'approval_date', 'claim_approved_at', 'claim_approval_date']),
-    'Branch': Object.freeze(['Branch', 'Service Center Branch', 'SC Branch', 'branch', 'service_center_branch']),
-    'Service Center': Object.freeze(['Service Center', 'Service Center Name', 'SC Name', 'SC', 'service_center_name', 'service_center']),
-    'Insurance': Object.freeze(['Insurance', 'Insurance Name', 'insurance_name', 'insurer_name']),
-    'Sum Insured': Object.freeze(['Sum Insured', 'SI', 'sum_insured', 'insured_value']),
-    'Device Brand': Object.freeze(['Device Brand', 'Brand', 'device_brand', 'brand_name']),
+    'Approval Date': Object.freeze(['Approval Date', 'Approved Date', 'Insurance Approval Date', 'approval_date', 'claim_approved_at', 'claim_approval_date', 'claim_last_updated_datetime']),
+    'Branch': Object.freeze(['Branch', 'Service Center Branch', 'SC Branch', 'branch', 'service_center_branch', 'sc_branch']),
+    'Service Center': Object.freeze(['Service Center', 'Service Center Name', 'SC Name', 'SC', 'service_center_name', 'service_center', 'sc_name']),
+    'Insurance': Object.freeze(['Insurance', 'Insurance Name', 'insurance_name', 'insurer_name', 'insurance_code']),
+    'Sum Insured': Object.freeze(['Sum Insured', 'SI', 'sum_insured', 'insured_value', 'sum_insured_amount']),
+    'Device Brand': Object.freeze(['Device Brand', 'Brand', 'device_brand', 'brand_name', 'device_brand_name']),
     'Device Type': Object.freeze(['Device Type', 'Type', 'device_type', 'device_model']),
-    'IMEI/SN': Object.freeze(['IMEI/SN', 'IMEI', 'SN', 'Serial Number', 'IMEI SN', 'imei', 'imei_number', 'serial_number']),
-    'Last Status': Object.freeze(['Last Status', 'Status Terakhir', 'claim_last_status_name', 'last_status']),
+    'IMEI/SN': Object.freeze(['IMEI/SN', 'IMEI', 'SN', 'Serial Number', 'IMEI SN', 'imei', 'imei_number', 'serial_number', 'device_imei', 'device_imei2']),
+    'Last Status': Object.freeze(['Last Status', 'Status Terakhir', 'claim_last_status_name', 'last_status', 'last_status_name']),
     'YoS': Object.freeze(['YoS', 'YOS', 'Year of Salvage', 'Year']),
     'Remarks': Object.freeze(['Remarks', 'Remark', 'Notes', 'Note']),
   }),
@@ -151,7 +151,7 @@ function runSCMeilaniSalvageRepair() {
     const sourceMeta = scMeilaniReadSourceMeta_(sourceSheet, [cfg.repair.identifierHeader, 'Branch', 'Last Status']);
     const targetMeta = scMeilaniReadTargetMeta_(targetSheet);
     const columnMap = scMeilaniResolveRepairColumnMap_(sourceMeta, targetMeta);
-    scMeilaniLogStep_(ctx.destinationSpreadsheet, ctx.flowName, 'Read and validate headers', 'SUCCESS', cfg.outputHeaders.length, 'Header validation passed.', 'sourceHeaderRow=' + sourceMeta.headerRowNumber + ', targetHeaderRow=' + targetMeta.headerRowNumber, ctx.startedAt);
+    scMeilaniLogStep_(ctx.destinationSpreadsheet, ctx.flowName, 'Read and validate headers', 'SUCCESS', cfg.outputHeaders.length, 'Header validation passed.', 'sourceHeaderRow=' + sourceMeta.headerRowNumber + ', targetHeaderRow=' + targetMeta.headerRowNumber + ', optionalMissingSource=' + columnMap.optionalMissingSource.join(', '), ctx.startedAt);
 
     const allowedStatuses = scMeilaniToKeySet_(cfg.repair.allowedLastStatuses);
     const targetIndex = scMeilaniBuildTargetIdentifierIndex_(targetSheet, targetMeta, cfg.repair.identifierHeader);
@@ -301,28 +301,34 @@ function scMeilaniResolveRepairColumnMap_(sourceMeta, targetMeta) {
   const cfg = SC_MEILANI_CONFIG;
   const source = {};
   const target = {};
-  const missingSource = [];
   const missingTarget = [];
+  const optionalMissingSource = [];
 
   cfg.outputHeaders.forEach(function (header) {
     const targetIdx = scMeilaniFindHeaderIndex_(targetMeta.headerMap, header);
     if (targetIdx == null) missingTarget.push(header);
     target[header] = targetIdx;
-
-    const sourceIdx = scMeilaniFindHeaderIndex_(sourceMeta.headerMap, header);
-    if (sourceIdx == null && header !== 'Submission Month') missingSource.push(header);
-    source[header] = sourceIdx;
+    source[header] = scMeilaniFindHeaderIndex_(sourceMeta.headerMap, header);
   });
 
   const identifierSource = scMeilaniRequireSourceColumn_(sourceMeta, cfg.repair.identifierHeader);
-  const branchSource = scMeilaniRequireSourceColumn_(sourceMeta, 'Branch', cfg.fallbackColumns.Branch);
   const lastStatusSource = scMeilaniRequireSourceColumn_(sourceMeta, 'Last Status');
+  let branchSource = scMeilaniFindHeaderIndex_(sourceMeta.headerMap, 'Branch');
+  const serviceCenterSource = scMeilaniFindHeaderIndex_(sourceMeta.headerMap, 'Service Center');
+  if (branchSource == null) branchSource = serviceCenterSource;
+  if (branchSource == null && cfg.fallbackColumns.Branch) branchSource = cfg.fallbackColumns.Branch - 1;
+  if (branchSource == null) {
+    throw new Error('Header source Salvage Repair tidak punya Branch atau Service Center di "' + sourceMeta.sheet.getName() + '" row ' + sourceMeta.headerRowNumber + '. Header terbaca: ' + scMeilaniPreviewHeaders_(sourceMeta.headerValues));
+  }
+
   const identifierTarget = scMeilaniFindHeaderIndex_(targetMeta.headerMap, cfg.repair.identifierHeader);
   if (identifierTarget == null) missingTarget.push(cfg.repair.identifierHeader);
 
-  if (missingSource.length) {
-    throw new Error('Header source Salvage Repair tidak lengkap di "' + sourceMeta.sheet.getName() + '" row ' + sourceMeta.headerRowNumber + ': ' + scMeilaniUnique_(missingSource).join(', ') + '. Header terbaca: ' + scMeilaniPreviewHeaders_(sourceMeta.headerValues));
-  }
+  cfg.outputHeaders.forEach(function (header) {
+    if (source[header] == null && header !== 'Submission Month' && header !== 'Branch') optionalMissingSource.push(header);
+  });
+  if (source.Branch == null && serviceCenterSource != null) optionalMissingSource.push('Branch derived from Service Center');
+
   if (missingTarget.length) {
     throw new Error('Header target Salvage Repair tidak lengkap di "' + targetMeta.sheet.getName() + '" row ' + targetMeta.headerRowNumber + ': ' + scMeilaniUnique_(missingTarget).join(', ') + '. Header terbaca: ' + scMeilaniPreviewHeaders_(targetMeta.headerValues));
   }
@@ -333,11 +339,55 @@ function scMeilaniResolveRepairColumnMap_(sourceMeta, targetMeta) {
     identifierSource: identifierSource,
     branchSource: branchSource,
     lastStatusSource: lastStatusSource,
+    serviceCenterSource: serviceCenterSource,
     identifierTarget: identifierTarget,
+    optionalMissingSource: scMeilaniUnique_(optionalMissingSource),
+    sourceMeta: sourceMeta,
     targetLastColumn: Math.max(targetMeta.sheet.getLastColumn(), cfg.outputHeaders.length),
   };
 }
+function scMeilaniGetRepairOutputValue_(row, columnMap, header, branchValue, serviceCenterValue) {
+  if (header === 'Submission Month') {
+    const monthIdx = columnMap.source[header];
+    if (monthIdx != null) return row[monthIdx];
+    return scMeilaniDeriveSubmissionMonth_(scMeilaniGetRepairSourceValue_(row, columnMap, 'Submission Date'));
+  }
+  if (header === 'Branch') return branchValue || '';
+  if (header === 'Service Center') return serviceCenterValue || scMeilaniGetRepairSourceValue_(row, columnMap, header);
+  if (header === 'IMEI/SN') {
+    const imei = scMeilaniGetRepairSourceValue_(row, columnMap, header);
+    if (imei) return imei;
+    return scMeilaniFirstExistingHeaderValue_(row, columnMap.sourceMeta, ['device_imei', 'device_imei2']);
+  }
+  return scMeilaniGetRepairSourceValue_(row, columnMap, header);
+}
 
+function scMeilaniGetRepairSourceValue_(row, columnMap, header) {
+  const idx = columnMap.source[header];
+  if (idx == null) return '';
+  return row[idx];
+}
+
+function scMeilaniFirstExistingHeaderValue_(row, sourceMeta, aliases) {
+  if (!sourceMeta) return '';
+  for (let i = 0; i < aliases.length; i++) {
+    const idx = sourceMeta.headerMap[scMeilaniHeaderKey_(aliases[i])];
+    if (idx == null) continue;
+    const value = row[idx];
+    if (String(value == null ? '' : value).trim()) return value;
+  }
+  return '';
+}
+
+function scMeilaniResolveRepairBranch_(branchValue, serviceCenterValue) {
+  if (scMeilaniIsAllowedBranch_(branchValue)) return branchValue;
+  const text = scMeilaniNormalizeText_(String(branchValue || '') + ' ' + String(serviceCenterValue || ''));
+  if (!text) return branchValue || '';
+  if (text.indexOf('xiaomi') >= 0) return 'Xiaomi Authorized';
+  if (text.indexOf('unicom') >= 0) return 'Unicom';
+  if (text.indexOf('samsung exclusive') >= 0 || (text.indexOf('samsung') >= 0 && text.indexOf('exclusive') >= 0)) return 'Samsung Exclusive';
+  return branchValue || serviceCenterValue || '';
+}
 function scMeilaniBuildTargetIdentifierIndex_(targetSheet, targetMeta, identifierHeader) {
   const identifierCol = scMeilaniRequireHeader_(targetMeta.headerMap, identifierHeader) + 1;
   const startRow = targetMeta.headerRowNumber + 1;
@@ -390,7 +440,8 @@ function scMeilaniCollectRepairRecords_(sourceMeta, columnMap, allowedStatuses, 
     try {
       const claimValue = row[columnMap.identifierSource];
       const claimKey = scMeilaniIdentifierKey_(claimValue);
-      const branchValue = row[columnMap.branchSource];
+      const serviceCenterValue = columnMap.serviceCenterSource == null ? '' : row[columnMap.serviceCenterSource];
+      const branchValue = scMeilaniResolveRepairBranch_(row[columnMap.branchSource], serviceCenterValue);
       const statusValue = row[columnMap.lastStatusSource];
       const statusKey = scMeilaniStatusKey_(statusValue);
 
@@ -427,10 +478,7 @@ function scMeilaniCollectRepairRecords_(sourceMeta, columnMap, allowedStatuses, 
         claimValue: claimValue,
         sourceRowNumber: rowNumber,
         values: cfg.outputHeaders.map(function (header) {
-          if (header === 'Submission Month' && columnMap.source[header] == null) {
-            return scMeilaniDeriveSubmissionMonth_(row[columnMap.source['Submission Date']]);
-          }
-          return row[columnMap.source[header]];
+          return scMeilaniGetRepairOutputValue_(row, columnMap, header, branchValue, serviceCenterValue);
         }),
       });
     } catch (err) {
