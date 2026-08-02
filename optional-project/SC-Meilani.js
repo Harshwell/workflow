@@ -12,7 +12,7 @@
 const SC_MEILANI_CONFIG = Object.freeze({
   sourceSpreadsheetId: '1zRlYrSRssv9LVcPKEq90CmmvTRsZoN_TqfIg2pNufbc',
   destinationSpreadsheetId: '1dU9dt01Ld_ykMJWQxupvIHyLXV6ArnGeXCBV72q31lU',
-  scriptVersion: '2026-08-03-salvage-repair-raw-new-header-4',
+  scriptVersion: '2026-08-03-salvage-batch-log-5',
   menuName: 'SC Meilani',
   logSheetName: 'Log SC-Meilani',
   headerRow: 1,
@@ -114,14 +114,21 @@ function runSCMeilaniAll() {
 function runSCMeilaniSalvage() {
   return scMeilaniWithLock_('SALVAGE', function (ctx) {
     const cfg = SC_MEILANI_CONFIG;
+    scMeilaniLogStep_(ctx.destinationSpreadsheet, ctx.flowName, 'Ensure salvage source sheet', 'START', 0, 'Checking Salvage source sheet.', 'source="' + cfg.salvage.sourceSheetName + '"', ctx.startedAt);
     const sourceSheet = scMeilaniRequireSheet_(ctx.sourceSpreadsheet, cfg.salvage.sourceSheetName);
+    scMeilaniLogStep_(ctx.destinationSpreadsheet, ctx.flowName, 'Ensure salvage source sheet', 'SUCCESS', 1, 'Source sheet found.', sourceSheet.getName(), ctx.startedAt);
+
+    scMeilaniLogStep_(ctx.destinationSpreadsheet, ctx.flowName, 'Read salvage source headers', 'START', 0, 'Reading source data and validating filter headers.', '', ctx.startedAt);
     const sourceMeta = scMeilaniReadSourceMeta_(sourceSheet, ['Claim Number', 'Branch', cfg.salvage.yosHeader, cfg.salvage.remarksHeader]);
     const branchCol = scMeilaniRequireSourceColumn_(sourceMeta, 'Branch', cfg.fallbackColumns.Branch);
     const yosCol = scMeilaniRequireSourceColumn_(sourceMeta, cfg.salvage.yosHeader, cfg.fallbackColumns.YoS);
     const remarksCol = scMeilaniRequireSourceColumn_(sourceMeta, cfg.salvage.remarksHeader, cfg.fallbackColumns.Remarks);
+    const sourceRows = Math.max(sourceMeta.values.length - sourceMeta.headerRowNumber, 0);
+    scMeilaniLogStep_(ctx.destinationSpreadsheet, ctx.flowName, 'Read salvage source headers', 'SUCCESS', sourceRows, 'Source data loaded.', 'headerRow=' + sourceMeta.headerRowNumber + ', rows=' + sourceRows, ctx.startedAt);
 
     const results = [];
     cfg.salvage.targets.forEach(function (target) {
+      scMeilaniLogStep_(ctx.destinationSpreadsheet, ctx.flowName, 'Process target ' + target.sheetName, 'START', 0, 'Preparing target year ' + target.year + '.', '', ctx.startedAt);
       const targetSheet = scMeilaniRequireSheet_(ctx.destinationSpreadsheet, target.sheetName);
       const targetMeta = scMeilaniReadTargetMeta_(targetSheet);
       const rowNumbers = scMeilaniCollectRowNumbers_(sourceMeta, function (row) {
@@ -129,16 +136,17 @@ function runSCMeilaniSalvage() {
           && scMeilaniMatchesYear_(row[yosCol], target.year)
           && scMeilaniEqualsText_(row[remarksCol], cfg.salvage.requiredRemarksValue);
       });
+      scMeilaniLogStep_(ctx.destinationSpreadsheet, ctx.flowName, 'Filter target ' + target.sheetName, rowNumbers.length ? 'SUCCESS' : 'SKIPPED', rowNumbers.length, 'Filter completed for target year ' + target.year + '.', 'sourceRows=' + sourceRows + ', matched=' + rowNumbers.length, ctx.startedAt);
 
-      const written = scMeilaniMirrorRows_(sourceSheet, sourceMeta, targetSheet, targetMeta, rowNumbers, cfg.outputHeaders);
+      const written = scMeilaniMirrorRows_(sourceSheet, sourceMeta, targetSheet, targetMeta, rowNumbers, cfg.outputHeaders, ctx);
       results.push(target.sheetName + ': ' + written + ' row');
+      scMeilaniLogStep_(ctx.destinationSpreadsheet, ctx.flowName, 'Process target ' + target.sheetName, 'SUCCESS', written, 'Target completed.', '', ctx.startedAt);
     });
 
     scMeilaniToast_(ctx.destinationSpreadsheet, 'Salvage selesai. ' + results.join(' | '));
     return results;
   });
 }
-
 function runSCMeilaniSalvageRepair() {
   return scMeilaniWithLock_('SALVAGE_REPAIR', function (ctx) {
     const cfg = SC_MEILANI_CONFIG;
@@ -277,26 +285,45 @@ function scMeilaniReadTargetMeta_(sheet) {
   };
 }
 
-function scMeilaniMirrorRows_(sourceSheet, sourceMeta, targetSheet, targetMeta, sourceRowNumbers, outputHeaders) {
+function scMeilaniMirrorRows_(sourceSheet, sourceMeta, targetSheet, targetMeta, sourceRowNumbers, outputHeaders, ctx) {
   scMeilaniValidateMirrorHeaders_(sourceMeta, targetMeta, outputHeaders);
+  scMeilaniLogStepSafe_(ctx, 'Clear target body ' + targetSheet.getName(), 'START', Math.max(targetSheet.getLastRow() - targetMeta.headerRowNumber, 0), 'Clearing existing target body before mirror.', 'target=' + targetSheet.getName());
   scMeilaniClearBody_(targetSheet, targetMeta.headerRowNumber);
-  if (!sourceRowNumbers.length) return 0;
+  scMeilaniLogStepSafe_(ctx, 'Clear target body ' + targetSheet.getName(), 'SUCCESS', 0, 'Target body cleared.', 'target=' + targetSheet.getName());
 
-  const targetStartRow = targetMeta.headerRowNumber + 1;
-  const sourceCols = outputHeaders.map(function (header) {
-    return scMeilaniRequireHeader_(sourceMeta.headerMap, header) + 1;
-  });
-  const targetCols = outputHeaders.map(function (header) {
-    return scMeilaniRequireHeader_(targetMeta.headerMap, header) + 1;
-  });
-
-  for (let h = 0; h < outputHeaders.length; h++) {
-    scMeilaniWriteMirroredColumn_(sourceSheet, targetSheet, sourceRowNumbers, sourceCols[h], targetStartRow, targetCols[h]);
+  if (!sourceRowNumbers.length) {
+    scMeilaniLogStepSafe_(ctx, 'Batch mirror ' + targetSheet.getName(), 'SKIPPED', 0, 'No matching source rows for this target.', 'target=' + targetSheet.getName());
+    return 0;
   }
 
+  const sourceCols = outputHeaders.map(function (header) {
+    return scMeilaniRequireHeader_(sourceMeta.headerMap, header);
+  });
+  const targetCols = outputHeaders.map(function (header) {
+    return scMeilaniRequireHeader_(targetMeta.headerMap, header);
+  });
+  const targetStartRow = targetMeta.headerRowNumber + 1;
+  const lastTargetCol = Math.max.apply(null, targetCols) + 1;
+  const matrix = sourceRowNumbers.map(function (rowNumber) {
+    const row = sourceMeta.values[rowNumber - 1] || [];
+    const out = scMeilaniBlankArray_(lastTargetCol);
+    outputHeaders.forEach(function (header, index) {
+      out[targetCols[index]] = row[sourceCols[index]];
+    });
+    return out;
+  });
+
+  scMeilaniEnsureRows_(targetSheet, targetMeta.headerRowNumber + matrix.length);
+  scMeilaniLogStepSafe_(ctx, 'Batch mirror ' + targetSheet.getName(), 'START', matrix.length, 'Writing matched rows in one batch.', 'columns=' + lastTargetCol);
+  targetSheet.getRange(targetStartRow, 1, matrix.length, lastTargetCol).setValues(matrix);
+  scMeilaniLogStepSafe_(ctx, 'Batch mirror ' + targetSheet.getName(), 'SUCCESS', matrix.length, 'Rows written.', 'target=' + targetSheet.getName());
   return sourceRowNumbers.length;
 }
 
+function scMeilaniLogStepSafe_(ctx, processName, status, count, message, details) {
+  if (!ctx || !ctx.destinationSpreadsheet) return;
+  scMeilaniLogStep_(ctx.destinationSpreadsheet, ctx.flowName || '', processName, status, count, message, details || '', ctx.startedAt);
+}
 function scMeilaniResolveRepairColumnMap_(sourceMeta, targetMeta) {
   const cfg = SC_MEILANI_CONFIG;
   const source = {};
@@ -922,7 +949,7 @@ function scMeilaniToast_(spreadsheet, message) {
 
 function scMeilaniResetLog_(spreadsheet) {
   const sheet = scMeilaniGetOrCreateLogSheet_(spreadsheet);
-  sheet.clearContents();
+  sheet.clear();
   scMeilaniWriteLogHeader_(sheet);
 }
 
@@ -966,8 +993,22 @@ function scMeilaniWriteLogHeader_(sheet) {
   const existing = sheet.getRange(1, 1, 1, headers.length).getValues()[0].join('|');
   if (existing !== headers.join('|')) {
     sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
+    scMeilaniFormatLogSheet_(sheet, headers.length);
   }
   sheet.setFrozenRows(1);
+}
+
+function scMeilaniFormatLogSheet_(sheet, headerCount) {
+  try {
+    sheet.getRange(1, 1, Math.min(Math.max(sheet.getMaxRows(), 1000), 5000), headerCount).setNumberFormat('@');
+    sheet.getRange('A:A').setNumberFormat('dd/MM/yyyy HH:mm:ss');
+    sheet.getRange('E:E').setNumberFormat('0');
+    sheet.getRange('H:I').setNumberFormat('dd/MM/yyyy HH:mm:ss');
+    sheet.getRange('J:J').setNumberFormat('0');
+    sheet.getRange(1, 1, 1, headerCount).setFontWeight('bold');
+  } catch (err) {
+    // Formatting should never block the flow.
+  }
 }
 
 
