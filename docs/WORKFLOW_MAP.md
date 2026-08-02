@@ -190,7 +190,7 @@ Perubahan kontrak terbaru:
 - `Store Name` operational bersumber dari `Raw Data.outlet_name`.
 - `B2B` MAIN dibatasi ke `id_business_partner_category_name = B2B Partnership`; SUB tidak rebuild B2B dan hanya update `Last Status` / `Service Center` pada row existing.
 - `Special Case` MAIN memasukkan semua claim yang punya flag, tanpa pruning status done/closed.
-- Service Center Extractor: Samsung Authorized by Unicom Pontianak/Samarinda/Banjarmasin diarahkan ke sheet `Samsung Exclusive`; Deltasindo Sorong/Office diarahkan ke sheet `Deltafone`.
+- Service Center Extractor memakai mapping canonical di kode, bukan tabel `Service Center Mapping` di Overview; Samsung Authorized by Unicom masuk `Samsung Exclusive`, Deltasindo masuk `Deltafone`, dan `EzCare` dipilih ke Farhan/Meindar berdasarkan Apple/non-Apple.
 
 ### Jika menambah status baru
 Minimal cek:

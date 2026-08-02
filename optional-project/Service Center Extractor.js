@@ -57,11 +57,36 @@ const CONFIG = {
   },
 
   DEST_SHEETS_TO_CLEAR: [
-    "Samsung Exclusive", "Unicom", "Sitcomtara", "Mitracare", "EzCare", "iBox", "GSI", "Andalas", "Klikcare", "J-Bros",
-    "MEA", "MMB", "MDP", "Deltafone", "Carlcare", "B-Store", "Multikom", "CV Berkah", "Rejeki Seluler", "Unmapped"
+    "iBox", "Mitracare", "Sitcomtara", "CV Berkah Athallah", "Rejeki Seluler", "EzCare", "GSI", "Andalas", "Carlcare", "Samsung Exclusive",
+    "Unicom", "Xiaomi Authorized", "B-Store", "CV Kayu Awet Sejahtera", "Deltafone", "GH Store", "J-Bros", "Klikcare", "Makmur Era Abadi", "Manado Mitra Bersama", "MDP", "Multikom", "Unmapped"
   ],
   VALID_PICS: new Set(["FARHAN", "MEILANI", "MEINDAR"]),
-  AUTO_MANAGED_DEST_SHEETS: new Set(["CV Berkah", "Rejeki Seluler", "EzCare", "GSI", "Deltafone"]),
+  AUTO_MANAGED_DEST_SHEETS: new Set(["CV Berkah Athallah", "Rejeki Seluler", "EzCare", "GSI", "Deltafone"]),
+  SERVICE_CENTER_MAPPING: Object.freeze([
+    Object.freeze({ name: "iBox", pic: "FARHAN" }),
+    Object.freeze({ name: "Mitracare", pic: "FARHAN" }),
+    Object.freeze({ name: "Sitcomtara", pic: "FARHAN" }),
+    Object.freeze({ name: "CV Berkah Athallah", pic: "FARHAN" }),
+    Object.freeze({ name: "Rejeki Seluler", pic: "FARHAN" }),
+    Object.freeze({ name: "EzCare", pic: "FARHAN" }),
+    Object.freeze({ name: "GSI", pic: "MEILANI" }),
+    Object.freeze({ name: "Andalas", pic: "MEILANI" }),
+    Object.freeze({ name: "Carlcare", pic: "MEILANI" }),
+    Object.freeze({ name: "Samsung Exclusive", pic: "MEILANI" }),
+    Object.freeze({ name: "Unicom", pic: "MEILANI" }),
+    Object.freeze({ name: "Xiaomi Authorized", pic: "MEILANI" }),
+    Object.freeze({ name: "B-Store", pic: "MEINDAR" }),
+    Object.freeze({ name: "CV Kayu Awet Sejahtera", pic: "MEINDAR" }),
+    Object.freeze({ name: "Deltafone", pic: "MEINDAR" }),
+    Object.freeze({ name: "EzCare", pic: "MEINDAR" }),
+    Object.freeze({ name: "GH Store", pic: "MEINDAR" }),
+    Object.freeze({ name: "J-Bros", pic: "MEINDAR" }),
+    Object.freeze({ name: "Klikcare", pic: "MEINDAR" }),
+    Object.freeze({ name: "Makmur Era Abadi", pic: "MEINDAR" }),
+    Object.freeze({ name: "Manado Mitra Bersama", pic: "MEINDAR" }),
+    Object.freeze({ name: "MDP", pic: "MEINDAR" }),
+    Object.freeze({ name: "Multikom", pic: "MEINDAR" }),
+  ]),
   PHASES: Object.freeze({
     START: "START",
     MIDDLE: "MIDDLE",
@@ -172,15 +197,19 @@ const CONFIG = {
     { sheet: "Andalas", tokens: ["andalas"] },
     { sheet: "Klikcare", tokens: ["klikcare"] },
     { sheet: "J-Bros", tokens: ["j bros", "jbros", "j-bros"] },
-    { sheet: "MEA", tokens: ["makmur era abadi"], regex: /\bmea\b/ },
-    { sheet: "MMB", tokens: ["manado mitra bersama"], regex: /\bmmb\b/ },
+    { sheet: "Makmur Era Abadi", tokens: ["makmur era abadi"], regex: /\bmea\b/ },
+    { sheet: "Manado Mitra Bersama", tokens: ["manado mitra bersama"], regex: /\bmmb\b/ },
     { sheet: "MDP", regex: /\bmdp\b/ },
     { sheet: "Deltafone", tokens: ["deltasindo"] },
-    { sheet: "Samsung Exclusive", tokens: ["samsung authorized by unicom", "samsung authorized service centre by unicom", "samsung authorized service center by unicom"] },
-    { sheet: "Unicom", tokens: ["unicom", "xiaomi", "samsung"] },
+    { sheet: "Samsung Exclusive", tokens: ["samsung exclusive", "samsung authorized by unicom", "samsung authorized service centre by unicom", "samsung authorized service center by unicom"] },
+    { sheet: "Xiaomi Authorized", tokens: ["xiaomi authorized", "xiaomi"] },
+    { sheet: "Unicom", tokens: ["unicom"] },
     { sheet: "EzCare", tokens: ["ezcare", "ez care"] },
     { sheet: "Carlcare", tokens: ["carlcare"] },
     { sheet: "B-Store", tokens: ["b store", "b-store", "bstor"] },
+    { sheet: "CV Berkah Athallah", tokens: ["cv berkah athallah", "cv berkah"] },
+    { sheet: "CV Kayu Awet Sejahtera", tokens: ["cv kayu awet sejahtera", "kayu awet sejahtera"] },
+    { sheet: "GH Store", tokens: ["gh store"] },
   ],
 
   BRANCH_BY_DEST: {
@@ -690,61 +719,20 @@ function _readRunControls_(srcSS) {
 }
 
 function _readServiceCenterMapping_(srcSS, selectedPic) {
-  var overview = srcSS.getSheetByName(CONFIG.OVERVIEW_SHEET);
-  if (!overview) throw new Error("Overview sheet not found: " + CONFIG.OVERVIEW_SHEET);
-
-  var values = overview.getDataRange().getValues();
-  if (!values || !values.length) throw new Error("Overview is empty; mapping table not found.");
-
-  var headerRow = -1;
-  var idxName = -1;
-  var idxPic = -1;
-
-  for (var r = 0; r < values.length; r++) {
-    var row = values[r] || [];
-    for (var c = 0; c < row.length; c++) {
-      var v = _norm_(row[c]);
-      if (v !== "name of service center") continue;
-      headerRow = r;
-      idxName = c;
-      break;
-    }
-    if (headerRow < 0) continue;
-    // find PIC on same row
-    var hRow = values[headerRow] || [];
-    for (var c2 = 0; c2 < hRow.length; c2++) {
-      if (_norm_(hRow[c2]) === "pic") { idxPic = c2; break; }
-    }
-    break;
-  }
-
-  if (headerRow < 0 || idxName < 0 || idxPic < 0) {
-    throw new Error("Service Center mapping header not found (expected: Name of Service Center + PIC).");
-  }
-
+  var rows = CONFIG.SERVICE_CENTER_MAPPING || [];
+  var selected = String(selectedPic || "").trim().toUpperCase();
   var out = [];
-  for (var rr = headerRow + 1; rr < values.length; rr++) {
-    var rawName = String((values[rr] && values[rr][idxName]) || "").trim();
-    var rawPic = String((values[rr] && values[rr][idxPic]) || "").trim().toUpperCase();
-    if (!rawName && !rawPic) continue;
-    if (!rawName || !rawPic) continue;
-    if (!CONFIG.VALID_PICS.has(rawPic)) continue;
 
-    var normalizedName = _norm_(rawName);
-    var compactName = _compactNorm_(rawName);
-    if (normalizedName === "gsi" || compactName.indexOf("gsi") >= 0) {
-      rawName = "GSI";
-      rawPic = "MEILANI";
-    } else if (normalizedName.indexOf("deltasindo") >= 0 || normalizedName.indexOf("deltafone") >= 0 || compactName.indexOf("deltasindo") >= 0 || compactName.indexOf("deltafone") >= 0) {
-      rawName = "Deltafone";
-      rawPic = "MEINDAR";
-    }
-    if (selectedPic && rawPic !== selectedPic) continue;
-    out.push({ name: rawName, pic: rawPic });
+  for (var i = 0; i < rows.length; i++) {
+    var name = String((rows[i] && rows[i].name) || "").trim();
+    var pic = String((rows[i] && rows[i].pic) || "").trim().toUpperCase();
+    if (!name || !CONFIG.VALID_PICS.has(pic)) continue;
+    if (selected && pic !== selected) continue;
+    out.push({ name: name, pic: pic });
   }
 
   if (!out.length) {
-    throw new Error("No mapping rows found for selected PIC filter: " + (selectedPic || "ALL"));
+    throw new Error("No service center mapping configured for selected PIC filter: " + (selected || "ALL"));
   }
 
   return out;
@@ -1821,18 +1809,47 @@ function _resolveDestByMapping_(ctx, serviceCenterName) {
     }
   }
 
+  if (best) {
+    return {
+      sheetName: best,
+      pic: bestPic,
+      isMapped: true,
+    };
+  }
+
+  var routedSheet = _resolveDestSheetName_(serviceCenterName);
+  if (routedSheet && routedSheet !== CONFIG.UNMAPPED_SHEET_NAME) {
+    return {
+      sheetName: routedSheet,
+      pic: _findMappingPicByName_(mappingRows, routedSheet),
+      isMapped: true,
+    };
+  }
+
   return {
-    sheetName: best || CONFIG.UNMAPPED_SHEET_NAME,
-    pic: bestPic,
-    isMapped: !!best,
+    sheetName: CONFIG.UNMAPPED_SHEET_NAME,
+    pic: "",
+    isMapped: false,
   };
+}
+
+function _findMappingPicByName_(mappingRows, sheetName) {
+  var target = _compactNorm_(sheetName);
+  if (!target) return "";
+  for (var i = 0; i < (mappingRows || []).length; i++) {
+    var name = String((mappingRows[i] && mappingRows[i].name) || "").trim();
+    if (_compactNorm_(name) === target) {
+      return String((mappingRows[i] && mappingRows[i].pic) || "").trim().toUpperCase();
+    }
+  }
+  return "";
 }
 
 function _resolveSpecialDestination_(compactSc) {
   var sc = String(compactSc || "");
   if (sc.indexOf("gsi") >= 0) return { sheetName: "GSI", pic: "MEILANI" };
   if (sc.indexOf("deltasindo") >= 0 || sc.indexOf("deltafone") >= 0) return { sheetName: "Deltafone", pic: "MEINDAR" };
-  if (sc.indexOf("cvberkah") >= 0) return { sheetName: "CV Berkah", pic: "FARHAN" };
+  if (sc.indexOf("cvberkah") >= 0) return { sheetName: "CV Berkah Athallah", pic: "FARHAN" };
   if (sc.indexOf("rejekiseluler") >= 0 || sc.indexOf("rejekiseluller") >= 0) return { sheetName: "Rejeki Seluler", pic: "FARHAN" };
   return null;
 }
