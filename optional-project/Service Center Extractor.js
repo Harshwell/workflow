@@ -1026,8 +1026,9 @@ function _collectEligibleRowsFromSource_(sheet, controls) {
     var eligibleByStartStatus = isStartSheet && allowStart && _isStartAllowedLastStatus_(lastStatus);
     var eligibleByMiddle = isScUniverseSheet && allowMiddle && _isMiddleAllowedLastStatus_(lastStatus);
     var eligibleByFinish = (isScUniverseSheet || isFinishSheet) && allowFinish && _isFinishAllowedLastStatus_(lastStatus);
+    var forceUnmappedByLastStatus = !_isMappedLastStatus_(lastStatus);
 
-    if (!eligibleByStartStatus && !eligibleByMiddle && !eligibleByFinish) continue;
+    if (!eligibleByStartStatus && !eligibleByMiddle && !eligibleByFinish && !forceUnmappedByLastStatus) continue;
 
     var claimNumber = String(row[idx.claimNumber] || "").trim();
     var serviceCenterName = String(row[idx.scName] || "").trim();
@@ -1052,6 +1053,8 @@ function _collectEligibleRowsFromSource_(sheet, controls) {
       submissionDate: idx.submissionDate == null ? "" : row[idx.submissionDate],
       remarks: rawRemarks,
       dashboardUrl: _buildDashboardUrl_(claimNumber),
+      forceUnmapped: forceUnmappedByLastStatus,
+      unmappedReason: forceUnmappedByLastStatus ? "LAST_STATUS_NOT_MAPPED" : "",
     });
   }
 
@@ -1076,6 +1079,10 @@ function _resolvePhaseRank_(isStart, isMiddle, isFinish) {
   return 9;
 }
 
+function _isMappedLastStatus_(status) {
+  return _isStartAllowedLastStatus_(status) || _isMiddleAllowedLastStatus_(status) || _isFinishAllowedLastStatus_(status);
+}
+
 function _dedupeAndBucketRows_(ctx, rows) {
   var deduped = new Map();
   var skippedByPic = 0;
@@ -1088,7 +1095,7 @@ function _dedupeAndBucketRows_(ctx, rows) {
       skippedByPic += 1;
       continue;
     }
-    var requestedDestName = resolved.sheetName;
+    var requestedDestName = row.forceUnmapped ? CONFIG.UNMAPPED_SHEET_NAME : resolved.sheetName;
     var destSheet = _ensureDestSheet_(ctx, requestedDestName);
     var destName = destSheet.getName();
     var key = destName + "__" + String(row.claimNumber).trim().toUpperCase();
