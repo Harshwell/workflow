@@ -12,7 +12,7 @@
 const SC_MEILANI_CONFIG = Object.freeze({
   sourceSpreadsheetId: '1zRlYrSRssv9LVcPKEq90CmmvTRsZoN_TqfIg2pNufbc',
   destinationSpreadsheetId: '1dU9dt01Ld_ykMJWQxupvIHyLXV6ArnGeXCBV72q31lU',
-  scriptVersion: '2026-08-03-salvage-repair-upsert-log-1',
+  scriptVersion: '2026-08-03-salvage-repair-batch-upsert-log-3',
   menuName: 'SC Meilani',
   logSheetName: 'Log SC-Meilani',
   headerRow: 1,
@@ -450,64 +450,95 @@ function scMeilaniCollectRepairRecords_(sourceMeta, columnMap, allowedStatuses, 
 }
 
 function scMeilaniUpsertRepairRecords_(targetSheet, targetMeta, columnMap, targetIndex, records, ctx) {
-  scMeilaniLogStep_(ctx.destinationSpreadsheet, ctx.flowName, 'Upsert target rows', 'START', records.length, 'Writing valid Salvage Repair rows.', 'identifier=' + SC_MEILANI_CONFIG.repair.identifierHeader, ctx.startedAt);
+  scMeilaniLogStep_(ctx.destinationSpreadsheet, ctx.flowName, 'Upsert target rows', 'START', records.length, 'Preparing batch upsert for valid Salvage Repair rows.', 'identifier=' + SC_MEILANI_CONFIG.repair.identifierHeader, ctx.startedAt);
   if (!records.length) {
     scMeilaniLogStep_(ctx.destinationSpreadsheet, ctx.flowName, 'Upsert target rows', 'SKIPPED', 0, 'No valid records to write.', '', ctx.startedAt);
     return { updated: 0, appended: 0, failed: 0 };
   }
 
   const lastColumn = columnMap.targetLastColumn;
+  const dataStartRow = targetMeta.headerRowNumber + 1;
+  const existingRowCount = Math.max(targetSheet.getLastRow() - targetMeta.headerRowNumber, 0);
+  let existingValues = [];
+  if (existingRowCount > 0) {
+    existingValues = targetSheet.getRange(dataStartRow, 1, existingRowCount, lastColumn).getValues();
+  }
+
   const appendRows = [];
   let updated = 0;
   let failed = 0;
 
   records.forEach(function (record) {
-    const targetRow = targetIndex.rowByKey[record.claimKey];
-    if (!targetRow) {
-      const newRow = scMeilaniBlankArray_(lastColumn);
-      scMeilaniApplyRepairValuesToRow_(newRow, columnMap, record.values);
-      appendRows.push({ row: newRow, record: record });
-      return;
-    }
-
     try {
-      const current = targetSheet.getRange(targetRow, 1, 1, lastColumn).getValues()[0];
-      scMeilaniApplyRepairValuesToRow_(current, columnMap, record.values);
-      targetSheet.getRange(targetRow, 1, 1, lastColumn).setValues([current]);
+      const targetRow = targetIndex.rowByKey[record.claimKey];
+      if (!targetRow) {
+        const newRow = scMeilaniBlankArray_(lastColumn);
+        scMeilaniApplyRepairValuesToRow_(newRow, columnMap, record.values);
+        appendRows.push({ row: newRow, record: record });
+        return;
+      }
+
+      const rowIndex = targetRow - dataStartRow;
+      if (rowIndex < 0 || rowIndex >= existingValues.length) {
+        failed += 1;
+        scMeilaniLogStep_(ctx.destinationSpreadsheet, ctx.flowName, 'Upsert target rows', 'FAILED', 1, 'Indexed target row is outside loaded range.', 'sourceRow=' + record.sourceRowNumber + ', claim=' + record.claimValue + ', targetRow=' + targetRow + ', loadedRows=' + existingValues.length, ctx.startedAt);
+        return;
+      }
+
+      scMeilaniApplyRepairValuesToRow_(existingValues[rowIndex], columnMap, record.values);
       updated += 1;
     } catch (err) {
       failed += 1;
-      scMeilaniLogStep_(ctx.destinationSpreadsheet, ctx.flowName, 'Upsert target rows', 'FAILED', 1, 'Failed updating existing row.', 'sourceRow=' + record.sourceRowNumber + ', claim=' + record.claimValue + ', targetRow=' + targetRow + ', error=' + scMeilaniErrorMessage_(err), ctx.startedAt);
+      scMeilaniLogStep_(ctx.destinationSpreadsheet, ctx.flowName, 'Upsert target rows', 'FAILED', 1, 'Failed preparing row for batch write.', 'sourceRow=' + record.sourceRowNumber + ', claim=' + record.claimValue + ', error=' + scMeilaniErrorMessage_(err), ctx.startedAt);
     }
   });
+
+  if (updated > 0) {
+    try {
+      scMeilaniLogStep_(ctx.destinationSpreadsheet, ctx.flowName, 'Batch update existing rows', 'START', updated, 'Writing existing target rows in one batch.', 'loadedRows=' + existingValues.length + ', columns=' + lastColumn, ctx.startedAt);
+      scMeilaniWriteExistingRepairColumns_(targetSheet, dataStartRow, existingValues, columnMap);
+      scMeilaniLogStep_(ctx.destinationSpreadsheet, ctx.flowName, 'Batch update existing rows', 'SUCCESS', updated, 'Existing rows updated.', '', ctx.startedAt);
+    } catch (err) {
+      failed += updated;
+      scMeilaniLogStep_(ctx.destinationSpreadsheet, ctx.flowName, 'Batch update existing rows', 'FAILED', updated, 'Batch update failed.', scMeilaniErrorMessage_(err), ctx.startedAt);
+      updated = 0;
+    }
+  } else {
+    scMeilaniLogStep_(ctx.destinationSpreadsheet, ctx.flowName, 'Batch update existing rows', 'SKIPPED', 0, 'No existing target rows needed update.', '', ctx.startedAt);
+  }
 
   let appended = 0;
   if (appendRows.length) {
     const startRow = Math.max(targetSheet.getLastRow() + 1, targetMeta.headerRowNumber + 1);
     scMeilaniEnsureRows_(targetSheet, startRow + appendRows.length - 1);
     try {
+      scMeilaniLogStep_(ctx.destinationSpreadsheet, ctx.flowName, 'Batch append new rows', 'START', appendRows.length, 'Appending new target rows in one batch.', 'startRow=' + startRow + ', columns=' + lastColumn, ctx.startedAt);
       targetSheet.getRange(startRow, 1, appendRows.length, lastColumn).setValues(appendRows.map(function (item) { return item.row; }));
       appended = appendRows.length;
+      scMeilaniLogStep_(ctx.destinationSpreadsheet, ctx.flowName, 'Batch append new rows', 'SUCCESS', appended, 'New rows appended.', '', ctx.startedAt);
     } catch (err) {
-      scMeilaniLogStep_(ctx.destinationSpreadsheet, ctx.flowName, 'Upsert target rows', 'FAILED', appendRows.length, 'Batch append failed; retrying per row.', scMeilaniErrorMessage_(err), ctx.startedAt);
-      appendRows.forEach(function (item) {
-        try {
-          const row = Math.max(targetSheet.getLastRow() + 1, targetMeta.headerRowNumber + 1);
-          scMeilaniEnsureRows_(targetSheet, row);
-          targetSheet.getRange(row, 1, 1, lastColumn).setValues([item.row]);
-          appended += 1;
-        } catch (rowErr) {
-          failed += 1;
-          scMeilaniLogStep_(ctx.destinationSpreadsheet, ctx.flowName, 'Upsert target rows', 'FAILED', 1, 'Failed appending row.', 'sourceRow=' + item.record.sourceRowNumber + ', claim=' + item.record.claimValue + ', error=' + scMeilaniErrorMessage_(rowErr), ctx.startedAt);
-        }
-      });
+      failed += appendRows.length;
+      scMeilaniLogStep_(ctx.destinationSpreadsheet, ctx.flowName, 'Batch append new rows', 'FAILED', appendRows.length, 'Batch append failed.', scMeilaniErrorMessage_(err), ctx.startedAt);
     }
+  } else {
+    scMeilaniLogStep_(ctx.destinationSpreadsheet, ctx.flowName, 'Batch append new rows', 'SKIPPED', 0, 'No new rows to append.', '', ctx.startedAt);
   }
 
   scMeilaniLogStep_(ctx.destinationSpreadsheet, ctx.flowName, 'Upsert target rows', failed ? 'FAILED' : 'SUCCESS', updated + appended, 'Upsert completed.', 'updated=' + updated + ', appended=' + appended + ', failed=' + failed, ctx.startedAt);
   return { updated: updated, appended: appended, failed: failed };
 }
 
+function scMeilaniWriteExistingRepairColumns_(targetSheet, dataStartRow, existingValues, columnMap) {
+  if (!existingValues.length) return;
+  SC_MEILANI_CONFIG.outputHeaders.forEach(function (header) {
+    const targetIdx = columnMap.target[header];
+    if (targetIdx == null) return;
+    const columnValues = existingValues.map(function (row) {
+      return [row[targetIdx]];
+    });
+    targetSheet.getRange(dataStartRow, targetIdx + 1, existingValues.length, 1).setValues(columnValues);
+  });
+}
 function scMeilaniVerifyRepairResult_(targetSheet, targetMeta, identifierHeader, records) {
   const identifierCol = scMeilaniRequireHeader_(targetMeta.headerMap, identifierHeader) + 1;
   const rowCount = Math.max(targetSheet.getLastRow() - targetMeta.headerRowNumber, 0);
@@ -868,6 +899,7 @@ function scMeilaniLogStep_(spreadsheet, flowName, processName, status, count, me
     endedAt,
     startedAt ? Math.round((endedAt.getTime() - startedAt.getTime()) / 1000) : '',
   ]);
+  scMeilaniFlush_();
 }
 
 function scMeilaniWriteLogHeader_(sheet) {
@@ -890,6 +922,14 @@ function scMeilaniWriteLogHeader_(sheet) {
   sheet.setFrozenRows(1);
 }
 
+
+function scMeilaniFlush_() {
+  try {
+    SpreadsheetApp.flush();
+  } catch (err) {
+    // Best-effort only; logging must not fail the main flow.
+  }
+}
 function scMeilaniNormalizeLogStatus_(status) {
   const value = String(status || '').trim().toUpperCase();
   if (value === 'START' || value === 'SUCCESS' || value === 'SKIPPED' || value === 'FAILED') return value;
