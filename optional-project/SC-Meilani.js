@@ -1,7 +1,7 @@
 /**
  * SC-Meilani
  *
- * Manual Google Sheets menu for mirroring filtered Salvage and Salvage Repair data
+ * Manual Google Sheets menu for mirroring Salvage data and upserting Salvage Repair data
  * from source workbook into the active destination workbook.
  *
  * Menu:
@@ -12,7 +12,7 @@
 const SC_MEILANI_CONFIG = Object.freeze({
   sourceSpreadsheetId: '1zRlYrSRssv9LVcPKEq90CmmvTRsZoN_TqfIg2pNufbc',
   destinationSpreadsheetId: '1dU9dt01Ld_ykMJWQxupvIHyLXV6ArnGeXCBV72q31lU',
-  scriptVersion: '2026-07-30-safety-4',
+  scriptVersion: '2026-08-03-salvage-repair-upsert-log-1',
   menuName: 'SC Meilani',
   logSheetName: 'Log SC-Meilani',
   headerRow: 1,
@@ -40,6 +40,7 @@ const SC_MEILANI_CONFIG = Object.freeze({
   repair: Object.freeze({
     sourceSheetName: 'Raw NEW',
     targetSheetName: 'Pickup Sparepart Repair (Salvage)',
+    identifierHeader: 'Claim Number',
     allowedLastStatuses: Object.freeze([
       'SERVICE_CENTER_CLAIM_DONE_REPAIR_WALKIN',
       'SERVICE_CENTER_CLAIM_WAITING_WALKIN_FINISH',
@@ -69,23 +70,25 @@ const SC_MEILANI_CONFIG = Object.freeze({
     'Last Status',
   ]),
   headerAliases: Object.freeze({
-    'Submission Date': Object.freeze(['Submission Date', 'Submitted Datetime', 'Submitted Date', 'claim_submitted_at', 'created_at']),
-    'Submission Month': Object.freeze(['Submission Month', 'Submitted Month', 'Month']),
+    'Submission Date': Object.freeze(['Submission Date', 'Submitted Datetime', 'Submitted Date', 'Claim Submitted Datetime', 'claim_submitted_datetime', 'claim_submission_date', 'claim_submitted_at', 'created_at']),
+    'Submission Month': Object.freeze(['Submission Month', 'Submitted Month', 'Submission by Month', 'Month', 'claim_submission_month', 'submitted_month']),
     'Claim Number': Object.freeze(['Claim Number', 'Claim No', 'Claim', 'claim_number']),
-    'DB Link': Object.freeze(['DB Link', 'Dashboard Link', 'Link']),
-    'Approval Date': Object.freeze(['Approval Date', 'Approved Date', 'Insurance Approval Date', 'approval_date']),
-    'Branch': Object.freeze(['Branch', 'Service Center Branch', 'SC Branch', 'branch']),
-    'Service Center': Object.freeze(['Service Center', 'Service Center Name', 'SC Name', 'SC', 'service_center_name']),
-    'Insurance': Object.freeze(['Insurance', 'Insurance Name', 'insurance_name']),
-    'Sum Insured': Object.freeze(['Sum Insured', 'SI', 'sum_insured']),
-    'Device Brand': Object.freeze(['Device Brand', 'Brand', 'device_brand']),
-    'Device Type': Object.freeze(['Device Type', 'Type', 'device_type']),
-    'IMEI/SN': Object.freeze(['IMEI/SN', 'IMEI', 'SN', 'Serial Number', 'IMEI SN', 'imei', 'serial_number']),
+    'DB Link': Object.freeze(['DB Link', 'Dashboard Link', 'Link', 'dashboard_link', 'db_link', 'dblink', 'database_link']),
+    'Approval Date': Object.freeze(['Approval Date', 'Approved Date', 'Insurance Approval Date', 'approval_date', 'claim_approved_at', 'claim_approval_date']),
+    'Branch': Object.freeze(['Branch', 'Service Center Branch', 'SC Branch', 'branch', 'service_center_branch']),
+    'Service Center': Object.freeze(['Service Center', 'Service Center Name', 'SC Name', 'SC', 'service_center_name', 'service_center']),
+    'Insurance': Object.freeze(['Insurance', 'Insurance Name', 'insurance_name', 'insurer_name']),
+    'Sum Insured': Object.freeze(['Sum Insured', 'SI', 'sum_insured', 'insured_value']),
+    'Device Brand': Object.freeze(['Device Brand', 'Brand', 'device_brand', 'brand_name']),
+    'Device Type': Object.freeze(['Device Type', 'Type', 'device_type', 'device_model']),
+    'IMEI/SN': Object.freeze(['IMEI/SN', 'IMEI', 'SN', 'Serial Number', 'IMEI SN', 'imei', 'imei_number', 'serial_number']),
     'Last Status': Object.freeze(['Last Status', 'Status Terakhir', 'claim_last_status_name', 'last_status']),
     'YoS': Object.freeze(['YoS', 'YOS', 'Year of Salvage', 'Year']),
     'Remarks': Object.freeze(['Remarks', 'Remark', 'Notes', 'Note']),
   }),
 });
+
+let SC_MEILANI_PRESERVE_LOG_ON_NEXT_RUN_ = false;
 
 function onOpen() {
   SpreadsheetApp.getUi()
@@ -98,8 +101,14 @@ function onOpen() {
 }
 
 function runSCMeilaniAll() {
-  runSCMeilaniSalvage();
-  runSCMeilaniSalvageRepair();
+  SC_MEILANI_PRESERVE_LOG_ON_NEXT_RUN_ = false;
+  try {
+    runSCMeilaniSalvage();
+    SC_MEILANI_PRESERVE_LOG_ON_NEXT_RUN_ = true;
+    runSCMeilaniSalvageRepair();
+  } finally {
+    SC_MEILANI_PRESERVE_LOG_ON_NEXT_RUN_ = false;
+  }
 }
 
 function runSCMeilaniSalvage() {
@@ -133,56 +142,89 @@ function runSCMeilaniSalvage() {
 function runSCMeilaniSalvageRepair() {
   return scMeilaniWithLock_('SALVAGE_REPAIR', function (ctx) {
     const cfg = SC_MEILANI_CONFIG;
+    scMeilaniLogStep_(ctx.destinationSpreadsheet, ctx.flowName, 'Ensure source/target sheets', 'START', 0, 'Checking required sheets.', 'source="' + cfg.repair.sourceSheetName + '", target="' + cfg.repair.targetSheetName + '"', ctx.startedAt);
     const sourceSheet = scMeilaniRequireSheet_(ctx.sourceSpreadsheet, cfg.repair.sourceSheetName);
     const targetSheet = scMeilaniRequireSheet_(ctx.destinationSpreadsheet, cfg.repair.targetSheetName);
-    const sourceMeta = scMeilaniReadSourceMeta_(sourceSheet, ['Claim Number', 'Branch', 'Last Status']);
+    scMeilaniLogStep_(ctx.destinationSpreadsheet, ctx.flowName, 'Ensure source/target sheets', 'SUCCESS', 2, 'Required sheets found.', 'sourceId=' + ctx.sourceSpreadsheet.getId() + ', destinationId=' + ctx.destinationSpreadsheet.getId(), ctx.startedAt);
+
+    scMeilaniLogStep_(ctx.destinationSpreadsheet, ctx.flowName, 'Read and validate headers', 'START', 0, 'Reading source and target headers.', '', ctx.startedAt);
+    const sourceMeta = scMeilaniReadSourceMeta_(sourceSheet, [cfg.repair.identifierHeader, 'Branch', 'Last Status']);
     const targetMeta = scMeilaniReadTargetMeta_(targetSheet);
-    const branchCol = scMeilaniRequireSourceColumn_(sourceMeta, 'Branch', cfg.fallbackColumns.Branch);
-    const lastStatusCol = scMeilaniRequireSourceColumn_(sourceMeta, 'Last Status');
+    const columnMap = scMeilaniResolveRepairColumnMap_(sourceMeta, targetMeta);
+    scMeilaniLogStep_(ctx.destinationSpreadsheet, ctx.flowName, 'Read and validate headers', 'SUCCESS', cfg.outputHeaders.length, 'Header validation passed.', 'sourceHeaderRow=' + sourceMeta.headerRowNumber + ', targetHeaderRow=' + targetMeta.headerRowNumber, ctx.startedAt);
+
     const allowedStatuses = scMeilaniToKeySet_(cfg.repair.allowedLastStatuses);
+    const targetIndex = scMeilaniBuildTargetIdentifierIndex_(targetSheet, targetMeta, cfg.repair.identifierHeader);
+    scMeilaniLogStep_(ctx.destinationSpreadsheet, ctx.flowName, 'Scan existing target', 'SUCCESS', targetIndex.uniqueCount, 'Existing target identifiers indexed.', 'duplicateTarget=' + targetIndex.duplicateCount + ', duplicateSamples=' + targetIndex.duplicateSamples.join(' | '), ctx.startedAt);
 
-    const rowNumbers = scMeilaniCollectRowNumbers_(sourceMeta, function (row) {
-      return scMeilaniIsAllowedBranch_(row[branchCol])
-        && allowedStatuses[scMeilaniStatusKey_(row[lastStatusCol])] === true;
-    });
+    const sourceRows = Math.max(sourceMeta.values.length - sourceMeta.headerRowNumber, 0);
+    scMeilaniLogStep_(ctx.destinationSpreadsheet, ctx.flowName, 'Filter Salvage Repair source', 'START', sourceRows, 'Filtering Raw NEW rows by branch and repair last status.', 'allowedBranches=' + cfg.allowedBranches.join(', ') + ', allowedStatuses=' + cfg.repair.allowedLastStatuses.length, ctx.startedAt);
+    const sourceSnapshot = scMeilaniCollectRepairRecords_(sourceMeta, columnMap, allowedStatuses, targetIndex);
+    scMeilaniWriteReasonLogs_(ctx, 'Filter Salvage Repair source', 'SKIPPED', sourceSnapshot.skippedByReason);
+    scMeilaniWriteReasonLogs_(ctx, 'Filter Salvage Repair source', 'FAILED', sourceSnapshot.failedByReason);
+    scMeilaniLogStep_(ctx.destinationSpreadsheet, ctx.flowName, 'Filter Salvage Repair source', 'SUCCESS', sourceSnapshot.validRecords.length, 'Filtering completed.', 'sourceRows=' + sourceRows + ', valid=' + sourceSnapshot.validRecords.length + ', skipped=' + sourceSnapshot.skippedCount + ', failed=' + sourceSnapshot.failedCount, ctx.startedAt);
 
-    const written = scMeilaniMirrorRows_(sourceSheet, sourceMeta, targetSheet, targetMeta, rowNumbers, cfg.outputHeaders);
-    scMeilaniToast_(ctx.destinationSpreadsheet, 'Salvage Repair selesai. ' + written + ' row ditulis.');
-    return written;
+    const writeResult = scMeilaniUpsertRepairRecords_(targetSheet, targetMeta, columnMap, targetIndex, sourceSnapshot.validRecords, ctx);
+    const verify = scMeilaniVerifyRepairResult_(targetSheet, targetMeta, cfg.repair.identifierHeader, sourceSnapshot.validRecords);
+    scMeilaniLogStep_(ctx.destinationSpreadsheet, ctx.flowName, 'Post-write verification', verify.missingClaims.length || verify.duplicateCount ? 'FAILED' : 'SUCCESS', verify.matchedSourceClaims, 'Target verification completed.', 'targetClaims=' + verify.targetClaims + ', duplicateTargetAfter=' + verify.duplicateCount + ', missingAfter=' + verify.missingClaims.join(' | '), ctx.startedAt);
+
+    const summary = {
+      sourceRows: sourceRows,
+      valid: sourceSnapshot.validRecords.length,
+      skipped: sourceSnapshot.skippedCount,
+      updated: writeResult.updated,
+      appended: writeResult.appended,
+      failed: sourceSnapshot.failedCount + writeResult.failed + verify.missingClaims.length,
+      duplicateTargetSkipped: sourceSnapshot.duplicateTargetSkipped,
+      targetSheetName: cfg.repair.targetSheetName,
+    };
+
+    scMeilaniToast_(ctx.destinationSpreadsheet, 'Salvage Repair selesai. Valid ' + summary.valid + ', update ' + summary.updated + ', append ' + summary.appended + ', skip ' + summary.skipped + ', failed ' + summary.failed + '.');
+    return summary;
   });
 }
-
 function scMeilaniWithLock_(flowName, runner) {
   const lock = LockService.getScriptLock();
   if (!lock.tryLock(30000)) {
     throw new Error('Run dibatalkan: proses lain masih berjalan.');
   }
 
-  scMeilaniValidateRuntime_();
   const startedAt = new Date();
-  const destinationSpreadsheet = SpreadsheetApp.openById(SC_MEILANI_CONFIG.destinationSpreadsheetId);
-  const sourceSpreadsheet = SpreadsheetApp.openById(SC_MEILANI_CONFIG.sourceSpreadsheetId);
-  const ctx = {
-    flowName: flowName,
-    destinationSpreadsheet: destinationSpreadsheet,
-    sourceSpreadsheet: sourceSpreadsheet,
-    startedAt: startedAt,
-  };
+  let destinationSpreadsheet = null;
 
   try {
+    scMeilaniValidateRuntime_();
+    destinationSpreadsheet = SpreadsheetApp.openById(SC_MEILANI_CONFIG.destinationSpreadsheetId);
+    const preservedLog = SC_MEILANI_PRESERVE_LOG_ON_NEXT_RUN_;
+    if (preservedLog) {
+      SC_MEILANI_PRESERVE_LOG_ON_NEXT_RUN_ = false;
+    } else {
+      scMeilaniResetLog_(destinationSpreadsheet);
+    }
+    scMeilaniLogStep_(destinationSpreadsheet, flowName, 'Runtime bootstrap', 'START', 0, 'Run started.', 'scriptVersion=' + SC_MEILANI_CONFIG.scriptVersion + ', logMode=' + (preservedLog ? 'PRESERVED_RUN_ALL' : 'RESET'), startedAt);
+
+    const sourceSpreadsheet = SpreadsheetApp.openById(SC_MEILANI_CONFIG.sourceSpreadsheetId);
+    const ctx = {
+      flowName: flowName,
+      destinationSpreadsheet: destinationSpreadsheet,
+      sourceSpreadsheet: sourceSpreadsheet,
+      startedAt: startedAt,
+    };
+
     scMeilaniToast_(destinationSpreadsheet, flowName + ' berjalan...');
     const result = runner(ctx);
-    scMeilaniLog_(destinationSpreadsheet, flowName, 'SUCCESS', startedAt, 'OK', JSON.stringify(result));
+    scMeilaniLogStep_(destinationSpreadsheet, flowName, 'Runtime completion', 'SUCCESS', scMeilaniResultCount_(result), 'Run completed.', JSON.stringify(result), startedAt);
     return result;
   } catch (err) {
-    scMeilaniLog_(destinationSpreadsheet, flowName, 'ERROR', startedAt, scMeilaniErrorMessage_(err), '');
-    scMeilaniToast_(destinationSpreadsheet, flowName + ' gagal: ' + scMeilaniErrorMessage_(err));
+    if (destinationSpreadsheet) {
+      scMeilaniLogStep_(destinationSpreadsheet, flowName, 'Runtime failure', 'FAILED', 0, 'Run failed.', scMeilaniErrorMessage_(err), startedAt);
+      scMeilaniToast_(destinationSpreadsheet, flowName + ' gagal: ' + scMeilaniErrorMessage_(err));
+    }
     throw err;
   } finally {
     lock.releaseLock();
   }
 }
-
 function scMeilaniValidateRuntime_() {
   if (!String(SC_MEILANI_CONFIG.sourceSpreadsheetId || '').trim()) {
     throw new Error('Source spreadsheet ID kosong.');
@@ -255,6 +297,310 @@ function scMeilaniMirrorRows_(sourceSheet, sourceMeta, targetSheet, targetMeta, 
   return sourceRowNumbers.length;
 }
 
+function scMeilaniResolveRepairColumnMap_(sourceMeta, targetMeta) {
+  const cfg = SC_MEILANI_CONFIG;
+  const source = {};
+  const target = {};
+  const missingSource = [];
+  const missingTarget = [];
+
+  cfg.outputHeaders.forEach(function (header) {
+    const targetIdx = scMeilaniFindHeaderIndex_(targetMeta.headerMap, header);
+    if (targetIdx == null) missingTarget.push(header);
+    target[header] = targetIdx;
+
+    const sourceIdx = scMeilaniFindHeaderIndex_(sourceMeta.headerMap, header);
+    if (sourceIdx == null && header !== 'Submission Month') missingSource.push(header);
+    source[header] = sourceIdx;
+  });
+
+  const identifierSource = scMeilaniRequireSourceColumn_(sourceMeta, cfg.repair.identifierHeader);
+  const branchSource = scMeilaniRequireSourceColumn_(sourceMeta, 'Branch', cfg.fallbackColumns.Branch);
+  const lastStatusSource = scMeilaniRequireSourceColumn_(sourceMeta, 'Last Status');
+  const identifierTarget = scMeilaniFindHeaderIndex_(targetMeta.headerMap, cfg.repair.identifierHeader);
+  if (identifierTarget == null) missingTarget.push(cfg.repair.identifierHeader);
+
+  if (missingSource.length) {
+    throw new Error('Header source Salvage Repair tidak lengkap di "' + sourceMeta.sheet.getName() + '" row ' + sourceMeta.headerRowNumber + ': ' + scMeilaniUnique_(missingSource).join(', ') + '. Header terbaca: ' + scMeilaniPreviewHeaders_(sourceMeta.headerValues));
+  }
+  if (missingTarget.length) {
+    throw new Error('Header target Salvage Repair tidak lengkap di "' + targetMeta.sheet.getName() + '" row ' + targetMeta.headerRowNumber + ': ' + scMeilaniUnique_(missingTarget).join(', ') + '. Header terbaca: ' + scMeilaniPreviewHeaders_(targetMeta.headerValues));
+  }
+
+  return {
+    source: source,
+    target: target,
+    identifierSource: identifierSource,
+    branchSource: branchSource,
+    lastStatusSource: lastStatusSource,
+    identifierTarget: identifierTarget,
+    targetLastColumn: Math.max(targetMeta.sheet.getLastColumn(), cfg.outputHeaders.length),
+  };
+}
+
+function scMeilaniBuildTargetIdentifierIndex_(targetSheet, targetMeta, identifierHeader) {
+  const identifierCol = scMeilaniRequireHeader_(targetMeta.headerMap, identifierHeader) + 1;
+  const startRow = targetMeta.headerRowNumber + 1;
+  const rowCount = Math.max(targetSheet.getLastRow() - targetMeta.headerRowNumber, 0);
+  const rowByKey = {};
+  const duplicateKeys = {};
+  const duplicateSamples = [];
+  let uniqueCount = 0;
+  let duplicateCount = 0;
+
+  if (rowCount > 0) {
+    const values = targetSheet.getRange(startRow, identifierCol, rowCount, 1).getValues();
+    values.forEach(function (item, index) {
+      const key = scMeilaniIdentifierKey_(item[0]);
+      if (!key) return;
+      const rowNumber = startRow + index;
+      if (rowByKey[key]) {
+        duplicateKeys[key] = true;
+        duplicateCount += 1;
+        if (duplicateSamples.length < 10) duplicateSamples.push(String(item[0]) + ' @ row ' + rowNumber + ' (first row ' + rowByKey[key] + ')');
+        return;
+      }
+      rowByKey[key] = rowNumber;
+      uniqueCount += 1;
+    });
+  }
+
+  return {
+    rowByKey: rowByKey,
+    duplicateKeys: duplicateKeys,
+    uniqueCount: uniqueCount,
+    duplicateCount: duplicateCount,
+    duplicateSamples: duplicateSamples,
+  };
+}
+
+function scMeilaniCollectRepairRecords_(sourceMeta, columnMap, allowedStatuses, targetIndex) {
+  const cfg = SC_MEILANI_CONFIG;
+  const records = [];
+  const seenSource = {};
+  const skippedByReason = {};
+  const failedByReason = {};
+  let skippedCount = 0;
+  let failedCount = 0;
+  let duplicateTargetSkipped = 0;
+
+  for (let r = sourceMeta.headerRowIndex + 1; r < sourceMeta.values.length; r++) {
+    const row = sourceMeta.values[r] || [];
+    const rowNumber = r + 1;
+    try {
+      const claimValue = row[columnMap.identifierSource];
+      const claimKey = scMeilaniIdentifierKey_(claimValue);
+      const branchValue = row[columnMap.branchSource];
+      const statusValue = row[columnMap.lastStatusSource];
+      const statusKey = scMeilaniStatusKey_(statusValue);
+
+      if (!claimKey) {
+        skippedCount += 1;
+        scMeilaniAddReason_(skippedByReason, 'Claim Number kosong', rowNumber, claimValue, 'Identifier wajib kosong.');
+        continue;
+      }
+      if (targetIndex.duplicateKeys[claimKey]) {
+        skippedCount += 1;
+        duplicateTargetSkipped += 1;
+        scMeilaniAddReason_(skippedByReason, 'Duplicate Claim Number di target', rowNumber, claimValue, 'Target punya duplicate identifier; update dilewati supaya tidak menulis ke row ambigu.');
+        continue;
+      }
+      if (seenSource[claimKey]) {
+        skippedCount += 1;
+        scMeilaniAddReason_(skippedByReason, 'Duplicate Claim Number di source', rowNumber, claimValue, 'Duplicate source; first row ' + seenSource[claimKey] + ' sudah dipakai.');
+        continue;
+      }
+      if (!scMeilaniIsAllowedBranch_(branchValue)) {
+        skippedCount += 1;
+        scMeilaniAddReason_(skippedByReason, 'Branch bukan scope Salvage Repair', rowNumber, claimValue, 'Branch="' + String(branchValue || '') + '".');
+        continue;
+      }
+      if (allowedStatuses[statusKey] !== true) {
+        skippedCount += 1;
+        scMeilaniAddReason_(skippedByReason, 'Last Status bukan Salvage Repair', rowNumber, claimValue, 'Last Status="' + String(statusValue || '') + '".');
+        continue;
+      }
+
+      seenSource[claimKey] = rowNumber;
+      records.push({
+        claimKey: claimKey,
+        claimValue: claimValue,
+        sourceRowNumber: rowNumber,
+        values: cfg.outputHeaders.map(function (header) {
+          if (header === 'Submission Month' && columnMap.source[header] == null) {
+            return scMeilaniDeriveSubmissionMonth_(row[columnMap.source['Submission Date']]);
+          }
+          return row[columnMap.source[header]];
+        }),
+      });
+    } catch (err) {
+      failedCount += 1;
+      scMeilaniAddReason_(failedByReason, 'Row processing error', rowNumber, row[columnMap.identifierSource], scMeilaniErrorMessage_(err));
+    }
+  }
+
+  return {
+    validRecords: records,
+    skippedByReason: skippedByReason,
+    failedByReason: failedByReason,
+    skippedCount: skippedCount,
+    failedCount: failedCount,
+    duplicateTargetSkipped: duplicateTargetSkipped,
+  };
+}
+
+function scMeilaniUpsertRepairRecords_(targetSheet, targetMeta, columnMap, targetIndex, records, ctx) {
+  scMeilaniLogStep_(ctx.destinationSpreadsheet, ctx.flowName, 'Upsert target rows', 'START', records.length, 'Writing valid Salvage Repair rows.', 'identifier=' + SC_MEILANI_CONFIG.repair.identifierHeader, ctx.startedAt);
+  if (!records.length) {
+    scMeilaniLogStep_(ctx.destinationSpreadsheet, ctx.flowName, 'Upsert target rows', 'SKIPPED', 0, 'No valid records to write.', '', ctx.startedAt);
+    return { updated: 0, appended: 0, failed: 0 };
+  }
+
+  const lastColumn = columnMap.targetLastColumn;
+  const appendRows = [];
+  let updated = 0;
+  let failed = 0;
+
+  records.forEach(function (record) {
+    const targetRow = targetIndex.rowByKey[record.claimKey];
+    if (!targetRow) {
+      const newRow = scMeilaniBlankArray_(lastColumn);
+      scMeilaniApplyRepairValuesToRow_(newRow, columnMap, record.values);
+      appendRows.push({ row: newRow, record: record });
+      return;
+    }
+
+    try {
+      const current = targetSheet.getRange(targetRow, 1, 1, lastColumn).getValues()[0];
+      scMeilaniApplyRepairValuesToRow_(current, columnMap, record.values);
+      targetSheet.getRange(targetRow, 1, 1, lastColumn).setValues([current]);
+      updated += 1;
+    } catch (err) {
+      failed += 1;
+      scMeilaniLogStep_(ctx.destinationSpreadsheet, ctx.flowName, 'Upsert target rows', 'FAILED', 1, 'Failed updating existing row.', 'sourceRow=' + record.sourceRowNumber + ', claim=' + record.claimValue + ', targetRow=' + targetRow + ', error=' + scMeilaniErrorMessage_(err), ctx.startedAt);
+    }
+  });
+
+  let appended = 0;
+  if (appendRows.length) {
+    const startRow = Math.max(targetSheet.getLastRow() + 1, targetMeta.headerRowNumber + 1);
+    scMeilaniEnsureRows_(targetSheet, startRow + appendRows.length - 1);
+    try {
+      targetSheet.getRange(startRow, 1, appendRows.length, lastColumn).setValues(appendRows.map(function (item) { return item.row; }));
+      appended = appendRows.length;
+    } catch (err) {
+      scMeilaniLogStep_(ctx.destinationSpreadsheet, ctx.flowName, 'Upsert target rows', 'FAILED', appendRows.length, 'Batch append failed; retrying per row.', scMeilaniErrorMessage_(err), ctx.startedAt);
+      appendRows.forEach(function (item) {
+        try {
+          const row = Math.max(targetSheet.getLastRow() + 1, targetMeta.headerRowNumber + 1);
+          scMeilaniEnsureRows_(targetSheet, row);
+          targetSheet.getRange(row, 1, 1, lastColumn).setValues([item.row]);
+          appended += 1;
+        } catch (rowErr) {
+          failed += 1;
+          scMeilaniLogStep_(ctx.destinationSpreadsheet, ctx.flowName, 'Upsert target rows', 'FAILED', 1, 'Failed appending row.', 'sourceRow=' + item.record.sourceRowNumber + ', claim=' + item.record.claimValue + ', error=' + scMeilaniErrorMessage_(rowErr), ctx.startedAt);
+        }
+      });
+    }
+  }
+
+  scMeilaniLogStep_(ctx.destinationSpreadsheet, ctx.flowName, 'Upsert target rows', failed ? 'FAILED' : 'SUCCESS', updated + appended, 'Upsert completed.', 'updated=' + updated + ', appended=' + appended + ', failed=' + failed, ctx.startedAt);
+  return { updated: updated, appended: appended, failed: failed };
+}
+
+function scMeilaniVerifyRepairResult_(targetSheet, targetMeta, identifierHeader, records) {
+  const identifierCol = scMeilaniRequireHeader_(targetMeta.headerMap, identifierHeader) + 1;
+  const rowCount = Math.max(targetSheet.getLastRow() - targetMeta.headerRowNumber, 0);
+  const claimSet = {};
+  const duplicateSet = {};
+  let duplicateCount = 0;
+
+  if (rowCount > 0) {
+    const values = targetSheet.getRange(targetMeta.headerRowNumber + 1, identifierCol, rowCount, 1).getValues();
+    values.forEach(function (item) {
+      const key = scMeilaniIdentifierKey_(item[0]);
+      if (!key) return;
+      if (claimSet[key]) {
+        duplicateSet[key] = true;
+        duplicateCount += 1;
+      }
+      claimSet[key] = true;
+    });
+  }
+
+  const missingClaims = [];
+  records.forEach(function (record) {
+    if (!claimSet[record.claimKey] && missingClaims.length < 20) missingClaims.push(String(record.claimValue));
+  });
+
+  return {
+    targetClaims: Object.keys(claimSet).length,
+    duplicateCount: duplicateCount,
+    matchedSourceClaims: records.length - missingClaims.length,
+    missingClaims: missingClaims,
+  };
+}
+
+function scMeilaniApplyRepairValuesToRow_(targetRow, columnMap, values) {
+  SC_MEILANI_CONFIG.outputHeaders.forEach(function (header, index) {
+    const targetIdx = columnMap.target[header];
+    if (targetIdx == null) return;
+    targetRow[targetIdx] = values[index];
+  });
+}
+
+function scMeilaniDeriveSubmissionMonth_(value) {
+  if (value instanceof Date && !isNaN(value.getTime())) return new Date(value.getFullYear(), value.getMonth(), 1);
+  const parsed = new Date(value);
+  if (!isNaN(parsed.getTime())) return new Date(parsed.getFullYear(), parsed.getMonth(), 1);
+  return '';
+}
+
+function scMeilaniEnsureRows_(sheet, requiredLastRow) {
+  const maxRows = sheet.getMaxRows();
+  if (maxRows >= requiredLastRow) return;
+  sheet.insertRowsAfter(maxRows, requiredLastRow - maxRows);
+}
+
+function scMeilaniBlankArray_(length) {
+  const out = [];
+  for (let i = 0; i < length; i++) out.push('');
+  return out;
+}
+
+function scMeilaniAddReason_(bucket, reason, rowNumber, claimValue, detail) {
+  if (!bucket[reason]) bucket[reason] = { count: 0, samples: [] };
+  bucket[reason].count += 1;
+  if (bucket[reason].samples.length < 10) {
+    bucket[reason].samples.push('row ' + rowNumber + ', claim=' + String(claimValue || '') + ', ' + detail);
+  }
+}
+
+function scMeilaniWriteReasonLogs_(ctx, processName, status, bucket) {
+  Object.keys(bucket || {}).forEach(function (reason) {
+    const item = bucket[reason];
+    scMeilaniLogStep_(ctx.destinationSpreadsheet, ctx.flowName, processName + ' - ' + reason, status, item.count, reason, item.samples.join(' | '), ctx.startedAt);
+  });
+}
+
+function scMeilaniIdentifierKey_(value) {
+  return String(value == null ? '' : value)
+    .replace(/[\u200B-\u200D\uFEFF]/g, '')
+    .replace(/\u00A0/g, ' ')
+    .trim()
+    .toUpperCase();
+}
+
+function scMeilaniUnique_(values) {
+  const seen = {};
+  const out = [];
+  (values || []).forEach(function (value) {
+    if (seen[value]) return;
+    seen[value] = true;
+    out.push(value);
+  });
+  return out;
+}
 function scMeilaniWriteMirroredColumn_(sourceSheet, targetSheet, sourceRowNumbers, sourceColumn, targetStartRow, targetColumn) {
   const snapshots = [];
 
@@ -495,19 +841,71 @@ function scMeilaniToast_(spreadsheet, message) {
   }
 }
 
-function scMeilaniLog_(spreadsheet, flowName, status, startedAt, message, details) {
+function scMeilaniResetLog_(spreadsheet) {
   const sheet = scMeilaniGetOrCreateLogSheet_(spreadsheet);
+  sheet.clearContents();
+  scMeilaniWriteLogHeader_(sheet);
+}
+
+function scMeilaniLog_(spreadsheet, flowName, status, startedAt, message, details) {
+  scMeilaniLogStep_(spreadsheet, flowName, 'Runtime completion', status === 'ERROR' ? 'FAILED' : status, 0, message, details, startedAt);
+}
+
+function scMeilaniLogStep_(spreadsheet, flowName, processName, status, count, message, details, startedAt) {
+  const sheet = scMeilaniGetOrCreateLogSheet_(spreadsheet);
+  scMeilaniWriteLogHeader_(sheet);
   const endedAt = new Date();
+  const normalizedStatus = scMeilaniNormalizeLogStatus_(status);
   sheet.appendRow([
     endedAt,
     flowName,
-    status,
-    startedAt,
-    endedAt,
-    Math.round((endedAt.getTime() - startedAt.getTime()) / 1000),
-    message,
+    processName,
+    normalizedStatus,
+    Number(count || 0),
+    message || '',
     details || '',
+    startedAt || '',
+    endedAt,
+    startedAt ? Math.round((endedAt.getTime() - startedAt.getTime()) / 1000) : '',
   ]);
+}
+
+function scMeilaniWriteLogHeader_(sheet) {
+  const headers = [
+    'Timestamp',
+    'Flow',
+    'Process',
+    'Status',
+    'Count',
+    'Message',
+    'Details',
+    'Started At',
+    'Ended At',
+    'Duration Seconds',
+  ];
+  const existing = sheet.getRange(1, 1, 1, headers.length).getValues()[0].join('|');
+  if (existing !== headers.join('|')) {
+    sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
+  }
+  sheet.setFrozenRows(1);
+}
+
+function scMeilaniNormalizeLogStatus_(status) {
+  const value = String(status || '').trim().toUpperCase();
+  if (value === 'START' || value === 'SUCCESS' || value === 'SKIPPED' || value === 'FAILED') return value;
+  if (value === 'ERROR') return 'FAILED';
+  return 'FAILED';
+}
+
+function scMeilaniResultCount_(result) {
+  if (result == null) return 0;
+  if (typeof result === 'number') return result;
+  if (Array.isArray(result)) return result.length;
+  if (typeof result === 'object') {
+    if (result.valid != null) return Number(result.valid) || 0;
+    if (result.appended != null || result.updated != null) return (Number(result.appended) || 0) + (Number(result.updated) || 0);
+  }
+  return 0;
 }
 
 function scMeilaniGetOrCreateLogSheet_(spreadsheet) {
@@ -515,20 +913,13 @@ function scMeilaniGetOrCreateLogSheet_(spreadsheet) {
   if (sheet) return sheet;
 
   sheet = spreadsheet.insertSheet(SC_MEILANI_CONFIG.logSheetName);
-  sheet.getRange(1, 1, 1, 8).setValues([[
-    'Timestamp',
-    'Flow',
-    'Status',
-    'Started At',
-    'Ended At',
-    'Duration Seconds',
-    'Message',
-    'Details',
-  ]]);
-  sheet.setFrozenRows(1);
+  scMeilaniWriteLogHeader_(sheet);
   return sheet;
 }
 
 function scMeilaniErrorMessage_(err) {
-  return err && err.message ? err.message : String(err);
+  if (!err) return '';
+  const base = err && err.message ? err.message : String(err);
+  const stack = err && err.stack ? String(err.stack).split('\n').slice(0, 4).join(' | ') : '';
+  return stack ? base + ' | stack: ' + stack : base;
 }
