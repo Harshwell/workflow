@@ -62,7 +62,7 @@ const DRY_RUN = false;
  *   policy, optional-sheet policy, type registries, and business flags.
  * - 03_SheetsAndValidation.gs owns destination sheet templates and Raw Data
  *   header assurance.
- * - Keep docs/COLUMN_REFERENCE.md synchronized when either contract changes.
+ * - Keep the README data-contract registry synchronized when either contract changes.
  */
 const CONFIG_SECTION_INDEX = Object.freeze({
   foundation: Object.freeze(['App.Registry', 'APP_VERSION', 'SCHEMA_VERSION', 'DRY_RUN']),

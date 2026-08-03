@@ -1,0 +1,22 @@
+# Obsidian is a local viewer, not repository state.
+.obsidian/
+
+# Node tooling
+node_modules/
+coverage/
+.nyc_output/
+
+# Logs, caches, and temporary artifacts
+*.log
+.cache/
+.tmp/
+tmp/
+temp/
+
+# OS and editor noise
+.DS_Store
+Thumbs.db
+Desktop.ini
+*.swp
+*.swo
+*~

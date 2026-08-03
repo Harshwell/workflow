@@ -123,7 +123,7 @@ const SV03_DROPDOWN_SYNC = Object.freeze({
  * Column contract note:
  * - Destination sheet layouts live here.
  * - Canonical source headers, aliases, types, and routing policies live in 00_Config.gs.
- * - Keep docs/COLUMN_REFERENCE.md synchronized when templates or source contracts change.
+ * - Keep the README data-contract registry synchronized when templates or source contracts change.
  */
 const SV03_TEMPLATES = Object.freeze({
   OPS_PIC_DEFAULT: Object.freeze([
