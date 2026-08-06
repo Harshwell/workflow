@@ -10,11 +10,11 @@
  */
 
 const SC_MEILANI_CONFIG = Object.freeze({
-  sourceSpreadsheetId: '1zRlYrSRssv9LVcPKEq90CmmvTRsZoN_TqfIg2pNufbc',
-  destinationSpreadsheetId: '1dU9dt01Ld_ykMJWQxupvIHyLXV6ArnGeXCBV72q31lU',
+  sourceSpreadsheetId: '',
+  destinationSpreadsheetId: '',
   scriptVersion: '2026-08-05-repair-start-approval-cutoff-1',
-  menuName: 'SC - Unicom',
-  logSheetName: 'Log SC-Unicom',
+  menuName: 'SC - Sitcomtara',
+  logSheetName: 'Log SC-Sitcomtara',
   headerRow: 1,
   headerScanRows: 20,
   fallbackColumns: Object.freeze({
@@ -23,9 +23,7 @@ const SC_MEILANI_CONFIG = Object.freeze({
     Remarks: 20,
   }),
   allowedBranches: Object.freeze([
-    'Xiaomi Authorized',
-    'Unicom',
-    'Samsung Exclusive',
+    'Sitcomtara',
   ]),
   salvage: Object.freeze({
     sourceSheetName: 'Salvage 25-26',
@@ -39,13 +37,13 @@ const SC_MEILANI_CONFIG = Object.freeze({
   }),
   repairRemarksBackup: Object.freeze({
     sourceSheetName: 'Repair',
-    targetSheetName: 'SC - Unicom',
+    targetSheetName: 'SC - Sitcomtara',
     identifierHeader: 'Claim Number',
     remarksHeader: 'Remarks',
   }),
   repairUpdateSync: Object.freeze({
     sourceSheetName: 'Repair',
-    targetSheetNames: Object.freeze(['SC - Meilani']),
+    targetSheetNames: Object.freeze(['SC - Farhan']),
     identifierHeader: 'Claim Number',
     sourceUpdateHeader: 'Update from Service Center',
     targetRemarksHeader: 'Remarks',

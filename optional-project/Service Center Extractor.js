@@ -13,7 +13,7 @@
  */
 
 const CONFIG = {
-  SCRIPT_VERSION: "2026.03.09-sc-transfer-enterprise-v1",
+  SCRIPT_VERSION: "2026.08.06-sc-transfer-repair-mirror-v1",
   FLOW_NAME: "SC_TRANSFER",
   DEST_SPREADSHEET_ID: "10TpYJ3lvMt8yq7RoKXuqVkdXITJE-ywz5MEPZXkuGx8",
 
@@ -42,6 +42,30 @@ const CONFIG = {
   CONTROL_RANGE_PHASE_CHECKBOX: "H2:H4",
   CONTROL_RANGE_PHASE_LABEL: "I2:I4",
 
+  REPAIR_MIRRORS: Object.freeze([
+    Object.freeze({
+      name: "Unicom",
+      sourceSheetNames: Object.freeze(["Unicom", "Samsung Exclusive", "Xiaomi Authorized"]),
+      spreadsheetIdProperty: "SC_REPAIR_MIRROR_UNICOM_SPREADSHEET_ID",
+      repairSheetName: "Repair",
+    }),
+    Object.freeze({
+      name: "Sitcomtara",
+      sourceSheetNames: Object.freeze(["Sitcomtara"]),
+      spreadsheetIdProperty: "SC_REPAIR_MIRROR_SITCOMTARA_SPREADSHEET_ID",
+      repairSheetName: "Repair",
+    }),
+  ]),
+  REPAIR_OUTPUT_HEADERS: Object.freeze([
+    "Claim Number", "Device Brand", "Device Type", "IMEI/SN",
+    "Service Center Name", "Dashboard Link", "Last Status", "Status Type",
+    "Last Status Date", "Last Status Aging", "Update from Service Center",
+  ]),
+  REPAIR_STATUS_TYPES: Object.freeze([
+    "Start", "On Repair", "Waiting Repair", "Waiting Estimate",
+    "Waiting Receive Unit", "Waiting Insurance Approval", "Waiting Payment Cust", "Finish",
+  ]),
+
   RUN_GUARD: {
     LOCK_WAIT_MS: 30000,
     MIN_SECONDS_BETWEEN_RUNS: 10,
@@ -51,7 +75,7 @@ const CONFIG = {
 
   LOGGING: {
     SHEET_NAME: "Log - SC Transfer",
-    MODE: "APPEND",
+    MODE: "RESET_EACH_RUN",
     MAX_ROWS: 5000,
     AUTO_RESIZE: true,
   },
@@ -376,6 +400,14 @@ function _validateConfig_() {
   if (!CONFIG.ROUTE_RULES || !CONFIG.ROUTE_RULES.length) {
     throw new Error("Invalid CONFIG: ROUTE_RULES must not be empty.");
   }
+  if (!CONFIG.REPAIR_MIRRORS || !CONFIG.REPAIR_MIRRORS.length) {
+    throw new Error("Invalid CONFIG: REPAIR_MIRRORS must not be empty.");
+  }
+  CONFIG.REPAIR_MIRRORS.forEach(function (mirror) {
+    if (!mirror.name || !mirror.spreadsheetIdProperty || !mirror.repairSheetName || !mirror.sourceSheetNames.length) {
+      throw new Error("Invalid CONFIG: incomplete REPAIR_MIRRORS entry.");
+    }
+  });
 }
 
 /* =========================
@@ -386,7 +418,49 @@ function onOpen() {
   SpreadsheetApp.getUi()
     .createMenu("SC Transfer")
     .addItem("Run Transfer Now", "runServiceCenterTransfer")
+    .addItem("Setup Repair Mirror IDs", "setupRepairMirrorSpreadsheetIds")
     .addToUi();
+}
+
+function onInstall() {
+  onOpen();
+}
+
+function installServiceCenterTransferMenu() {
+  onOpen();
+  SpreadsheetApp.getActiveSpreadsheet().toast(
+    'Menu SC Transfer dipasang. Jika belum terlihat, reload spreadsheet.',
+    'SC Transfer',
+    8
+  );
+}
+
+function setupRepairMirrorSpreadsheetIds() {
+  _validateConfig_();
+  var ui = SpreadsheetApp.getUi();
+  var props = PropertiesService.getScriptProperties();
+  var saved = 0;
+
+  for (var i = 0; i < CONFIG.REPAIR_MIRRORS.length; i++) {
+    var mirror = CONFIG.REPAIR_MIRRORS[i];
+    var current = props.getProperty(mirror.spreadsheetIdProperty);
+    var prompt = ui.prompt(
+      'Setup Repair Mirror - ' + mirror.name,
+      'Paste URL atau Spreadsheet ID untuk workbook ' + mirror.name + '. Current: ' + (current ? 'sudah terisi' : 'kosong'),
+      ui.ButtonSet.OK_CANCEL
+    );
+    if (prompt.getSelectedButton() !== ui.Button.OK) continue;
+    var spreadsheetId = _extractSpreadsheetId_(prompt.getResponseText());
+    if (!spreadsheetId) throw new Error('URL/Spreadsheet ID tidak valid untuk Repair mirror "' + mirror.name + '".');
+    var targetSS = SpreadsheetApp.openById(spreadsheetId);
+    if (!targetSS.getSheetByName(mirror.repairSheetName)) {
+      throw new Error('Workbook "' + mirror.name + '" dapat dibuka, tetapi sheet "' + mirror.repairSheetName + '" tidak ditemukan.');
+    }
+    props.setProperty(mirror.spreadsheetIdProperty, spreadsheetId);
+    saved += 1;
+  }
+
+  ui.alert('Setup Repair Mirror selesai. Property tersimpan: ' + saved + '.');
 }
 
 /* =========================
@@ -543,6 +617,24 @@ function runServiceCenterTransfer() {
     });
     _flushLog_(ctx);
 
+    _setProgress_(ctx, "Running: mirroring Service Center Repair sheets...");
+    var mirrorStep = _timeStage_(function () {
+      return _mirrorRepairSheets_(ctx);
+    });
+    var mirrorLogOptions = {
+      ms: mirrorStep.ms,
+      metrics: mirrorStep.res,
+      notes: mirrorStep.res.refreshed
+        ? "Repair mirror refreshed; manual updates preserved by Claim Number."
+        : "No Repair mirror refreshed. Configure the missing property using SC Transfer > Setup Repair Mirror IDs.",
+    };
+    if (mirrorStep.res.missingProperties.length) {
+      _logWarn_(ctx, "MIRROR", "MIRROR - Repair mirror incomplete", mirrorLogOptions);
+    } else {
+      _logInfo_(ctx, "MIRROR", "MIRROR - Refresh external Repair sheets", mirrorLogOptions);
+    }
+    _flushLog_(ctx);
+
     _setProgress_(ctx, "Running: sorting destination sheets...");
     var sortStep = _timeStage_(function () {
       return _sortDestinationSheets_(ctx);
@@ -591,7 +683,7 @@ function runServiceCenterTransfer() {
     });
     _flushLog_(ctx);
   } catch (err) {
-    _setProgress_(ctx, "ERROR: check Log - SC Transfer / Apps Script Executions");
+    _setProgress_(ctx, "ERROR: " + _errorToString_(err).slice(0, 180) + " | check Log - SC Transfer");
     _logError_(ctx, "FATAL", "FATAL - Unhandled error", {
       error: _errorToString_(err),
       notes: err && err.stack ? String(err.stack) : "",
@@ -769,6 +861,10 @@ function _prepareLogSheet_(srcSS) {
     "Notes",
     "Error",
   ]];
+
+  if (CONFIG.LOGGING.MODE === "RESET_EACH_RUN") {
+    sh.clearContents();
+  }
 
   if (sh.getLastRow() === 0) {
     sh.getRange(1, 1, 1, headers[0].length).setValues(headers);
@@ -1217,6 +1313,161 @@ function _writeBuckets_(ctx) {
     writtenRows: writtenRows,
     failedWrites: failedWrites,
   };
+}
+
+function _mirrorRepairSheets_(ctx) {
+  var result = { configured: CONFIG.REPAIR_MIRRORS.length, refreshed: 0, writtenRows: 0, skipped: 0, missingProperties: [] };
+
+  for (var i = 0; i < CONFIG.REPAIR_MIRRORS.length; i++) {
+    var mirror = CONFIG.REPAIR_MIRRORS[i];
+    if (!_isRepairMirrorSelected_(ctx, mirror)) {
+      result.skipped += 1;
+      continue;
+    }
+
+    var rows = [];
+    for (var s = 0; s < mirror.sourceSheetNames.length; s++) {
+      var bucketRows = ctx.bucket.get(mirror.sourceSheetNames[s]);
+      if (bucketRows && bucketRows.length) rows = rows.concat(bucketRows);
+    }
+    rows.sort(_compareRepairMirrorRows_);
+
+    var spreadsheetId = PropertiesService.getScriptProperties().getProperty(mirror.spreadsheetIdProperty);
+    if (!String(spreadsheetId || '').trim()) {
+      result.skipped += 1;
+      result.missingProperties.push(mirror.spreadsheetIdProperty);
+      _logWarn_(ctx, 'MIRROR', 'WARN - Repair mirror configuration missing (' + mirror.name + ')', {
+        metrics: { property: mirror.spreadsheetIdProperty },
+        notes: 'Jalankan menu SC Transfer > Setup Repair Mirror IDs; core transfer tetap dilanjutkan.',
+      });
+      continue;
+    }
+    var mirrorSS = SpreadsheetApp.openById(spreadsheetId);
+    var repairSheet = mirrorSS.getSheetByName(mirror.repairSheetName);
+    if (!repairSheet) {
+      throw new Error('Repair mirror sheet tidak ditemukan untuk "' + mirror.name + '": ' + mirror.repairSheetName);
+    }
+
+    var written = _rewriteRepairMirror_(ctx, repairSheet, rows);
+    result.refreshed += 1;
+    result.writtenRows += written;
+  }
+
+  return result;
+}
+
+function _isRepairMirrorSelected_(ctx, mirror) {
+  var mappingRows = ctx.mappingRows || [];
+  var selectedNames = new Set(mappingRows.map(function (item) { return String(item.name || '').trim(); }));
+  return mirror.sourceSheetNames.some(function (sheetName) { return selectedNames.has(sheetName); });
+}
+
+function _compareRepairMirrorRows_(a, b) {
+  var serviceCenterCompare = String(a.serviceCenterName || '').localeCompare(String(b.serviceCenterName || ''));
+  if (serviceCenterCompare !== 0) return serviceCenterCompare;
+  var phaseCompare = Number(a.phaseRank || 9) - Number(b.phaseRank || 9);
+  if (phaseCompare !== 0) return phaseCompare;
+  return _compareClaimNumbers_(a.claimNumber, b.claimNumber);
+}
+
+function _rewriteRepairMirror_(ctx, sheet, rows) {
+  var headerMap = _ensureRepairMirrorHeaders_(sheet);
+  var updateByClaim = _readRepairMirrorUpdates_(sheet, headerMap);
+  var lastColumn = Math.max(sheet.getLastColumn(), CONFIG.REPAIR_OUTPUT_HEADERS.length);
+  var oldBodyRows = Math.max(sheet.getLastRow() - 1, 0);
+  if (oldBodyRows) sheet.getRange(2, 1, oldBodyRows, lastColumn).clearContent();
+
+  var values = [];
+  var links = [];
+  for (var i = 0; i < rows.length; i++) {
+    var item = rows[i];
+    var row = _createBlankRow_(lastColumn);
+    var claimKey = _normalizeClaimKey_(item.claimNumber);
+    row[headerMap.claimNumber] = item.claimNumber;
+    row[headerMap.deviceBrand] = item.deviceBrand;
+    row[headerMap.deviceType] = item.deviceType;
+    row[headerMap.imeiSn] = item.imeiSn;
+    row[headerMap.serviceCenterName] = item.serviceCenterName;
+    row[headerMap.lastStatus] = _translateLastStatus_(item.lastStatus);
+    row[headerMap.statusType] = _resolveRepairStatusType_(item);
+    row[headerMap.lastStatusDate] = _coerceToDate_(item.lastStatusDate) || (item.lastStatusDate || '');
+    row[headerMap.lastStatusAging] = item.lastStatusAging;
+    row[headerMap.updateFromServiceCenter] = updateByClaim[claimKey] || '';
+    values.push(row);
+    links.push([_buildRichTextLink_(ctx, item.dashboardUrl)]);
+  }
+
+  if (values.length) {
+    sheet.getRange(2, 1, values.length, lastColumn).setValues(values);
+    sheet.getRange(2, headerMap.dashboardLink + 1, links.length, 1).setRichTextValues(links);
+    sheet.getRange(2, headerMap.lastStatusDate + 1, values.length, 1).setNumberFormat(CONFIG.DATE_OUTPUT_FORMAT);
+  }
+  _applyRepairStatusTypeValidation_(sheet, headerMap.statusType, Math.max(values.length, oldBodyRows, 1));
+  return values.length;
+}
+
+function _ensureRepairMirrorHeaders_(sheet) {
+  var headers = sheet.getRange(1, 1, 1, Math.max(sheet.getLastColumn(), CONFIG.REPAIR_OUTPUT_HEADERS.length)).getValues()[0];
+  var normalized = {};
+  for (var i = 0; i < headers.length; i++) normalized[_norm_(headers[i])] = i;
+  var map = {};
+  var keys = ['claimNumber', 'deviceBrand', 'deviceType', 'imeiSn', 'serviceCenterName', 'dashboardLink', 'lastStatus', 'statusType', 'lastStatusDate', 'lastStatusAging', 'updateFromServiceCenter'];
+  for (var h = 0; h < CONFIG.REPAIR_OUTPUT_HEADERS.length; h++) {
+    var header = CONFIG.REPAIR_OUTPUT_HEADERS[h];
+    var idx = normalized[_norm_(header)];
+    if (idx == null) {
+      idx = h;
+      sheet.getRange(1, idx + 1).setValue(header);
+    }
+    map[keys[h]] = idx;
+  }
+  return map;
+}
+
+function _readRepairMirrorUpdates_(sheet, headerMap) {
+  var out = {};
+  var rowCount = Math.max(sheet.getLastRow() - 1, 0);
+  if (!rowCount) return out;
+  var width = Math.max(headerMap.claimNumber, headerMap.updateFromServiceCenter) + 1;
+  var values = sheet.getRange(2, 1, rowCount, width).getValues();
+  for (var i = 0; i < values.length; i++) {
+    var key = _normalizeClaimKey_(values[i][headerMap.claimNumber]);
+    if (key && out[key] == null) out[key] = values[i][headerMap.updateFromServiceCenter];
+  }
+  return out;
+}
+
+function _resolveRepairStatusType_(row) {
+  if (Number(row.phaseRank) === 1) return 'Start';
+  if (Number(row.phaseRank) === 3) return 'Finish';
+  var status = String(row.lastStatus || '').toUpperCase();
+  if (status.indexOf('PAYMENT') >= 0 || status.indexOf('DEDUCTIBLE') >= 0) return 'Waiting Payment Cust';
+  if (status.indexOf('INSURANCE') >= 0) return 'Waiting Insurance Approval';
+  if (status.indexOf('ESTIMATE') >= 0) return 'Waiting Estimate';
+  if (status.indexOf('RECEIVE') >= 0 || status === 'CLAIM_ADDED_SC') return 'Waiting Receive Unit';
+  if (status.indexOf('WAITING_REPAIR') >= 0) return 'Waiting Repair';
+  return 'On Repair';
+}
+
+function _applyRepairStatusTypeValidation_(sheet, zeroBasedColumn, rowCount) {
+  var rule = SpreadsheetApp.newDataValidation()
+    .requireValueInList(CONFIG.REPAIR_STATUS_TYPES.slice(), true)
+    .setAllowInvalid(false)
+    .setHelpText('Pilih Status Type yang tersedia.')
+    .build();
+  sheet.getRange(2, zeroBasedColumn + 1, Math.max(rowCount, 1), 1).setDataValidation(rule);
+}
+
+function _normalizeClaimKey_(value) {
+  return String(value == null ? '' : value).trim().toUpperCase();
+}
+
+function _extractSpreadsheetId_(value) {
+  var text = String(value == null ? '' : value).trim();
+  if (!text) return '';
+  var urlMatch = text.match(/\/spreadsheets\/d\/([a-zA-Z0-9_-]+)/);
+  var candidate = urlMatch ? urlMatch[1] : text;
+  return /^[a-zA-Z0-9_-]{20,}$/.test(candidate) ? candidate : '';
 }
 
 function _appendToDestination_(ctx, destSheet, rows) {
