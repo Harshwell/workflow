@@ -445,7 +445,6 @@ function installServiceCenterTransferMenu() {
     .forSpreadsheet(spreadsheet)
     .onOpen()
     .create();
-  onOpenServiceCenterTransfer();
   _setProgressSafe_('SC Transfer menu installed. Reload spreadsheet.');
   spreadsheet.toast(
     'Menu dan open trigger SC Transfer dipasang. Reload spreadsheet sekarang.',
