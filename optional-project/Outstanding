@@ -595,7 +595,7 @@ function runWorker() {
     return;
   }
 
-  withLock_(CFG.LOCK_TIMEOUT_MS, function() {
+  var acquired = tryWithLock_(CFG.LOCK_TIMEOUT_MS, function() {
     SysSheets.ensureAll(log);
 
     var activeRun = RunStore.getLatestActiveRun_();
@@ -645,6 +645,13 @@ function runWorker() {
 
     log.info('Worker batch complete', { targetRunId: targetRunId, done: done, failed: failed });
   });
+
+  if (!acquired) {
+    log.warn('Worker skipped; another execution still owns the script lock', {
+      lockTimeoutMs: CFG.LOCK_TIMEOUT_MS,
+      retry: 'The next scheduled worker will retry automatically.'
+    });
+  }
 }
 
 function finalizeRunSafely_(targetRunId, log) {
@@ -2329,6 +2336,17 @@ function withLock_(timeoutMs, fn) {
   if (!lock.tryLock(timeoutMs)) throw new Error('Could not acquire script lock (concurrent execution)');
   try {
     return fn();
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function tryWithLock_(timeoutMs, fn) {
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(timeoutMs)) return false;
+  try {
+    fn();
+    return true;
   } finally {
     lock.releaseLock();
   }
