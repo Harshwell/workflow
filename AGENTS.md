@@ -159,7 +159,7 @@ npm ci
 npm run check
 ```
 
-Gunakan command lebih sempit hanya saat iterasi lokal; sebelum handoff, jalankan suite penuh. `npm run check` mencakup root smoke test, standalone syntax, mapping contracts, documentation validation, dan governance self-tests.
+Gunakan command lebih sempit hanya saat iterasi lokal; sebelum handoff, jalankan suite penuh. `npm run check` mencakup root smoke test, standalone syntax termasuk profile SC branch di `optional-project/SC-*.js`, mapping contracts, documentation validation, dan governance self-tests.
 
 Static validation tidak membuktikan Gmail, Drive, Spreadsheet, trigger, quota, deployment, atau Apps Script runtime sebenarnya. Jika runtime UAT tidak dilakukan, nyatakan batasannya dan jangan mengklaim end-to-end success.
 
