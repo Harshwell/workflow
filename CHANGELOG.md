@@ -4,6 +4,7 @@ Perubahan material repository dicatat di sini berdasarkan outcome, flow/project 
 
 ## Unreleased
 
+- Installer Service Center Extractor tidak lagi memanggil `SpreadsheetApp.getUi()` dari execution context manual; menu ditambahkan oleh open trigger setelah spreadsheet di-reload sehingga instalasi tidak gagal dengan context error.
 - Installer menu Service Center Extractor sekarang membuat installable spreadsheet-open trigger unik `onOpenServiceCenterTransfer`, menghapus trigger duplikat, dan menulis status ke Overview agar menu tetap pulih ketika global `onOpen()` bertabrakan dengan script optional lain dalam project yang sama.
 - Service Center Extractor mereset `Log - SC Transfer` pada awal setiap run dan menambahkan `onInstall()`/`installServiceCenterTransferMenu()` untuk memulihkan menu global spreadsheet ketika `onOpen()` belum terpanggil.
 - Repair mirror setup sekarang memvalidasi akses workbook dan keberadaan sheet `Repair` sebelum menyimpan property; summary MIRROR menjadi warning eksplisit ketika `refreshed=0` agar tidak lagi terlihat seolah mirror berhasil.
