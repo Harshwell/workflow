@@ -6,6 +6,10 @@ const files = [
   'optional-project/Outstanding',
   'optional-project/salvage',
   'optional-project/SC-Meilani.js',
+  'optional-project/SC-GSI.js',
+  'optional-project/SC-Sitcomtara.js',
+  'optional-project/SC-Mitracare.js',
+  'optional-project/SC-iBox.js',
   'optional-project/Service Center Extractor.js'
 ];
 
