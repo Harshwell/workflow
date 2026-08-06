@@ -415,6 +415,10 @@ function _validateConfig_() {
  * ========================= */
 
 function onOpen() {
+  onOpenServiceCenterTransfer();
+}
+
+function onOpenServiceCenterTransfer() {
   SpreadsheetApp.getUi()
     .createMenu("SC Transfer")
     .addItem("Run Transfer Now", "runServiceCenterTransfer")
@@ -423,13 +427,28 @@ function onOpen() {
 }
 
 function onInstall() {
-  onOpen();
+  installServiceCenterTransferMenu();
 }
 
 function installServiceCenterTransferMenu() {
-  onOpen();
-  SpreadsheetApp.getActiveSpreadsheet().toast(
-    'Menu SC Transfer dipasang. Jika belum terlihat, reload spreadsheet.',
+  var spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
+  if (!spreadsheet) {
+    throw new Error('Spreadsheet aktif tidak ditemukan. Buka script melalui spreadsheet > Extensions > Apps Script.');
+  }
+  var triggers = ScriptApp.getProjectTriggers();
+  for (var i = 0; i < triggers.length; i++) {
+    if (triggers[i].getHandlerFunction() === 'onOpenServiceCenterTransfer') {
+      ScriptApp.deleteTrigger(triggers[i]);
+    }
+  }
+  ScriptApp.newTrigger('onOpenServiceCenterTransfer')
+    .forSpreadsheet(spreadsheet)
+    .onOpen()
+    .create();
+  onOpenServiceCenterTransfer();
+  _setProgressSafe_('SC Transfer menu installed. Reload spreadsheet.');
+  spreadsheet.toast(
+    'Menu dan open trigger SC Transfer dipasang. Reload spreadsheet sekarang.',
     'SC Transfer',
     8
   );
