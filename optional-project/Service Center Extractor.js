@@ -418,7 +418,32 @@ function onOpen() {
   SpreadsheetApp.getUi()
     .createMenu("SC Transfer")
     .addItem("Run Transfer Now", "runServiceCenterTransfer")
+    .addItem("Setup Repair Mirror IDs", "setupRepairMirrorSpreadsheetIds")
     .addToUi();
+}
+
+function setupRepairMirrorSpreadsheetIds() {
+  _validateConfig_();
+  var ui = SpreadsheetApp.getUi();
+  var props = PropertiesService.getScriptProperties();
+  var saved = 0;
+
+  for (var i = 0; i < CONFIG.REPAIR_MIRRORS.length; i++) {
+    var mirror = CONFIG.REPAIR_MIRRORS[i];
+    var current = props.getProperty(mirror.spreadsheetIdProperty);
+    var prompt = ui.prompt(
+      'Setup Repair Mirror - ' + mirror.name,
+      'Paste URL atau Spreadsheet ID untuk workbook ' + mirror.name + '. Current: ' + (current ? 'sudah terisi' : 'kosong'),
+      ui.ButtonSet.OK_CANCEL
+    );
+    if (prompt.getSelectedButton() !== ui.Button.OK) continue;
+    var spreadsheetId = _extractSpreadsheetId_(prompt.getResponseText());
+    if (!spreadsheetId) throw new Error('URL/Spreadsheet ID tidak valid untuk Repair mirror "' + mirror.name + '".');
+    props.setProperty(mirror.spreadsheetIdProperty, spreadsheetId);
+    saved += 1;
+  }
+
+  ui.alert('Setup Repair Mirror selesai. Property tersimpan: ' + saved + '.');
 }
 
 /* =========================
@@ -634,7 +659,7 @@ function runServiceCenterTransfer() {
     });
     _flushLog_(ctx);
   } catch (err) {
-    _setProgress_(ctx, "ERROR: check Log - SC Transfer / Apps Script Executions");
+    _setProgress_(ctx, "ERROR: " + _errorToString_(err).slice(0, 180) + " | check Log - SC Transfer");
     _logError_(ctx, "FATAL", "FATAL - Unhandled error", {
       error: _errorToString_(err),
       notes: err && err.stack ? String(err.stack) : "",
@@ -1263,7 +1288,7 @@ function _writeBuckets_(ctx) {
 }
 
 function _mirrorRepairSheets_(ctx) {
-  var result = { configured: CONFIG.REPAIR_MIRRORS.length, refreshed: 0, writtenRows: 0, skipped: 0 };
+  var result = { configured: CONFIG.REPAIR_MIRRORS.length, refreshed: 0, writtenRows: 0, skipped: 0, missingProperties: [] };
 
   for (var i = 0; i < CONFIG.REPAIR_MIRRORS.length; i++) {
     var mirror = CONFIG.REPAIR_MIRRORS[i];
@@ -1281,7 +1306,13 @@ function _mirrorRepairSheets_(ctx) {
 
     var spreadsheetId = PropertiesService.getScriptProperties().getProperty(mirror.spreadsheetIdProperty);
     if (!String(spreadsheetId || '').trim()) {
-      throw new Error('Script Property wajib belum diisi untuk Repair mirror "' + mirror.name + '": ' + mirror.spreadsheetIdProperty);
+      result.skipped += 1;
+      result.missingProperties.push(mirror.spreadsheetIdProperty);
+      _logWarn_(ctx, 'MIRROR', 'WARN - Repair mirror configuration missing (' + mirror.name + ')', {
+        metrics: { property: mirror.spreadsheetIdProperty },
+        notes: 'Jalankan menu SC Transfer > Setup Repair Mirror IDs; core transfer tetap dilanjutkan.',
+      });
+      continue;
     }
     var mirrorSS = SpreadsheetApp.openById(spreadsheetId);
     var repairSheet = mirrorSS.getSheetByName(mirror.repairSheetName);
@@ -1401,6 +1432,14 @@ function _applyRepairStatusTypeValidation_(sheet, zeroBasedColumn, rowCount) {
 
 function _normalizeClaimKey_(value) {
   return String(value == null ? '' : value).trim().toUpperCase();
+}
+
+function _extractSpreadsheetId_(value) {
+  var text = String(value == null ? '' : value).trim();
+  if (!text) return '';
+  var urlMatch = text.match(/\/spreadsheets\/d\/([a-zA-Z0-9_-]+)/);
+  var candidate = urlMatch ? urlMatch[1] : text;
+  return /^[a-zA-Z0-9_-]{20,}$/.test(candidate) ? candidate : '';
 }
 
 function _appendToDestination_(ctx, destSheet, rows) {
