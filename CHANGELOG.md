@@ -4,6 +4,7 @@ Perubahan material repository dicatat di sini berdasarkan outcome, flow/project 
 
 ## Unreleased
 
+- Repair mirror setup sekarang memvalidasi akses workbook dan keberadaan sheet `Repair` sebelum menyimpan property; summary MIRROR menjadi warning eksplisit ketika `refreshed=0` agar tidak lagi terlihat seolah mirror berhasil.
 - Service Center Extractor menambahkan menu `Setup Repair Mirror IDs` untuk menyimpan URL/Spreadsheet ID ke Script Properties; konfigurasi mirror yang kosong sekarang dicatat sebagai warning dan mirror tersebut dilewati tanpa menggagalkan core transfer.
 - Outstanding `runWorker()` sekarang memperlakukan script-lock contention sebagai logged skip yang akan dicoba ulang oleh scheduled worker berikutnya, sedangkan Service Center Extractor menampilkan pesan error aktual pada progress cell agar diagnosis tidak berhenti pada pesan generik.
 - Service Center Extractor sekarang memirror hasil bucket Unicom/Samsung Exclusive/Xiaomi Authorized dan Sitcomtara ke sheet `Repair` workbook SC terkait melalui required Script Properties, mempertahankan `Update from Service Center` by `Claim Number`, dan menerapkan dropdown ketat `Status Type`; sync feedback SC standalone diarahkan ke sheet universe owner PIC (`SC - Meilani` atau `SC - Farhan`).

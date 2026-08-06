@@ -439,6 +439,10 @@ function setupRepairMirrorSpreadsheetIds() {
     if (prompt.getSelectedButton() !== ui.Button.OK) continue;
     var spreadsheetId = _extractSpreadsheetId_(prompt.getResponseText());
     if (!spreadsheetId) throw new Error('URL/Spreadsheet ID tidak valid untuk Repair mirror "' + mirror.name + '".');
+    var targetSS = SpreadsheetApp.openById(spreadsheetId);
+    if (!targetSS.getSheetByName(mirror.repairSheetName)) {
+      throw new Error('Workbook "' + mirror.name + '" dapat dibuka, tetapi sheet "' + mirror.repairSheetName + '" tidak ditemukan.');
+    }
     props.setProperty(mirror.spreadsheetIdProperty, spreadsheetId);
     saved += 1;
   }
@@ -604,11 +608,18 @@ function runServiceCenterTransfer() {
     var mirrorStep = _timeStage_(function () {
       return _mirrorRepairSheets_(ctx);
     });
-    _logInfo_(ctx, "MIRROR", "MIRROR - Refresh external Repair sheets", {
+    var mirrorLogOptions = {
       ms: mirrorStep.ms,
       metrics: mirrorStep.res,
-      notes: "Configured Service Center Repair mirrors refreshed; manual updates preserved by Claim Number.",
-    });
+      notes: mirrorStep.res.refreshed
+        ? "Repair mirror refreshed; manual updates preserved by Claim Number."
+        : "No Repair mirror refreshed. Configure the missing property using SC Transfer > Setup Repair Mirror IDs.",
+    };
+    if (mirrorStep.res.missingProperties.length) {
+      _logWarn_(ctx, "MIRROR", "MIRROR - Repair mirror incomplete", mirrorLogOptions);
+    } else {
+      _logInfo_(ctx, "MIRROR", "MIRROR - Refresh external Repair sheets", mirrorLogOptions);
+    }
     _flushLog_(ctx);
 
     _setProgress_(ctx, "Running: sorting destination sheets...");
