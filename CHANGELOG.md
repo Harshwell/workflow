@@ -4,6 +4,7 @@ Perubahan material repository dicatat di sini berdasarkan outcome, flow/project 
 
 ## Unreleased
 
+- Repair mirror Service Center Extractor mengurutkan output berdasarkan `Last Status Aging` descending, opsional `Branch` A-Z, `Last Status` A-Z, lalu `Status Type` A-Z; kolom `Branch` hanya dibuat/diisi untuk mirror Unicom dari nama bucket sumber. Registrasi mirror SC tambahan seperti Mitracare/iBox tetap tersedia melalui menu dan Script Property, dengan link kosong/tidak dapat diakses diisolasi agar hanya mirror terkait yang dilewati.
 - Installer Service Center Extractor tidak lagi memanggil `SpreadsheetApp.getUi()` dari execution context manual; menu ditambahkan oleh open trigger setelah spreadsheet di-reload sehingga instalasi tidak gagal dengan context error.
 - Installer menu Service Center Extractor sekarang membuat installable spreadsheet-open trigger unik `onOpenServiceCenterTransfer`, menghapus trigger duplikat, dan menulis status ke Overview agar menu tetap pulih ketika global `onOpen()` bertabrakan dengan script optional lain dalam project yang sama.
 - Service Center Extractor mereset `Log - SC Transfer` pada awal setiap run dan menambahkan `onInstall()`/`installServiceCenterTransferMenu()` untuk memulihkan menu global spreadsheet ketika `onOpen()` belum terpanggil.

@@ -25,3 +25,17 @@ test('manual installer defers menu UI creation until spreadsheet open', () => {
   assert.doesNotMatch(installer, /onOpenServiceCenterTransfer\s*\(/);
   assert.doesNotMatch(installer, /SpreadsheetApp\.getUi\s*\(/);
 });
+
+test('Repair mirrors keep Branch Unicom-only, sort output, and isolate optional failures', () => {
+  assert.match(source, /name: "Unicom"[\s\S]*?includeBranch: true/);
+  assert.doesNotMatch(source, /REPAIR_OUTPUT_HEADERS:[\s\S]*?"Service Center Name", "Branch"/);
+  assert.match(source, /if \(mirror\.includeBranch && headerMap\.branch != null\)/);
+  assert.match(source, /copy\.repairMirrorBranch = sourceSheetName/);
+  assert.match(source, /if \(agingA !== agingB\) return agingB - agingA/);
+  assert.match(source, /branchCompare/);
+  assert.match(source, /statusCompare/);
+  assert.match(source, /statusTypeCompare/);
+  assert.match(source, /REPAIR_MIRROR_CUSTOM_CONFIG_PROPERTY/);
+  assert.match(source, /function setupOptionalRepairMirror\(\)/);
+  assert.match(source, /Mirror optional dilewati; mirror lain dan core transfer tetap dilanjutkan/);
+});
