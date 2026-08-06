@@ -13,7 +13,7 @@
  */
 
 const CONFIG = {
-  SCRIPT_VERSION: "2026.08.06-sc-transfer-repair-mirror-v1",
+  SCRIPT_VERSION: "2026.08.06-sc-transfer-repair-mirror-v2",
   FLOW_NAME: "SC_TRANSFER",
   DEST_SPREADSHEET_ID: "10TpYJ3lvMt8yq7RoKXuqVkdXITJE-ywz5MEPZXkuGx8",
 
@@ -48,6 +48,7 @@ const CONFIG = {
       sourceSheetNames: Object.freeze(["Unicom", "Samsung Exclusive", "Xiaomi Authorized"]),
       spreadsheetIdProperty: "SC_REPAIR_MIRROR_UNICOM_SPREADSHEET_ID",
       repairSheetName: "Repair",
+      includeBranch: true,
     }),
     Object.freeze({
       name: "Sitcomtara",
@@ -56,6 +57,7 @@ const CONFIG = {
       repairSheetName: "Repair",
     }),
   ]),
+  REPAIR_MIRROR_CUSTOM_CONFIG_PROPERTY: "SC_REPAIR_MIRROR_CUSTOM_CONFIG",
   REPAIR_OUTPUT_HEADERS: Object.freeze([
     "Claim Number", "Device Brand", "Device Type", "IMEI/SN",
     "Service Center Name", "Dashboard Link", "Last Status", "Status Type",
@@ -423,6 +425,7 @@ function onOpenServiceCenterTransfer() {
     .createMenu("SC Transfer")
     .addItem("Run Transfer Now", "runServiceCenterTransfer")
     .addItem("Setup Repair Mirror IDs", "setupRepairMirrorSpreadsheetIds")
+    .addItem("Add/Update Optional SC Mirror", "setupOptionalRepairMirror")
     .addToUi();
 }
 
@@ -445,7 +448,6 @@ function installServiceCenterTransferMenu() {
     .forSpreadsheet(spreadsheet)
     .onOpen()
     .create();
-  onOpenServiceCenterTransfer();
   _setProgressSafe_('SC Transfer menu installed. Reload spreadsheet.');
   spreadsheet.toast(
     'Menu dan open trigger SC Transfer dipasang. Reload spreadsheet sekarang.',
@@ -469,7 +471,9 @@ function setupRepairMirrorSpreadsheetIds() {
       ui.ButtonSet.OK_CANCEL
     );
     if (prompt.getSelectedButton() !== ui.Button.OK) continue;
-    var spreadsheetId = _extractSpreadsheetId_(prompt.getResponseText());
+    var rawLink = String(prompt.getResponseText() || '').trim();
+    if (!rawLink) continue;
+    var spreadsheetId = _extractSpreadsheetId_(rawLink);
     if (!spreadsheetId) throw new Error('URL/Spreadsheet ID tidak valid untuk Repair mirror "' + mirror.name + '".');
     var targetSS = SpreadsheetApp.openById(spreadsheetId);
     if (!targetSS.getSheetByName(mirror.repairSheetName)) {
@@ -480,6 +484,71 @@ function setupRepairMirrorSpreadsheetIds() {
   }
 
   ui.alert('Setup Repair Mirror selesai. Property tersimpan: ' + saved + '.');
+}
+
+function setupOptionalRepairMirror() {
+  _validateConfig_();
+  var ui = SpreadsheetApp.getUi();
+  var props = PropertiesService.getScriptProperties();
+  var namePrompt = ui.prompt(
+    'Optional Repair Mirror',
+    'Masukkan nama sheet SC di hasil Service Center Extractor (contoh: Mitracare atau iBox).',
+    ui.ButtonSet.OK_CANCEL
+  );
+  if (namePrompt.getSelectedButton() !== ui.Button.OK) return;
+
+  var name = String(namePrompt.getResponseText() || '').trim();
+  if (!name) {
+    ui.alert('Nama SC kosong; tidak ada konfigurasi yang diubah.');
+    return;
+  }
+  for (var c = 0; c < CONFIG.SERVICE_CENTER_MAPPING.length; c++) {
+    if (_norm_(CONFIG.SERVICE_CENTER_MAPPING[c].name) === _norm_(name)) {
+      name = CONFIG.SERVICE_CENTER_MAPPING[c].name;
+      break;
+    }
+  }
+
+  var mirrors = _readCustomRepairMirrors_(props);
+  var existing = null;
+  for (var i = 0; i < mirrors.length; i++) {
+    if (_norm_(mirrors[i].name) === _norm_(name)) {
+      existing = mirrors[i];
+      break;
+    }
+  }
+  var linkPrompt = ui.prompt(
+    'Optional Repair Mirror - ' + name,
+    'Paste URL atau Spreadsheet ID. Boleh dikosongkan: mirror ini akan tersimpan tetapi dilewati saat SC Transfer. Current: ' +
+      (existing && existing.spreadsheetId ? 'sudah terisi' : 'kosong'),
+    ui.ButtonSet.OK_CANCEL
+  );
+  if (linkPrompt.getSelectedButton() !== ui.Button.OK) return;
+
+  var rawLink = String(linkPrompt.getResponseText() || '').trim();
+  var spreadsheetId = rawLink ? _extractSpreadsheetId_(rawLink) : '';
+  if (rawLink && !spreadsheetId) {
+    throw new Error('URL/Spreadsheet ID tidak valid untuk Repair mirror "' + name + '".');
+  }
+  if (spreadsheetId) {
+    var targetSS = SpreadsheetApp.openById(spreadsheetId);
+    if (!targetSS.getSheetByName('Repair')) {
+      throw new Error('Workbook "' + name + '" dapat dibuka, tetapi sheet "Repair" tidak ditemukan.');
+    }
+  }
+
+  var entry = existing || { name: name, sourceSheetNames: [name], repairSheetName: 'Repair', spreadsheetId: '' };
+  entry.name = name;
+  entry.sourceSheetNames = [name];
+  entry.repairSheetName = 'Repair';
+  entry.spreadsheetId = spreadsheetId;
+  if (!existing) mirrors.push(entry);
+  props.setProperty(CONFIG.REPAIR_MIRROR_CUSTOM_CONFIG_PROPERTY, JSON.stringify(mirrors));
+  ui.alert(
+    spreadsheetId
+      ? 'Optional Repair Mirror "' + name + '" tersimpan.'
+      : 'Optional Repair Mirror "' + name + '" tersimpan tanpa link dan akan dilewati saat transfer.'
+  );
 }
 
 /* =========================
@@ -1335,10 +1404,11 @@ function _writeBuckets_(ctx) {
 }
 
 function _mirrorRepairSheets_(ctx) {
-  var result = { configured: CONFIG.REPAIR_MIRRORS.length, refreshed: 0, writtenRows: 0, skipped: 0, missingProperties: [] };
+  var mirrors = _getRepairMirrors_();
+  var result = { configured: mirrors.length, refreshed: 0, writtenRows: 0, skipped: 0, missingProperties: [], failed: [] };
 
-  for (var i = 0; i < CONFIG.REPAIR_MIRRORS.length; i++) {
-    var mirror = CONFIG.REPAIR_MIRRORS[i];
+  for (var i = 0; i < mirrors.length; i++) {
+    var mirror = mirrors[i];
     if (!_isRepairMirrorSelected_(ctx, mirror)) {
       result.skipped += 1;
       continue;
@@ -1346,51 +1416,111 @@ function _mirrorRepairSheets_(ctx) {
 
     var rows = [];
     for (var s = 0; s < mirror.sourceSheetNames.length; s++) {
-      var bucketRows = ctx.bucket.get(mirror.sourceSheetNames[s]);
-      if (bucketRows && bucketRows.length) rows = rows.concat(bucketRows);
+      var sourceSheetName = mirror.sourceSheetNames[s];
+      var bucketRows = ctx.bucket.get(sourceSheetName);
+      if (bucketRows && bucketRows.length) {
+        rows = rows.concat(bucketRows.map(function (item) {
+          var copy = _cloneObject_(item);
+          copy.repairMirrorBranch = sourceSheetName;
+          return copy;
+        }));
+      }
     }
-    rows.sort(_compareRepairMirrorRows_);
-
-    var spreadsheetId = PropertiesService.getScriptProperties().getProperty(mirror.spreadsheetIdProperty);
+    var spreadsheetId = mirror.spreadsheetId != null
+      ? mirror.spreadsheetId
+      : PropertiesService.getScriptProperties().getProperty(mirror.spreadsheetIdProperty);
     if (!String(spreadsheetId || '').trim()) {
       result.skipped += 1;
-      result.missingProperties.push(mirror.spreadsheetIdProperty);
+      result.missingProperties.push(mirror.spreadsheetIdProperty || mirror.name);
       _logWarn_(ctx, 'MIRROR', 'WARN - Repair mirror configuration missing (' + mirror.name + ')', {
-        metrics: { property: mirror.spreadsheetIdProperty },
-        notes: 'Jalankan menu SC Transfer > Setup Repair Mirror IDs; core transfer tetap dilanjutkan.',
+        metrics: { property: mirror.spreadsheetIdProperty || CONFIG.REPAIR_MIRROR_CUSTOM_CONFIG_PROPERTY },
+        notes: 'Isi melalui menu setup mirror jika diperlukan; mirror lain dan core transfer tetap dilanjutkan.',
       });
       continue;
     }
-    var mirrorSS = SpreadsheetApp.openById(spreadsheetId);
-    var repairSheet = mirrorSS.getSheetByName(mirror.repairSheetName);
-    if (!repairSheet) {
-      throw new Error('Repair mirror sheet tidak ditemukan untuk "' + mirror.name + '": ' + mirror.repairSheetName);
+    try {
+      var mirrorSS = SpreadsheetApp.openById(spreadsheetId);
+      var repairSheet = mirrorSS.getSheetByName(mirror.repairSheetName);
+      if (!repairSheet) {
+        throw new Error('Repair mirror sheet tidak ditemukan: ' + mirror.repairSheetName);
+      }
+      var written = _rewriteRepairMirror_(ctx, repairSheet, rows, mirror);
+      result.refreshed += 1;
+      result.writtenRows += written;
+    } catch (err) {
+      result.skipped += 1;
+      result.failed.push(mirror.name);
+      _logWarn_(ctx, 'MIRROR', 'WARN - Repair mirror skipped (' + mirror.name + ')', {
+        notes: 'Mirror optional dilewati; mirror lain dan core transfer tetap dilanjutkan.',
+        error: _errorToString_(err),
+      });
     }
-
-    var written = _rewriteRepairMirror_(ctx, repairSheet, rows);
-    result.refreshed += 1;
-    result.writtenRows += written;
   }
 
   return result;
 }
 
-function _isRepairMirrorSelected_(ctx, mirror) {
-  var mappingRows = ctx.mappingRows || [];
-  var selectedNames = new Set(mappingRows.map(function (item) { return String(item.name || '').trim(); }));
-  return mirror.sourceSheetNames.some(function (sheetName) { return selectedNames.has(sheetName); });
+function _getRepairMirrors_() {
+  return CONFIG.REPAIR_MIRRORS.slice().concat(
+    _readCustomRepairMirrors_(PropertiesService.getScriptProperties())
+  );
 }
 
-function _compareRepairMirrorRows_(a, b) {
-  var serviceCenterCompare = String(a.serviceCenterName || '').localeCompare(String(b.serviceCenterName || ''));
-  if (serviceCenterCompare !== 0) return serviceCenterCompare;
-  var phaseCompare = Number(a.phaseRank || 9) - Number(b.phaseRank || 9);
-  if (phaseCompare !== 0) return phaseCompare;
+function _readCustomRepairMirrors_(props) {
+  var raw = props.getProperty(CONFIG.REPAIR_MIRROR_CUSTOM_CONFIG_PROPERTY);
+  if (!String(raw || '').trim()) return [];
+  var parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (err) {
+    throw new Error('Invalid optional Repair mirror configuration JSON. Jalankan ulang menu Add/Update Optional SC Mirror.');
+  }
+  if (!Array.isArray(parsed)) throw new Error('Optional Repair mirror configuration must be an array.');
+  return parsed.filter(function (item) {
+    return item && String(item.name || '').trim() && Array.isArray(item.sourceSheetNames) && item.sourceSheetNames.length;
+  }).map(function (item) {
+    return {
+      name: String(item.name).trim(),
+      sourceSheetNames: item.sourceSheetNames.map(function (name) { return String(name || '').trim(); }).filter(Boolean),
+      repairSheetName: String(item.repairSheetName || 'Repair').trim(),
+      spreadsheetId: String(item.spreadsheetId || '').trim(),
+      includeBranch: false,
+    };
+  });
+}
+
+function _isRepairMirrorSelected_(ctx, mirror) {
+  var mappingRows = ctx.mappingRows || [];
+  var selectedNames = new Set(mappingRows.map(function (item) { return _norm_(item.name); }));
+  return mirror.sourceSheetNames.some(function (sheetName) { return selectedNames.has(_norm_(sheetName)); });
+}
+
+function _compareRepairMirrorRows_(a, b, includeBranch) {
+  var agingA = _repairAgingSortValue_(a.lastStatusAging);
+  var agingB = _repairAgingSortValue_(b.lastStatusAging);
+  if (agingA !== agingB) return agingB - agingA;
+  if (includeBranch) {
+    var branchCompare = String(a.repairMirrorBranch || '').localeCompare(String(b.repairMirrorBranch || ''));
+    if (branchCompare !== 0) return branchCompare;
+  }
+  var statusCompare = String(_translateLastStatus_(a.lastStatus) || '').localeCompare(String(_translateLastStatus_(b.lastStatus) || ''));
+  if (statusCompare !== 0) return statusCompare;
+  var statusTypeCompare = String(_resolveRepairStatusType_(a) || '').localeCompare(String(_resolveRepairStatusType_(b) || ''));
+  if (statusTypeCompare !== 0) return statusTypeCompare;
   return _compareClaimNumbers_(a.claimNumber, b.claimNumber);
 }
 
-function _rewriteRepairMirror_(ctx, sheet, rows) {
-  var headerMap = _ensureRepairMirrorHeaders_(sheet);
+function _repairAgingSortValue_(value) {
+  var number = Number(value);
+  return value !== '' && value != null && isFinite(number) ? number : Number.NEGATIVE_INFINITY;
+}
+
+function _rewriteRepairMirror_(ctx, sheet, rows, mirror) {
+  var headerMap = _ensureRepairMirrorHeaders_(sheet, !!mirror.includeBranch);
+  var includeBranchInSort = !!mirror.includeBranch && headerMap.branch != null;
+  rows = rows.slice().sort(function (a, b) {
+    return _compareRepairMirrorRows_(a, b, includeBranchInSort);
+  });
   var updateByClaim = _readRepairMirrorUpdates_(sheet, headerMap);
   var lastColumn = Math.max(sheet.getLastColumn(), CONFIG.REPAIR_OUTPUT_HEADERS.length);
   var oldBodyRows = Math.max(sheet.getLastRow() - 1, 0);
@@ -1407,6 +1537,9 @@ function _rewriteRepairMirror_(ctx, sheet, rows) {
     row[headerMap.deviceType] = item.deviceType;
     row[headerMap.imeiSn] = item.imeiSn;
     row[headerMap.serviceCenterName] = item.serviceCenterName;
+    if (mirror.includeBranch && headerMap.branch != null) {
+      row[headerMap.branch] = item.repairMirrorBranch || item.destSheetName || '';
+    }
     row[headerMap.lastStatus] = _translateLastStatus_(item.lastStatus);
     row[headerMap.statusType] = _resolveRepairStatusType_(item);
     row[headerMap.lastStatusDate] = _coerceToDate_(item.lastStatusDate) || (item.lastStatusDate || '');
@@ -1425,7 +1558,7 @@ function _rewriteRepairMirror_(ctx, sheet, rows) {
   return values.length;
 }
 
-function _ensureRepairMirrorHeaders_(sheet) {
+function _ensureRepairMirrorHeaders_(sheet, includeBranch) {
   var headers = sheet.getRange(1, 1, 1, Math.max(sheet.getLastColumn(), CONFIG.REPAIR_OUTPUT_HEADERS.length)).getValues()[0];
   var normalized = {};
   for (var i = 0; i < headers.length; i++) normalized[_norm_(headers[i])] = i;
@@ -1435,10 +1568,31 @@ function _ensureRepairMirrorHeaders_(sheet) {
     var header = CONFIG.REPAIR_OUTPUT_HEADERS[h];
     var idx = normalized[_norm_(header)];
     if (idx == null) {
-      idx = h;
+      idx = headers.length;
+      for (var blank = 0; blank < headers.length; blank++) {
+        if (!String(headers[blank] || '').trim()) {
+          idx = blank;
+          break;
+        }
+      }
       sheet.getRange(1, idx + 1).setValue(header);
+      if (idx === headers.length) headers.push(header);
+      else headers[idx] = header;
+      normalized[_norm_(header)] = idx;
     }
     map[keys[h]] = idx;
+  }
+  map.branch = normalized[_norm_('Branch')];
+  if (includeBranch && map.branch == null) {
+    var branchColumn = headers.length;
+    for (var b = 0; b < headers.length; b++) {
+      if (!String(headers[b] || '').trim()) {
+        branchColumn = b;
+        break;
+      }
+    }
+    sheet.getRange(1, branchColumn + 1).setValue('Branch');
+    map.branch = branchColumn;
   }
   return map;
 }

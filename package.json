@@ -9,11 +9,11 @@
   "scripts": {
     "check:root": "node static_smoke_check.js",
     "check:standalone": "node scripts/check-standalone.mjs",
-    "check:mappings": "node --test tests/mapping-contracts.test.mjs",
+    "check:mappings": "node --test tests/mapping-contracts.test.mjs tests/service-center-installer.test.mjs",
     "check:docs": "markdownlint-cli2 AGENTS.md README.md CHANGELOG.md && node scripts/check-docs.mjs",
     "check:diff": "node scripts/check-diff.mjs",
     "check:negative": "node --test tests/validator-negative.test.mjs",
-    "check": "node static_smoke_check.js && node scripts/check-standalone.mjs && node --test tests/mapping-contracts.test.mjs && markdownlint-cli2 AGENTS.md README.md CHANGELOG.md && node scripts/check-docs.mjs && node --test tests/validator-negative.test.mjs && node scripts/check-diff.mjs"
+    "check": "node static_smoke_check.js && node scripts/check-standalone.mjs && node --test tests/mapping-contracts.test.mjs tests/service-center-installer.test.mjs && markdownlint-cli2 AGENTS.md README.md CHANGELOG.md && node scripts/check-docs.mjs && node --test tests/validator-negative.test.mjs && node scripts/check-diff.mjs"
   },
   "devDependencies": {
     "@mermaid-js/parser": "1.2.0",
