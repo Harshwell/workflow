@@ -4,6 +4,7 @@ Perubahan material repository dicatat di sini berdasarkan outcome, flow/project 
 
 ## Unreleased
 
+- Service Center Extractor mereset `Log - SC Transfer` pada awal setiap run dan menambahkan `onInstall()`/`installServiceCenterTransferMenu()` untuk memulihkan menu global spreadsheet ketika `onOpen()` belum terpanggil.
 - Repair mirror setup sekarang memvalidasi akses workbook dan keberadaan sheet `Repair` sebelum menyimpan property; summary MIRROR menjadi warning eksplisit ketika `refreshed=0` agar tidak lagi terlihat seolah mirror berhasil.
 - Service Center Extractor menambahkan menu `Setup Repair Mirror IDs` untuk menyimpan URL/Spreadsheet ID ke Script Properties; konfigurasi mirror yang kosong sekarang dicatat sebagai warning dan mirror tersebut dilewati tanpa menggagalkan core transfer.
 - Outstanding `runWorker()` sekarang memperlakukan script-lock contention sebagai logged skip yang akan dicoba ulang oleh scheduled worker berikutnya, sedangkan Service Center Extractor menampilkan pesan error aktual pada progress cell agar diagnosis tidak berhenti pada pesan generik.

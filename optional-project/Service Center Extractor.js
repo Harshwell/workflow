@@ -75,7 +75,7 @@ const CONFIG = {
 
   LOGGING: {
     SHEET_NAME: "Log - SC Transfer",
-    MODE: "APPEND",
+    MODE: "RESET_EACH_RUN",
     MAX_ROWS: 5000,
     AUTO_RESIZE: true,
   },
@@ -420,6 +420,19 @@ function onOpen() {
     .addItem("Run Transfer Now", "runServiceCenterTransfer")
     .addItem("Setup Repair Mirror IDs", "setupRepairMirrorSpreadsheetIds")
     .addToUi();
+}
+
+function onInstall() {
+  onOpen();
+}
+
+function installServiceCenterTransferMenu() {
+  onOpen();
+  SpreadsheetApp.getActiveSpreadsheet().toast(
+    'Menu SC Transfer dipasang. Jika belum terlihat, reload spreadsheet.',
+    'SC Transfer',
+    8
+  );
 }
 
 function setupRepairMirrorSpreadsheetIds() {
@@ -848,6 +861,10 @@ function _prepareLogSheet_(srcSS) {
     "Notes",
     "Error",
   ]];
+
+  if (CONFIG.LOGGING.MODE === "RESET_EACH_RUN") {
+    sh.clearContents();
+  }
 
   if (sh.getLastRow() === 0) {
     sh.getRange(1, 1, 1, headers[0].length).setValues(headers);
