@@ -1,17 +1,17 @@
 /**
- * SC-Meilani
+ * SC-Sitcomtara
  *
  * Manual Google Sheets menu for mirroring Salvage data and upserting Salvage Repair data
  * from source workbook into the active destination workbook.
  *
  * Menu:
- * - SC Meilani > Salvage
- * - SC Meilani > Salvage Repair
+ * - SC - Sitcomtara > Salvage
+ * - SC - Sitcomtara > Salvage Repair
  */
 
 const SC_MEILANI_CONFIG = Object.freeze({
-  sourceSpreadsheetId: '',
-  destinationSpreadsheetId: '',
+  sourceSpreadsheetId: '1zRlYrSRssv9LVcPKEq90CmmvTRsZoN_TqfIg2pNufbc',
+  destinationSpreadsheetId: '1yXQ4FwvPbBX22vfwDnsnrefGkq3cOoR8vc_tJILgZFg',
   scriptVersion: '2026-08-05-repair-start-approval-cutoff-1',
   menuName: 'SC - Sitcomtara',
   logSheetName: 'Log SC-Sitcomtara',
