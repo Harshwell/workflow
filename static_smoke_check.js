@@ -100,6 +100,14 @@ function createContext() {
       getThreadById: () => threadStub
     },
     SpreadsheetApp: {
+      newDataValidation: () => {
+        const state = { options: [] };
+        return {
+          requireValueInList: function(options) { state.options = (options || []).slice(); return this; },
+          setAllowInvalid: function() { return this; },
+          build: function() { return { options: state.options.slice() }; }
+        };
+      },
       openById: () => {
         const sheetStub = {
           getLastRow: () => 1,
