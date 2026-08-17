@@ -279,6 +279,8 @@ Reconciled contract: current runtime treats `claim_submitted_datetime` as primar
 
 Dropdown `Status` pada Raw Data dan seluruh target memakai urutan canonical: `Pending Logistic`, `Pending Front`, `DONE`, `Pending Insurance`, `Pending TO`, `Pending Finance`, `Pending PIC`, `Pending Cust`, `Pending Buss. Team`, `Pending SC (TA)`, `Pending SC (Repair)`, `Pending SC (Estimation)`, `Delivering`, `Delivered`, `Waiting Courier`, dan `Re-pickup`. Pembaruan validation tidak memutasi nilai manual lama yang telah dibackup.
 
+Restore `Status` membersihkan validation lama sebelum menulis backup, lalu memasang kembali dropdown canonical. Dengan demikian nilai legacy tetap dipertahankan 1:1 tanpa ditolak rule lama; kegagalan restore menyertakan source restore, sheet, range/cell, Claim Number, dan nilai pada structured log.
+
 Restore only fills blank destination manual cells. Existing non-empty destination value wins. Rerun tidak boleh membuat duplicate claim atau menghapus manual state yang valid.
 
 ## Configuration Registry

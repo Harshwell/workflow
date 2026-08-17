@@ -583,18 +583,23 @@ function restoreOpsManualFromMainTempForSub06c_(ss, pic, opts) {
       if (rec.rowNo) {
         if (iU !== -1 && outU && String(outU[r][0] || '').trim() !== '') styleJobs.push({ srcRow: rec.rowNo, srcCol: 6, dstRow: r + 2, dstCol: iU + 1 });
         if (iT !== -1 && outT && String(outT[r][0] || '').trim() !== '') styleJobs.push({ srcRow: rec.rowNo, srcCol: 7, dstRow: r + 2, dstCol: iT + 1 });
-        if (iS !== -1 && outS && String(outS[r][0] || '').trim() !== '') styleJobs.push({ srcRow: rec.rowNo, srcCol: 8, dstRow: r + 2, dstCol: iS + 1 });
+        if (iS !== -1 && outS && String(outS[r][0] || '').trim() !== '') styleJobs.push({ srcRow: rec.rowNo, srcCol: 8, dstRow: r + 2, dstCol: iS + 1, statusFormatOnly: true });
         if (iR !== -1 && outR && String(outR[r][0] || '').trim() !== '') styleJobs.push({ srcRow: rec.rowNo, srcCol: 9, dstRow: r + 2, dstCol: iR + 1 });
       }
     }
 
     try { if (outU) sh.getRange(2, iU + 1, n, 1).setValues(outU); } catch (e) {}
     try { if (outT) sh.getRange(2, iT + 1, n, 1).setValues(outT); } catch (e) {}
-    try { if (outS) sh.getRange(2, iS + 1, n, 1).setValues(outS); } catch (e) {}
+    if (outS) __restoreStatusValuesWithCanonicalValidation06c_(sh, 2, iS + 1, outS, claims, 'MAIN_TEMP');
     try { if (outR) sh.getRange(2, iR + 1, n, 1).setValues(outR); } catch (e) {}
     for (let j = 0; j < styleJobs.length; j++) {
       const job = styleJobs[j];
-      try { shBak.getRange(job.srcRow, job.srcCol).copyTo(sh.getRange(job.dstRow, job.dstCol), { contentsOnly: false }); } catch (eCopy) {}
+      try {
+        const src = shBak.getRange(job.srcRow, job.srcCol);
+        const dst = sh.getRange(job.dstRow, job.dstCol);
+        if (job.statusFormatOnly) src.copyTo(dst, SpreadsheetApp.CopyPasteType.PASTE_FORMAT, false);
+        else src.copyTo(dst, { contentsOnly: false });
+      } catch (eCopy) {}
     }
   }
 
@@ -602,6 +607,65 @@ function restoreOpsManualFromMainTempForSub06c_(ss, pic, opts) {
     try { ss.deleteSheet(shBak); } catch (eDel) {}
   }
   return { restored: restored, rows: Object.keys(map).length, skipped: false };
+}
+
+/**
+ * Restore manual Status values without letting a stale per-cell dropdown reject
+ * legacy values. Values are written with validation temporarily cleared, then
+ * the current canonical rule is re-applied without changing those values.
+ */
+function __restoreStatusValuesWithCanonicalValidation06c_(sh, startRow, col1, values, claims, sourceLabel) {
+  if (!sh || !values || !values.length || col1 < 1) return { written: 0, failed: 0 };
+  const range = sh.getRange(startRow, col1, values.length, 1);
+  const sheetName = sh.getName ? sh.getName() : '?';
+  const rangeA1 = range.getA1Notation ? range.getA1Notation() : ('R' + startRow + 'C' + col1);
+  let written = 0;
+  let failed = 0;
+
+  try { range.clearDataValidations(); } catch (eClear) {
+    throw new Error('Status restore validation clear failed | source=' + sourceLabel + ' | sheet=' + sheetName + ' | range=' + rangeA1 + ' | error=' + (eClear && eClear.message ? eClear.message : eClear));
+  }
+
+  try {
+    range.setValues(values);
+    written = values.length;
+  } catch (batchErr) {
+    for (let i = 0; i < values.length; i++) {
+      const cell = sh.getRange(startRow + i, col1, 1, 1);
+      try {
+        cell.clearDataValidations();
+        cell.setValue(values[i][0]);
+        written++;
+      } catch (cellErr) {
+        failed++;
+        const claim = claims && claims[i] ? claims[i][0] : '';
+        const cellA1 = cell.getA1Notation ? cell.getA1Notation() : ('R' + (startRow + i) + 'C' + col1);
+        try {
+          if (typeof logLine_ === 'function') logLine_(
+            'WARN',
+            'STATUS_RESTORE_WRITE_FAILED',
+            'source=' + sourceLabel + ' | sheet=' + sheetName + ' | range=' + cellA1 + ' | claim=' + String(claim || '') + ' | value=' + String(values[i][0] || ''),
+            String(cellErr && cellErr.message ? cellErr.message : cellErr),
+            'WARN'
+          );
+        } catch (eLog) {}
+      }
+    }
+  }
+
+  try {
+    const options = (typeof STATUS_DROPDOWN_OPTIONS !== 'undefined') ? Array.from(STATUS_DROPDOWN_OPTIONS) : [];
+    if (options.length) {
+      const rule = SpreadsheetApp.newDataValidation()
+        .requireValueInList(options, true)
+        .setAllowInvalid(false)
+        .build();
+      range.setDataValidation(rule);
+    }
+  } catch (eValidation) {
+    throw new Error('Status restore canonical validation failed | source=' + sourceLabel + ' | sheet=' + sheetName + ' | range=' + rangeA1 + ' | written=' + written + ' | failed=' + failed + ' | error=' + (eValidation && eValidation.message ? eValidation.message : eValidation));
+  }
+  return { written: written, failed: failed };
 }
 
 function restoreOpsManualFromBackupSheet06c_(ss, pic) {
@@ -665,7 +729,7 @@ function restoreOpsManualFromBackupSheet06c_(ss, pic) {
     }
     try { if (outU) sh.getRange(2,iU+1,n,1).setValues(outU); } catch(e){}
     try { if (outT) sh.getRange(2,iT+1,n,1).setValues(outT); } catch(e){}
-    try { if (outS) sh.getRange(2,iS+1,n,1).setValues(outS); } catch(e){}
+    if (outS) __restoreStatusValuesWithCanonicalValidation06c_(sh, 2, iS + 1, outS, claims, 'MANUAL_BACKUP');
     try { if (outR) sh.getRange(2,iR+1,n,1).setValues(outR); } catch(e){}
   }
   return { restored: restored, rows: Object.keys(map).length };
@@ -796,6 +860,15 @@ function restoreOpsManualColumnsRich06c_(ss, pic, snapshot) {
       }
     };
 
+    const applyStatusSeg = (idxCol0, rowNums, rowValObj) => {
+      if (!rowNums.length) return;
+      __groupConsecutiveRows_(rowNums).forEach(function(seg) {
+        const vals2d = seg.map(function(rn) { return [rowValObj[rn]]; });
+        const claim2d = seg.map(function(rn) { return claims[rn - 2] || ['']; });
+        __restoreStatusValuesWithCanonicalValidation06c_(sh, seg[0], idxCol0 + 1, vals2d, claim2d, 'RICH_SNAPSHOT');
+      });
+    };
+
     const applyFormulaSeg = (idxCol0, rowNums, rowFormulaObj) => {
       if (idxCol0 === -1 || !rowNums.length) return;
       __groupConsecutiveRows_(rowNums).forEach(function(seg) {
@@ -830,7 +903,7 @@ function restoreOpsManualColumnsRich06c_(ss, pic, snapshot) {
     }
 
     if (idxStatus !== -1) {
-      applyValSeg(idxStatus, rowsStatus, mapStatus);
+      applyStatusSeg(idxStatus, rowsStatus, mapStatus);
     }
     if (idxAwb !== -1) applyValSeg(idxAwb, rowsAwb, mapAwb);
     if (idxTimestampAwb !== -1) { applyValSeg(idxTimestampAwb, rowsTimestampAwb, mapTimestampAwb); if (Object.keys(mapTimestampAwbFmt).length) applyNumFmtSeg(idxTimestampAwb, rowsTimestampAwb, mapTimestampAwbFmt); }
@@ -1087,7 +1160,7 @@ function restoreOpsFieldsFromRawBackup_(ss, rawSheet, headerIndexRaw, pic) {
     }
 
     if (idxStatusOps !== -1 && outStatus) {
-      try { sh.getRange(2, idxStatusOps + 1, m, 1).setValues(outStatus); } catch (e) {}
+      __restoreStatusValuesWithCanonicalValidation06c_(sh, 2, idxStatusOps + 1, outStatus, claimsOps, 'RAW_BACKUP');
     }
 
     if (idxTsOps !== -1 && outTs) {

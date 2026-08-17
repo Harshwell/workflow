@@ -100,6 +100,14 @@ function createContext() {
       getThreadById: () => threadStub
     },
     SpreadsheetApp: {
+      newDataValidation: () => {
+        const state = { options: [] };
+        return {
+          requireValueInList: function(options) { state.options = (options || []).slice(); return this; },
+          setAllowInvalid: function() { return this; },
+          build: function() { return { options: state.options.slice() }; }
+        };
+      },
       openById: () => {
         const sheetStub = {
           getLastRow: () => 1,
@@ -366,6 +374,32 @@ function runSmoke() {
     const subFlagOwnershipOk = subSource.indexOf('applyOperationalClaimHighlightsByRaw_') === -1
       && subSource.indexOf('preserveClaimHighlightToTarget') !== -1
       && (routingSource.match(/applyOperationalClaimHighlightsByRaw_/g) || []).length === 1;
+    const legacyStatusSheet = {
+      value: '',
+      validationActive: true,
+      appliedRule: null,
+      getName: function() { return 'Finish'; },
+      getRange: function() {
+        const sh = this;
+        return {
+          clearDataValidations: function() { sh.validationActive = false; },
+          setValues: function(values) {
+            if (sh.validationActive) throw new Error('legacy dropdown rejected value');
+            sh.value = values[0][0];
+          },
+          setValue: function(value) { sh.value = value; },
+          setDataValidation: function(rule) { sh.validationActive = true; sh.appliedRule = rule; },
+          getA1Notation: function() { return 'Z4'; }
+        };
+      }
+    };
+    const statusRestoreResult = __restoreStatusValuesWithCanonicalValidation06c_(
+      legacyStatusSheet, 4, 26, [['Pending Admin']], [['CLAIM-LEGACY']], 'SMOKE'
+    );
+    const legacyStatusRestoreOk = statusRestoreResult.written === 1
+      && legacyStatusSheet.value === 'Pending Admin'
+      && legacyStatusSheet.appliedRule
+      && JSON.stringify(legacyStatusSheet.appliedRule.options) === JSON.stringify(STATUS_DROPDOWN_OPTIONS);
     const rejectClaimTypeOk = REJECT_CLAIM_TYPE_BY_LAST_STATUS.COURIER_CLAIM_PICKUP_REJECT_DONE === 'SC - Middle'
       && REJECT_CLAIM_TYPE_BY_LAST_STATUS.QOALA_CLAIM_REJECT === 'Front';
     const cvBerkahBranchOk = __getBranchFromServiceCenter06_('CV Berkah Athallah') === 'CV Berkah'
@@ -440,7 +474,7 @@ function runSmoke() {
       && busyLockResult.pending === true
       && busyLockPendingConsumed === true;
 
-    return { ok: b2bOk && highlightOk && finishCloneOk && submissionDateOk && strictSyncOk && smartStageAgingOk && pendingSubOk && statusDropdownOk && finishMirrorOk && repairTypeOk && subFlagOwnershipOk, b2bOk, highlightOk, finishCloneOk, submissionDateOk, strictSyncOk, smartStageAgingOk, pendingSubOk, statusDropdownOk, finishMirrorOk, repairTypeOk, subFlagOwnershipOk, stageSameBucket, stageChangedBucket, stageMissingRaw, stageBlankRaw, strictVal: String(strictVal), validationCleared: strictSheet.validationCleared, b2bRow: b2bRow, bg: highlightSheet.bgs[0][0], note: highlightSheet.notes[0][0] };
+    return { ok: b2bOk && highlightOk && finishCloneOk && submissionDateOk && strictSyncOk && smartStageAgingOk && pendingSubOk && statusDropdownOk && finishMirrorOk && repairTypeOk && subFlagOwnershipOk && legacyStatusRestoreOk, b2bOk, highlightOk, finishCloneOk, submissionDateOk, strictSyncOk, smartStageAgingOk, pendingSubOk, statusDropdownOk, finishMirrorOk, repairTypeOk, subFlagOwnershipOk, legacyStatusRestoreOk, stageSameBucket, stageChangedBucket, stageMissingRaw, stageBlankRaw, strictVal: String(strictVal), validationCleared: strictSheet.validationCleared, b2bRow: b2bRow, bg: highlightSheet.bgs[0][0], note: highlightSheet.notes[0][0] };
   })()`, ctx);
   if (!workflowGuard || workflowGuard.ok !== true) {
     throw new Error('MAIN/SUB workflow regression guard failed: ' + JSON.stringify(workflowGuard || {}, null, 2));

@@ -4,6 +4,7 @@ Perubahan material repository dicatat di sini berdasarkan outcome, flow/project 
 
 ## Unreleased
 
+- Restore manual `Status` kini menulis backup dengan validation sementara dilepas lalu memasang kembali dropdown canonical, sehingga nilai legacy tidak lagi gagal karena rule lama yang ikut tercopy; error restore diperkaya dengan source, sheet, range, claim, dan value.
 - Claim flagging sekarang hanya dihitung dan diterapkan oleh MAIN setelah formatting/enrichment/sort final; seluruh warna flag memakai policy canonical, kegagalan fill diisolasi dan dilog per claim, sedangkan SUB hanya mempertahankan note/background Claim Number saat relocation tanpa menghitung flag dari Raw OLD/NEW.
 - Dropdown manual `Status` sekarang memakai satu daftar canonical 16 opsi pada Raw Data dan seluruh target tanpa memutasi nilai lama; lima replacement-delivery Last Status dimirror ke `Finish` dan SC universe pada MAIN/SUB/FORM, sementara managed `Finish.Repair Type` otomatis mengklasifikasikan `Repair` atau `Replace` dari exact normalized Last Status.
 - Profile standalone SC - Sitcomtara sekarang menunjuk source workflow bersama dan destination workbook Sitcomtara yang diminta, sehingga preflight tidak lagi berhenti pada `Source spreadsheet ID kosong.`; identitas komentar/menu profile juga diselaraskan dengan Sitcomtara.
