@@ -191,7 +191,7 @@ Daftar status lengkap dieksekusi oleh `OPS_ROUTING_POLICY.LAST_STATUS_BY_SHEET`;
 | `OR - OLD` | `WAITING_PAYMENT`. | SUB relocation. |
 | `Start` | Walk-in/pickup/courier start statuses. `COURIER_PICKUP_START_DONE` juga terlihat di SC universe. | Service/Claim Type dan SC mirror rule. |
 | SC universe | Receive, estimate, repair/on-progress, insurance review/approval, OR-repair, dan finish tracking statuses. | Split oleh `SC_NAME_KEYWORDS`, PIC, branch, Daily Report Base, standalone projects. |
-| `Finish` | Repair/checkout/finish statuses; sejumlah status tetap berada di SC dan dicloning ke Finish. | SUB clone/relocate dan reporting. |
+| `Finish` | Repair/checkout/finish statuses; replacement delivery final (`QOALA_WAITING_CUSTOMER_REPLACE`, `CUSTOMER_RECEIVE_REPLACE`, dan tiga courier replace-pickup statuses) tetap dimirror ke SC universe. | SUB clone/relocate, managed `Repair Type`, dan reporting. |
 | `Expired Claim` | `CLAIM_EXPIRE`, `CLAIM_EXPIRE_WALKIN`. | SUB relocation dapat memindahkan claim keluar lagi. |
 | `Reject Claim` | Status yang mengandung `reject` dan `Last Status Aging <= 30`; jika aging tidak tersedia, last-update datetime harus berada dalam 30 hari. | MAIN route, SUB relocation, `REJECT_CLAIM_TYPE_BY_LAST_STATUS`. |
 | `PO` | Replacement/back-stage statuses. | `OR` serta `Service Center PIC`. |
@@ -268,6 +268,7 @@ Reconciled contract: current runtime treats `claim_submitted_datetime` as primar
 | Field group | Ownership | Preservation/write contract |
 | --- | --- | --- |
 | `Update Status`, `Timestamp`, `Status`, `Remarks` | Manual/restored where columns exist. | Snapshot before clear; restore fills blank destination by claim, preserving rich text, formula, wrap, format, and validation where supported. |
+| `Repair Type` | Managed/derived khusus `Finish`. | Exact normalized Last Status pada repair-status policy menghasilkan `Repair`; Last Status lain yang terisi menghasilkan `Replace`; blank tetap blank. |
 | `AWB`, `Timestamp AWB` | Manual/restored, primarily Start contract. | Backed up to Raw and restored after routing; formula retention is required. |
 | `_OPS_MAIN_SUB_TEMP` | Hidden handoff state. | Match by Claim Number + Service Center; consumed by SUB only in the 09:00 handoff window. |
 | `_OPS_MANUAL_BACKUP` | Hidden fallback state. | Match by PIC + Claim Number when normal snapshot restore misses. |
@@ -275,6 +276,8 @@ Reconciled contract: current runtime treats `claim_submitted_datetime` as primar
 | `Start Date`, `End Date`, `Details` | Layout-dependent. | Active for operational/Special Case context; deprecated and removed from B2B/EV-Bike/Doss. |
 | `DB`, operational `Status Type` | Deprecated output columns. | May still exist in internal classification/maps, but MAIN/SUB/FORM operational writers must not create/write them. |
 | `Update Status Asso`, `Timestamp Asso`, `Update Status Admin`, `Timestamp Admin` | Deprecated. | Removed/ignored by layout enforcement and writers. |
+
+Dropdown `Status` pada Raw Data dan seluruh target memakai urutan canonical: `Pending Logistic`, `Pending Front`, `DONE`, `Pending Insurance`, `Pending TO`, `Pending Finance`, `Pending PIC`, `Pending Cust`, `Pending Buss. Team`, `Pending SC (TA)`, `Pending SC (Repair)`, `Pending SC (Estimation)`, `Delivering`, `Delivered`, `Waiting Courier`, dan `Re-pickup`. Pembaruan validation tidak memutasi nilai manual lama yang telah dibackup.
 
 Restore only fills blank destination manual cells. Existing non-empty destination value wins. Rerun tidak boleh membuat duplicate claim atau menghapus manual state yang valid.
 

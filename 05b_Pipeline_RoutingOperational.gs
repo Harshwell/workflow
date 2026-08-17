@@ -209,19 +209,24 @@ function compileRoutingIndex_(routingMap) {
  * change cannot silently turn them into a single-destination route.
  */
 function enforceRequiredMultiDestinationTargets05b_(status, targets, opsPolicy) {
-  const statusKey = String(status || '').trim();
+  const statusKey = String(status || '').trim().toUpperCase();
   const out = Array.isArray(targets) ? targets.slice() : [];
-  if (statusKey !== 'COURIER_PICKUP_START_DONE') return uniq05a_(out);
+  const mirrorFinish = (typeof FINISH_SC_MIRROR_STATUSES !== 'undefined' && Array.isArray(FINISH_SC_MIRROR_STATUSES))
+    ? FINISH_SC_MIRROR_STATUSES.indexOf(statusKey) !== -1
+    : false;
+  if (statusKey !== 'COURIER_PICKUP_START_DONE' && !mirrorFinish) return uniq05a_(out);
 
   const sheets = (opsPolicy && opsPolicy.SHEETS) ? opsPolicy.SHEETS : {};
-  const startSheet = String(sheets.START || 'Start').trim();
+  const workflowSheet = mirrorFinish
+    ? String(sheets.FINISH || 'Finish').trim()
+    : String(sheets.START || 'Start').trim();
   const scSheets = [
     String(sheets.SC_FARHAN || 'SC - Farhan').trim(),
     String(sheets.SC_MEILANI || 'SC - Meilani').trim(),
     String(sheets.SC_IVAN || sheets.SC_IVAN_NAME || 'SC - Meindar').trim()
   ].filter(Boolean);
 
-  if (startSheet) out.push(startSheet);
+  if (workflowSheet) out.push(workflowSheet);
 
   const hasScTarget = out.some(function (name) {
     return scSheets.indexOf(String(name || '').trim()) > -1;
@@ -1296,6 +1301,9 @@ function buildSheetWriters_(ss, routingMap, headerIndexRaw, pic) {
         const lastStatusVal = getRaw(rawRow, h.lastStatus);
         set('Claim Number', claimNumberVal);
         set('Last Status', lastStatusVal);
+        if (sheetName === 'Finish' && typeof resolveFinishRepairType_ === 'function') {
+          set('Repair Type', resolveFinishRepairType_(lastStatusVal));
+        }
         set('Partner', getRaw(rawRow, h.businessPartner));
 
         // Activity Log (optional column)
