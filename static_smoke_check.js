@@ -224,14 +224,14 @@ function runSmoke() {
       && b2bRow[4] === 0;
 
     const policy = getOperationalClaimHighlightPolicy_();
-    const markerBg = policy.remaining1Month.bg;
+    const markerBg = policy.secondYear.bg;
     const highlightSheet = {
-      getName: function () { return 'SC - Farhan'; },
+      getName: function () { return 'Submission'; },
       getLastRow: function () { return 2; },
       getLastColumn: function () { return 1; },
       values: [['Claim Number'], ['ABC']],
-      bgs: [[markerBg]],
-      notes: [['Flagging retained from MAIN\\n\\nSubmission Date : 25 May 26']],
+      bgs: [['#ffffff']],
+      notes: [['']],
       getRange: function (row, col, numRows, numCols) {
         const sh = this;
         return {
@@ -242,16 +242,22 @@ function runSmoke() {
           getBackgrounds: function () { return sh.bgs.map(function (r) { return r.slice(); }); },
           setBackgrounds: function (v) { sh.bgs = v.map(function (r) { return r.slice(); }); },
           getNotes: function () { return sh.notes.map(function (r) { return r.slice(); }); },
-          setNotes: function (v) { sh.notes = v.map(function (r) { return r.slice(); }); }
+          setNotes: function (v) { sh.notes = v.map(function (r) { return r.slice(); }); },
+          getNumRows: function () { return numRows; },
+          getNumColumns: function () { return numCols; },
+          getA1Notation: function () { return 'A2:A2'; }
         };
       }
     };
-    const ss = { getSheetByName: function () { return highlightSheet; } };
-    applyOperationalClaimHighlightsByRaw_(ss, [['ABC']], { claim_number: 0 }, 'SUB');
-    const highlightOk = typeof __shouldPreserveSubHighlight05b_ === 'function'
-      && __shouldPreserveSubHighlight05b_('SUB', markerBg, 'Flagging retained from MAIN') === true
-      && highlightSheet.notes[0][0].indexOf('Flagging retained from MAIN') === 0
-      && normalizeColor_(highlightSheet.bgs[0][0]) === normalizeColor_(markerBg);
+    const ss = { getSheetByName: function (name) { return name === 'Submission' ? highlightSheet : null; } };
+    RUNTIME.flowName = 'main';
+    applyOperationalClaimHighlightsByRaw_(ss, [['ABC', 13]], { claim_number: 0, month_policy_aging: 1 }, 'Master');
+    const highlightOk = highlightSheet.notes[0][0].indexOf('Second-Year (Market Value)') === 0
+      && normalizeColor_(highlightSheet.bgs[0][0]) === normalizeColor_(markerBg)
+      && policy.priority[0] === 'migrationPolicy'
+      && [policy.expired, policy.flex, policy.b2b, policy.duplicate, policy.secondYear,
+        policy.firstMonthPolicy, policy.remaining1Month, policy.migrationPolicy]
+        .every(function(item) { return item && /^#[0-9a-f]{6}$/i.test(String(item.bg || '')); });
 
     const finishCloneOk = typeof __shouldKeepScRowAndCloneFinishSub06a_ === 'function'
       && __shouldKeepScRowAndCloneFinishSub06a_('SERVICE_CENTER_CLAIM_WAITING_PICKUP_FINISH') === true;
@@ -339,6 +345,27 @@ function runSmoke() {
     courierFinalTargets = enforceRequiredMultiDestinationTargets05b_('COURIER_PICKUP_START_DONE', courierFinalTargets, CONFIG.opsRouting);
     const courierFinalFanOutOk = courierFinalTargets.indexOf('Start') !== -1
       && courierFinalTargets.some(function (name) { return /^SC - /.test(name); });
+    const expectedStatusOptions = [
+      'Pending Logistic', 'Pending Front', 'DONE', 'Pending Insurance',
+      'Pending TO', 'Pending Finance', 'Pending PIC', 'Pending Cust',
+      'Pending Buss. Team', 'Pending SC (TA)', 'Pending SC (Repair)',
+      'Pending SC (Estimation)', 'Delivering', 'Delivered', 'Waiting Courier',
+      'Re-pickup'
+    ];
+    const statusDropdownOk = JSON.stringify(STATUS_DROPDOWN_OPTIONS) === JSON.stringify(expectedStatusOptions)
+      && VALIDATION_FALLBACKS.STATUS === STATUS_DROPDOWN_OPTIONS;
+    const finishMirrorOk = FINISH_SC_MIRROR_STATUSES.every(function (status) {
+      const targets = enforceRequiredMultiDestinationTargets05b_(status, mainRoutingIdx[status], CONFIG.opsRouting);
+      return targets.indexOf('Finish') !== -1 && targets.some(function (name) { return /^SC - /.test(name); });
+    });
+    const repairTypeOk = resolveFinishRepairType_(' service_center_claim_done ') === 'Repair'
+      && resolveFinishRepairType_(' courier_replace_pickup_done ') === 'Replace'
+      && resolveFinishRepairType_('  ') === '';
+    const subSource = fs.readFileSync(path.join(ROOT, '06a_EntryPoints.gs'), 'utf8');
+    const routingSource = fs.readFileSync(path.join(ROOT, '05b_Pipeline_RoutingOperational.gs'), 'utf8');
+    const subFlagOwnershipOk = subSource.indexOf('applyOperationalClaimHighlightsByRaw_') === -1
+      && subSource.indexOf('preserveClaimHighlightToTarget') !== -1
+      && (routingSource.match(/applyOperationalClaimHighlightsByRaw_/g) || []).length === 1;
     const rejectClaimTypeOk = REJECT_CLAIM_TYPE_BY_LAST_STATUS.COURIER_CLAIM_PICKUP_REJECT_DONE === 'SC - Middle'
       && REJECT_CLAIM_TYPE_BY_LAST_STATUS.QOALA_CLAIM_REJECT === 'Front';
     const cvBerkahBranchOk = __getBranchFromServiceCenter06_('CV Berkah Athallah') === 'CV Berkah'
@@ -413,7 +440,7 @@ function runSmoke() {
       && busyLockResult.pending === true
       && busyLockPendingConsumed === true;
 
-    return { ok: b2bOk && highlightOk && finishCloneOk && submissionDateOk && strictSyncOk && smartStageAgingOk && pendingSubOk, b2bOk, highlightOk, finishCloneOk, submissionDateOk, strictSyncOk, smartStageAgingOk, pendingSubOk, stageSameBucket, stageChangedBucket, stageMissingRaw, stageBlankRaw, strictVal: String(strictVal), validationCleared: strictSheet.validationCleared, b2bRow: b2bRow, bg: highlightSheet.bgs[0][0], note: highlightSheet.notes[0][0] };
+    return { ok: b2bOk && highlightOk && finishCloneOk && submissionDateOk && strictSyncOk && smartStageAgingOk && pendingSubOk && statusDropdownOk && finishMirrorOk && repairTypeOk && subFlagOwnershipOk, b2bOk, highlightOk, finishCloneOk, submissionDateOk, strictSyncOk, smartStageAgingOk, pendingSubOk, statusDropdownOk, finishMirrorOk, repairTypeOk, subFlagOwnershipOk, stageSameBucket, stageChangedBucket, stageMissingRaw, stageBlankRaw, strictVal: String(strictVal), validationCleared: strictSheet.validationCleared, b2bRow: b2bRow, bg: highlightSheet.bgs[0][0], note: highlightSheet.notes[0][0] };
   })()`, ctx);
   if (!workflowGuard || workflowGuard.ok !== true) {
     throw new Error('MAIN/SUB workflow regression guard failed: ' + JSON.stringify(workflowGuard || {}, null, 2));
