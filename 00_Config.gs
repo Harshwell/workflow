@@ -1194,6 +1194,13 @@ const CLAIM_HIGHLIGHT_POLICY = Object.freeze({
   // Apply to both Admin and PIC workbooks
   APPLY_TO_WORKBOOK_PROFILES: Object.freeze(['ADMIN', 'PIC']),
 
+  // First matching flag owns the single Claim Number fill; all matching details
+  // are still combined in the note.
+  PRIORITY: Object.freeze([
+    'MIGRATION_POLICY', 'DUPLICATE', 'EXPIRED', 'FLEX', 'B2B',
+    'SECOND_YEAR', 'FIRST_MONTH_POLICY', 'REMAINING_1_MONTH'
+  ]),
+
   // Column identification
   CLAIM_NUMBER_HEADER: 'Claim Number',
   CLAIM_NUMBER_HEADER_ALIASES: Object.freeze(['Claim Number', 'Claim No', 'Claim No.', 'Claim #', 'Claim#']),
@@ -1203,7 +1210,11 @@ const CLAIM_HIGHLIGHT_POLICY = Object.freeze({
     EXPIRED: '#fff2cc', // light yellow
     FLEX: '#f4c7c3',    // light red/pink
     B2B: '#c9daf8',     // light blue
-    DUPLICATE: '#dd7e6b' // duplicate claim
+    DUPLICATE: '#dd7e6b', // duplicate claim
+    SECOND_YEAR: '#d9ead3',
+    FIRST_MONTH_POLICY: '#d9d2e9',
+    REMAINING_1_MONTH: '#fce5cd',
+    MIGRATION_POLICY: '#ff00ff'
   }),
 
   // Canonical notes (must be written by the pipeline)
@@ -1211,6 +1222,10 @@ const CLAIM_HIGHLIGHT_POLICY = Object.freeze({
     EXPIRED: 'Policy already expired.',
     FLEX: 'Flex claim.',
     B2B: 'B2B claim.',
+    SECOND_YEAR: 'Second-Year (Market Value).',
+    FIRST_MONTH_POLICY: 'First-Month Policy.',
+    REMAINING_1_MONTH: 'Policy Remaining <= 1 Month.',
+    MIGRATION_POLICY: 'Migration Policy.',
     DUPLICATE_PREFIX: 'Duplicate Claim - Refer to Claim Number'
   }),
 
@@ -1228,7 +1243,9 @@ const CLAIM_HIGHLIGHT_POLICY = Object.freeze({
    *   so the system can recover from any previous accidental mass-fill without breaking other styling.
    */
   CLEAR_MARKER_BACKGROUNDS_WHEN_NOT_FLAGGED: true,
-  MARKER_COLORS: Object.freeze(['#fff2cc', '#f4c7c3', '#c9daf8', '#dd7e6b'])
+  MARKER_COLORS: Object.freeze([
+    '#fff2cc', '#f4c7c3', '#c9daf8', '#dd7e6b', '#d9ead3', '#d9d2e9', '#fce5cd', '#ff00ff'
+  ])
 });
 
 

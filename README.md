@@ -416,7 +416,7 @@ Record runtime result, sample IDs yang sudah direduksi/redacted, rollback action
 | Device/customer | `device_type`, `device_brand`, `imei_number`, `device_imei`, `holder_name`, `customer_name`, `outlet_name`, `pa_name`, `spa_name`. | Destination fields; customer/device values classified restricted. |
 | Finance | `sum_insured_amount`, `claim_amount`, `claim_own_risk_amount`, `nett_claim_amount`. | Optional/layout-dependent; `Selisih` and `% Approval` derived when numeric. |
 | Classification | Claim token `SFP/SFX/SMR` = OLD; `VVMAR/GADLD` = NEW; duplicate comparison uses policy/source/claim/submission/status with configured 62-day window. | Internal classification can remain even though operational `DB` column is deprecated. |
-| Highlight flags | Migration Policy, expired, Flex, B2B, duplicate, second-year, first-month, remaining-one-month. | Priority comes from configured policy, not table order. `month_policy_aging > 12` is strict. |
+| Highlight flags | Migration Policy, expired, Flex, B2B, duplicate, second-year, first-month, remaining-one-month. | MAIN exclusively calculates and applies note/fill after final operational formatting and sorting; priority comes from configured policy, and `month_policy_aging > 12` is strict. SUB only preserves the existing Claim Number note/fill during updates and relocation. |
 | SC-specific output | `Type`, `Branch`, `Service Center PIC`. | Derived only where destination header exists. |
 | Workflow output | `Claim Type` on Reject Claim; service/claim type on Start/Finish/Expired depending template. | Status/source fallback must be tested per sheet. |
 

@@ -411,9 +411,6 @@ function runPipeline_(pic, fileIds, opts) {
     }
   } catch (eSnapFallback) {}
 
-// Re-apply Claim Number markers AFTER template format copy
-  try { applyOperationalClaimHighlightsByRaw_(ss, rawValues, headerIndexRaw, profileName); } catch (e) {}
-
   // Post-route enrichment: ensure required columns exist + fill from Raw
   // - Optional: Activity Log (from Raw Data: last_activity_log)
   // - Mandatory: Status Type (derived from Last Status)
@@ -499,6 +496,16 @@ function runPipeline_(pic, fileIds, opts) {
     try { sortOperationalSheets_(ss, profileName); } catch (e2) {}
   }
   endSegment_(segSort, 'ok', '', 'INFO');
+
+  // MAIN exclusively owns flag calculation/application. Keep this after every
+  // formatting, enrichment, optional-processing, and sorting step.
+  if (flowName === 'main') {
+    try {
+      applyOperationalClaimHighlightsByRaw_(ss, rawValues, headerIndexRaw, profileName);
+    } catch (eHighlight) {
+      try { logLine_('WARN', 'MAIN_HIGHLIGHT_FAILED', 'Final Claim Number flagging failed.', String(eHighlight), 'WARN'); } catch (eLogHighlight) {}
+    }
+  }
 
   // Refresh Overview Claim -> Report Base snapshot (best effort; all flows using MAIN pipeline).
   try {
@@ -1792,9 +1799,6 @@ function runMainPipelineStage2_() {
     runBestEffort('RESTORE_BACKUP', function() {
       if (typeof restoreOpsManualFromBackupSheet06c_ === 'function') restoreOpsManualFromBackupSheet06c_(ss, profile);
     });
-    // Keep this after every restore, matching direct MAIN, so a copied template
-    // or manual style cannot overwrite the marker color.
-    runBestEffort('HIGHLIGHT', function() { applyOperationalClaimHighlightsByRaw_(ss, rows, index, profile); });
     setProgress_(0.85, 'Execution 2: enriching and optional sheets…');
     logLine_('MAIN_STAGE2_ENRICH', 'Enrich operational and optional sheets', '', '', 'INFO');
     runBestEffort('ENRICH', function() { enrichOperationalSheetsFromRaw06_(ss, rows, index, profile, { flow: 'main' }); });
@@ -1817,6 +1821,7 @@ function runMainPipelineStage2_() {
     setProgress_(0.95, 'Execution 2: sorting and refreshing reports…');
     logLine_('MAIN_STAGE2_FINALIZE', 'Sort sheets and refresh Report Base', '', '', 'INFO');
     runBestEffort('SORT', function() { sortOperationalSheetsPreserveFilter06b_(ss, profile); });
+    runBestEffort('HIGHLIGHT', function() { applyOperationalClaimHighlightsByRaw_(ss, rows, index, profile); });
     runBestEffort('REPORT_BASE', function() { if (typeof refreshReportBaseFromOperational06_ === 'function') refreshReportBaseFromOperational06_(ss); });
     runBestEffort('WEEKLY_REPORT_BASE', function() {
       if (shouldRunWeeklyReportBaseNow06b_('main', 'EMAIL_MAIN')) {

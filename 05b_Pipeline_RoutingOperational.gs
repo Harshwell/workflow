@@ -275,25 +275,6 @@ function normalizeScKeywordText05b_(v) {
     .trim();
 }
 
-function __shouldPreserveSubHighlight05b_(pic, bg, note) {
-  if (String(pic || '').trim().toUpperCase() !== 'SUB') return false;
-  if (String(note || '').trim() === '') return false;
-  const policy = getOperationalClaimHighlightPolicy_();
-  const markerColors = [
-    policy.expired && policy.expired.bg,
-    policy.flex && policy.flex.bg,
-    policy.b2b && policy.b2b.bg,
-    policy.duplicate && policy.duplicate.bg,
-    policy.secondYear && policy.secondYear.bg,
-    policy.firstMonthPolicy && policy.firstMonthPolicy.bg,
-    policy.remaining1Month && policy.remaining1Month.bg,
-    policy.migrationPolicy && policy.migrationPolicy.bg
-  ].map(normalizeColor_).filter(Boolean);
-  const c = normalizeColor_(bg);
-  return !!c && markerColors.indexOf(c) > -1;
-}
-
-
 function filterScTargets05b_(targets, scNameVal, scFarhan, scMeilani, scIvan, kwFarhan, kwMeilani, kwIvan, scFallback) {
   if (!targets || !targets.length) return targets || [];
 
@@ -828,8 +809,25 @@ function getOperationalClaimHighlightPolicy_() {
   };
 
   const dup = p.duplicate || {};
+  const markerByPolicyKey = {
+    MIGRATION_POLICY: 'migrationPolicy',
+    DUPLICATE: 'duplicate',
+    EXPIRED: 'expired',
+    FLEX: 'flex',
+    B2B: 'b2b',
+    SECOND_YEAR: 'secondYear',
+    FIRST_MONTH_POLICY: 'firstMonthPolicy',
+    REMAINING_1_MONTH: 'remaining1Month'
+  };
+  const priority = (p.PRIORITY || []).map(function(key) {
+    return markerByPolicyKey[String(key || '').trim().toUpperCase()] || '';
+  }).filter(Boolean);
 
   return {
+    priority: priority.length ? priority : [
+      'migrationPolicy', 'duplicate', 'expired', 'flex', 'b2b',
+      'secondYear', 'firstMonthPolicy', 'remaining1Month'
+    ],
     expired: pick('expired', 'EXPIRED', 'EXPIRED', '#fff2cc', 'Policy already expired.'),
     flex: pick('flex', 'FLEX', 'FLEX', '#f4c7c3', 'Flex claim.'),
     b2b: pick('b2b', 'B2B', 'B2B', '#c9daf8', 'B2B claim.'),
@@ -1001,6 +999,8 @@ function __toFiniteNumber05b_(v) {
 /** Apply highlight + note on Claim Number cells for OPERATIONAL sheets only. */
 function applyOperationalClaimHighlightsByRaw_(ss, rawValues, headerIndexRaw, pic) {
   if (__isDryRun05b__()) return;
+  const flow = String((typeof RUNTIME !== 'undefined' && RUNTIME && RUNTIME.flowName) || '').trim().toLowerCase();
+  if (flow && flow !== 'main') return;
 
   // Notes are written based on RAW flags (as before). Background fill is derived from the final note,
   // so only rows that actually have EXPIRED/FLEX/B2B notes get colored. This also cleans up any
@@ -1096,7 +1096,7 @@ const __setNotes05b__ = (range, matrix, sheetName) => {
   }
 };
 
-// Priority (single fill): FLEX > B2B > EXPIRED
+// Priority is defined by the ordered desiredMarker assignments below.
   sheets.forEach(name => {
     try {
       const sh = ss.getSheetByName(name);
@@ -1122,6 +1122,7 @@ const __setNotes05b__ = (range, matrix, sheetName) => {
 
       let bgChanged = false;
       let noteChanged = false;
+      const bgWriteContext = [];
 
       for (let i = 0; i < n; i++) {
       const claim = String((vals[i] && vals[i][0]) || '').trim();
@@ -1132,21 +1133,25 @@ const __setNotes05b__ = (range, matrix, sheetName) => {
       let desiredMarker = null;
       if (claimKey) {
         const noteParts = [];
+        const activeMarkers = new Set();
         const policyNo = (sets.policyByClaim && typeof sets.policyByClaim.get === 'function') ? sets.policyByClaim.get(claimKey) : '';
         const policyRows = policyNo ? claimedPolicies.get(String(policyNo).toUpperCase()) : null;
         if (policyNo && policyRows && policyRows.length) {
           noteParts.push(__buildMigrationPolicyNote05b_(policyNo, policyRows));
-          desiredMarker = 'migrationPolicy';
+          activeMarkers.add('migrationPolicy');
         }
 
         const dupNote = (sets.duplicate && typeof sets.duplicate.get === 'function') ? sets.duplicate.get(claimKey) : null;
-        if (dupNote) { noteParts.push(dupNote); if (!desiredMarker) desiredMarker = 'duplicate'; }
-        if (sets.expired.has(claimKey)) { noteParts.push((sets.expiredDetail && sets.expiredDetail.get(claimKey)) || expiredNote); if (!desiredMarker) desiredMarker = 'expired'; }
-        if (sets.flex.has(claimKey)) { noteParts.push(flexNote); if (!desiredMarker) desiredMarker = 'flex'; }
-        if (sets.b2b.has(claimKey)) { noteParts.push(b2bNote); if (!desiredMarker) desiredMarker = 'b2b'; }
-        if (sets.secondYear && sets.secondYear.has(claimKey)) { noteParts.push((sets.secondYearDetail && sets.secondYearDetail.get(claimKey)) || secondYearNote); if (!desiredMarker) desiredMarker = 'secondYear'; }
-        if (sets.firstMonthPolicy && sets.firstMonthPolicy.has(claimKey)) { noteParts.push((sets.firstMonthPolicyDetail && sets.firstMonthPolicyDetail.get(claimKey)) || firstMonthPolicyNote); if (!desiredMarker) desiredMarker = 'firstMonthPolicy'; }
-        if (sets.remaining1Month && sets.remaining1Month.has(claimKey)) { noteParts.push((sets.remaining1MonthDetail && sets.remaining1MonthDetail.get(claimKey)) || remaining1MonthNote); if (!desiredMarker) desiredMarker = 'remaining1Month'; }
+        if (dupNote) { noteParts.push(dupNote); activeMarkers.add('duplicate'); }
+        if (sets.expired.has(claimKey)) { noteParts.push((sets.expiredDetail && sets.expiredDetail.get(claimKey)) || expiredNote); activeMarkers.add('expired'); }
+        if (sets.flex.has(claimKey)) { noteParts.push(flexNote); activeMarkers.add('flex'); }
+        if (sets.b2b.has(claimKey)) { noteParts.push(b2bNote); activeMarkers.add('b2b'); }
+        if (sets.secondYear && sets.secondYear.has(claimKey)) { noteParts.push((sets.secondYearDetail && sets.secondYearDetail.get(claimKey)) || secondYearNote); activeMarkers.add('secondYear'); }
+        if (sets.firstMonthPolicy && sets.firstMonthPolicy.has(claimKey)) { noteParts.push((sets.firstMonthPolicyDetail && sets.firstMonthPolicyDetail.get(claimKey)) || firstMonthPolicyNote); activeMarkers.add('firstMonthPolicy'); }
+        if (sets.remaining1Month && sets.remaining1Month.has(claimKey)) { noteParts.push((sets.remaining1MonthDetail && sets.remaining1MonthDetail.get(claimKey)) || remaining1MonthNote); activeMarkers.add('remaining1Month'); }
+        for (let pIdx = 0; pIdx < policy.priority.length; pIdx++) {
+          if (activeMarkers.has(policy.priority[pIdx])) { desiredMarker = policy.priority[pIdx]; break; }
+        }
         desiredNote = noteParts.length ? noteParts.join('\n\n') : null;
       }
 
@@ -1167,15 +1172,44 @@ const __setNotes05b__ = (range, matrix, sheetName) => {
 
       if (desiredBg) {
         const safeBg = __sanitizeSheetFillColor05b_(desiredBg);
-        if (normalizeColor_(bgs[i][0]) !== normalizeColor_(safeBg)) { bgs[i][0] = safeBg; bgChanged = true; }
+        if (normalizeColor_(bgs[i][0]) !== normalizeColor_(safeBg)) {
+          bgs[i][0] = safeBg;
+          bgChanged = true;
+          bgWriteContext.push({ row: i + 2, claim: claim, flag: marker || 'unknown', color: safeBg });
+        }
       } else {
         // Clear only our marker colors to avoid wiping user formatting.
-        if (isMarkerBg_(bgs[i][0]) && !__shouldPreserveSubHighlight05b_(pic, bgs[i][0], notes[i][0])) { bgs[i][0] = null; bgChanged = true; }
+        if (isMarkerBg_(bgs[i][0])) { bgs[i][0] = null; bgChanged = true; }
       }
     }
 
-      if (bgChanged) __setBgs05b__(rng, bgs, name);
+      // Notes and fills are independent outputs: a fill failure must not suppress notes.
       if (noteChanged) __setNotes05b__(rng, notes, name);
+      if (bgChanged) {
+        try {
+          __setBgs05b__(rng, bgs, name);
+        } catch (batchErr) {
+          // Isolate failures per flagged cell so one malformed write cannot block the sheet.
+          bgWriteContext.forEach(function(ctx) {
+            const cell = sh.getRange(ctx.row, idxClaim + 1, 1, 1);
+            try {
+              cell.setBackground(ctx.color);
+            } catch (cellErr) {
+              const rangeA1 = (cell && cell.getA1Notation) ? cell.getA1Notation() : ('R' + ctx.row + 'C' + (idxClaim + 1));
+              try {
+                if (typeof logLine_ === 'function') logLine_(
+                  'WARN',
+                  'FLAG_FILL_WRITE_FAILED',
+                  'sheet=' + name + ' | range=' + rangeA1 + ' | flag=' + ctx.flag + ' | claim=' + ctx.claim + ' | color=' + ctx.color,
+                  String(cellErr && cellErr.message ? cellErr.message : cellErr),
+                  'WARN'
+                );
+              } catch (eLogCell) {}
+            }
+          });
+          if (!bgWriteContext.length) throw batchErr;
+        }
+      }
     } catch (sheetErr) {
       try { if (typeof logLine_ === 'function') logLine_('WARN', 'HIGHLIGHT_SKIP', String(name || ''), String(sheetErr), 'WARN'); } catch (eLog) {}
     }
@@ -1834,9 +1868,6 @@ function routeRawToOperationalSheetsInMemory_(ss, rawValues, headerIndexRaw, pic
       applyDbLinkRichTextFromWriter_(w, startRow);
     }
   });
-
-  // Highlight + note by claim: operational sheets only (derived from full Raw, regardless of routing)
-  applyOperationalClaimHighlightsByRaw_(ss, rawValues, headerIndexRaw, pic);
 
   // Unknown status logging (single-master: log only, do not spam Details by default)
   if (unknownStatuses.length && typeof logLine_ === 'function') {
