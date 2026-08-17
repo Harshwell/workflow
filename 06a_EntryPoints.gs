@@ -3047,6 +3047,14 @@ function __relocateOperationalRowsByLastStatusSub06a_(ss, sheetNames) {
     }
   });
 
+  // A SUB update can change Last Status without moving an existing Finish row.
+  // Recompute the managed classification for both moved and retained rows.
+  try {
+    if (typeof refreshFinishRepairType06c_ === 'function') refreshFinishRepairType06c_(ss);
+  } catch (eRepairType) {
+    try { logLine_('SUB_WARN', 'Finish Repair Type refresh failed', '', String(eRepairType), 'WARN'); } catch (eLog) {}
+  }
+
   try { logLine_('SUB_MOVE', 'Relocation summary', 'moved=' + res.moved + ' dedupDeleted=' + res.dedupDeleted, '', 'INFO'); } catch (e9) {}
   return res;
 }

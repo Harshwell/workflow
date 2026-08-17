@@ -29,10 +29,7 @@ function sv03_normHeaderText_(v) {
 /** ---------- Safe access to registries (no ReferenceError) ---------- */
 const _SV03_VALIDATION_FALLBACK = (typeof VALIDATION_LISTS !== 'undefined') ? VALIDATION_LISTS : Object.freeze({
   PIC: Object.freeze(['Meilani', 'Farhan', 'Suci', 'Adi']),
-  UPDATE_STATUS: Object.freeze([
-    'Pending Admin','Pending SC','Pending Partner','DONE','Pending Insurance',
-    'Pending TO','Pending Finance','Pending Meilani','Pending Cust'
-  ])
+  UPDATE_STATUS: Object.freeze([])
 });
 
 const _SV03_VALIDATION_POLICY = (typeof VALIDATION_POLICY !== 'undefined') ? VALIDATION_POLICY : Object.freeze({
@@ -556,14 +553,18 @@ function ensurePicSheets_(ss, pic) {
   // Ensure operational sheets (profile-specific templates)
   (spec.operational || []).forEach(name => {
     if (profile === 'ADMIN') {
-      const tpl = SV03_WORKFLOW_SHEETS.has(String(name || '').trim())
+      let tpl = SV03_WORKFLOW_SHEETS.has(String(name || '').trim())
         ? SV03_TEMPLATES.OPS_ADMIN_WORKFLOW
         : SV03_TEMPLATES.OPS_ADMIN_DEFAULT;
+      if (String(name || '').trim() === 'Finish') tpl = tpl.concat(['Repair Type']);
       sv03_ensureSheetWithHeader_(ss, name, tpl, pic);
     } else {
       // PIC (single-master): all operational sheets live in one workbook.
       if (SV03_WORKFLOW_SHEETS.has(String(name || '').trim())) {
-        sv03_ensureSheetWithHeader_(ss, name, SV03_TEMPLATES.OPS_PIC_WORKFLOW, pic);
+        const tpl = String(name || '').trim() === 'Finish'
+          ? SV03_TEMPLATES.OPS_PIC_WORKFLOW.concat(['Repair Type'])
+          : SV03_TEMPLATES.OPS_PIC_WORKFLOW;
+        sv03_ensureSheetWithHeader_(ss, name, tpl, pic);
       } else if (name === 'PO') {
         sv03_ensureSheetWithHeader_(ss, 'PO', SV03_TEMPLATES.OPS_PIC_PO, pic);
       } else if (name === (OPS_ROUTING_POLICY && OPS_ROUTING_POLICY.SHEETS ? OPS_ROUTING_POLICY.SHEETS.SC_FARHAN : 'SC - Farhan')
@@ -1030,6 +1031,7 @@ function sv03_syncDropdownForWorkbook_(ss, pic, headerName, fallbackSeed, opts) 
 
   const allowBlank = (_SV03_VALIDATION_POLICY.ALLOW_BLANK || SV03_DROPDOWN_SYNC.FORCE_ALLOW_BLANK);
 
+  const exactOptions = (opts.exactOptions && opts.exactOptions.length) ? opts.exactOptions.slice() : null;
   if (fallbackSeed && fallbackSeed.length) sets.push(new Set(fallbackSeed));
 
   function addScanFromSheetList_(sheetList) {
@@ -1042,7 +1044,10 @@ function sv03_syncDropdownForWorkbook_(ss, pic, headerName, fallbackSeed, opts) 
     });
   }
 
-  if (mode === 'RAW') {
+  if (exactOptions) {
+    // Canonical dropdown options are authoritative; existing cell values are not scanned
+    // into the rule and remain untouched when validation is replaced.
+  } else if (mode === 'RAW') {
     addScanFromSheetList_(['Raw Data']);
   } else if (mode === 'TARGET') {
     addScanFromSheetList_((spec.operational || []).concat(profile !== 'ADMIN' ? (spec.optional || []) : []));
@@ -1050,7 +1055,7 @@ function sv03_syncDropdownForWorkbook_(ss, pic, headerName, fallbackSeed, opts) 
     addScanFromSheetList_(allSheets);
   }
 
-  const merged = sv03_unionSetsToArray_(sets, allowBlank);
+  const merged = exactOptions || sv03_unionSetsToArray_(sets, allowBlank);
 
   // choose a template target if missing
   let template = tpl;
@@ -1067,8 +1072,15 @@ function sv03_syncDropdownForWorkbook_(ss, pic, headerName, fallbackSeed, opts) 
   }
   if (!template || !template.cell) return { ok: false, notes: 'no_target_column_found' };
 
-  // Create minimal fallback validation IF no rule exists at all (chip/colors won't exist)
-  if (!template.cell.getDataValidation()) {
+  // Exact lists replace stale validation on existing workbooks as well as new sheets.
+  if (exactOptions && !DRY_RUN) {
+    try {
+      template.cell.setDataValidation(SpreadsheetApp.newDataValidation()
+        .requireValueInList(exactOptions, true)
+        .setAllowInvalid(false)
+        .build());
+    } catch (eExact) {}
+  } else if (!template.cell.getDataValidation()) {
     if (!DRY_RUN) {
       try {
         const base = merged.length ? merged : (allowBlank ? [''] : []);
@@ -1085,7 +1097,9 @@ function sv03_syncDropdownForWorkbook_(ss, pic, headerName, fallbackSeed, opts) 
   template.rule = template.cell.getDataValidation();
 
   // heal template rule (range-safe only)
-  const heal = sv03_healTemplateRule_(template, merged);
+  const heal = exactOptions
+    ? { mode: 'canonical_list', changed: true, notes: 'exact_options_applied' }
+    : sv03_healTemplateRule_(template, merged);
 
   // copy rule to all sheets where column exists
   const applyToSheets = (opts.applyToSheets && opts.applyToSheets.length) ? opts.applyToSheets : allSheets;
@@ -1368,7 +1382,7 @@ function enforceStandardLayoutForPic_(ss, pic) {
   // STATUS dropdown policy:
   // - Admin: DO NOT rebuild/sync rules (can flatten chip styling). Preserve via template-row copy.
   // - PIC: allow workbook-level sync (preserve by copy, auto-heal).
-  const adminSkip = (profile === 'ADMIN' && SV03_DROPDOWN_SYNC.SKIP_SYNC_FOR_ADMIN);
+  const adminSkip = false; // canonical Status options must be enforced for every profile
 
   let resStatus = null;
 
@@ -1388,7 +1402,9 @@ function enforceStandardLayoutForPic_(ss, pic) {
     });
   } else {
     // STATUS: default policy MODE
-    resStatus = sv03_syncDropdownForWorkbook_(ss, pic, 'Status', seedStatus, {});
+    resStatus = sv03_syncDropdownForWorkbook_(ss, pic, 'Status', seedStatus, {
+      exactOptions: (typeof STATUS_DROPDOWN_OPTIONS !== 'undefined') ? STATUS_DROPDOWN_OPTIONS : seedStatus
+    });
   }
 
   // DO NOT sync "Last Status Date" as a dropdown (it is a date field, not a dropdown).

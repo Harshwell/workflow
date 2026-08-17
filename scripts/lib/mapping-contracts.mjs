@@ -5,7 +5,8 @@ import {
 
 export function validateCriticalMappings(sources) {
   const errors = [];
-  const rootPolicy = evaluateInitializer(sources.config, 'OPS_ROUTING_POLICY');
+  const finishScMirrorStatuses = evaluateInitializer(sources.config, 'FINISH_SC_MIRROR_STATUSES');
+  const rootPolicy = evaluateInitializer(sources.config, 'OPS_ROUTING_POLICY', { FINISH_SC_MIRROR_STATUSES: finishScMirrorStatuses });
   const statusTypes = evaluateInitializer(sources.config, 'STATUS_TYPE_BY_LAST_STATUS');
   const positions = evaluateInitializer(sources.config, 'POSITION_BY_LAST_STATUS');
   const rawTail = evaluateInitializer(sources.config, 'RAW_DATA_CUSTOM_TAIL_HEADERS');

@@ -339,6 +339,22 @@ function runSmoke() {
     courierFinalTargets = enforceRequiredMultiDestinationTargets05b_('COURIER_PICKUP_START_DONE', courierFinalTargets, CONFIG.opsRouting);
     const courierFinalFanOutOk = courierFinalTargets.indexOf('Start') !== -1
       && courierFinalTargets.some(function (name) { return /^SC - /.test(name); });
+    const expectedStatusOptions = [
+      'Pending Logistic', 'Pending Front', 'DONE', 'Pending Insurance',
+      'Pending TO', 'Pending Finance', 'Pending PIC', 'Pending Cust',
+      'Pending Buss. Team', 'Pending SC (TA)', 'Pending SC (Repair)',
+      'Pending SC (Estimation)', 'Delivering', 'Delivered', 'Waiting Courier',
+      'Re-pickup'
+    ];
+    const statusDropdownOk = JSON.stringify(STATUS_DROPDOWN_OPTIONS) === JSON.stringify(expectedStatusOptions)
+      && VALIDATION_FALLBACKS.STATUS === STATUS_DROPDOWN_OPTIONS;
+    const finishMirrorOk = FINISH_SC_MIRROR_STATUSES.every(function (status) {
+      const targets = enforceRequiredMultiDestinationTargets05b_(status, mainRoutingIdx[status], CONFIG.opsRouting);
+      return targets.indexOf('Finish') !== -1 && targets.some(function (name) { return /^SC - /.test(name); });
+    });
+    const repairTypeOk = resolveFinishRepairType_(' service_center_claim_done ') === 'Repair'
+      && resolveFinishRepairType_(' courier_replace_pickup_done ') === 'Replace'
+      && resolveFinishRepairType_('  ') === '';
     const rejectClaimTypeOk = REJECT_CLAIM_TYPE_BY_LAST_STATUS.COURIER_CLAIM_PICKUP_REJECT_DONE === 'SC - Middle'
       && REJECT_CLAIM_TYPE_BY_LAST_STATUS.QOALA_CLAIM_REJECT === 'Front';
     const cvBerkahBranchOk = __getBranchFromServiceCenter06_('CV Berkah Athallah') === 'CV Berkah'
@@ -413,7 +429,7 @@ function runSmoke() {
       && busyLockResult.pending === true
       && busyLockPendingConsumed === true;
 
-    return { ok: b2bOk && highlightOk && finishCloneOk && submissionDateOk && strictSyncOk && smartStageAgingOk && pendingSubOk, b2bOk, highlightOk, finishCloneOk, submissionDateOk, strictSyncOk, smartStageAgingOk, pendingSubOk, stageSameBucket, stageChangedBucket, stageMissingRaw, stageBlankRaw, strictVal: String(strictVal), validationCleared: strictSheet.validationCleared, b2bRow: b2bRow, bg: highlightSheet.bgs[0][0], note: highlightSheet.notes[0][0] };
+    return { ok: b2bOk && highlightOk && finishCloneOk && submissionDateOk && strictSyncOk && smartStageAgingOk && pendingSubOk && statusDropdownOk && finishMirrorOk && repairTypeOk, b2bOk, highlightOk, finishCloneOk, submissionDateOk, strictSyncOk, smartStageAgingOk, pendingSubOk, statusDropdownOk, finishMirrorOk, repairTypeOk, stageSameBucket, stageChangedBucket, stageMissingRaw, stageBlankRaw, strictVal: String(strictVal), validationCleared: strictSheet.validationCleared, b2bRow: b2bRow, bg: highlightSheet.bgs[0][0], note: highlightSheet.notes[0][0] };
   })()`, ctx);
   if (!workflowGuard || workflowGuard.ok !== true) {
     throw new Error('MAIN/SUB workflow regression guard failed: ' + JSON.stringify(workflowGuard || {}, null, 2));

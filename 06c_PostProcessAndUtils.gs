@@ -1265,26 +1265,36 @@ function applyCarryForwardToRawValues_(rawValues, headerIndexRaw, carry) {
 function sanitizeRawStatusDropdownInMemory_(rawValues, headerIndexRaw) {
   const idx = headerIndexRaw[CONFIG.headers.status];
   if (idx == null) return;
+  // Validation is updated separately. Never normalize or clear existing manual
+  // values here: Raw Data is the durable 1:1 backup used by restore flows.
+}
 
-  const allowed = getAllowedStatusSet_();
-  for (let i = 0; i < rawValues.length; i++) {
-    const v = normalizeStatusValue_(rawValues[i][idx]);
-    if (!v) {
-      rawValues[i][idx] = '';
-      continue;
-    }
-    rawValues[i][idx] = allowed.has(v) ? v : '';
-  }
+/** Refresh the managed Finish.Repair Type classification from Last Status. */
+function refreshFinishRepairType06c_(ss) {
+  if (!ss) return { updated: 0, reason: 'missing_ss' };
+  const sh = ss.getSheetByName('Finish');
+  if (!sh) return { updated: 0, reason: 'missing_finish' };
+  const lr = sh.getLastRow();
+  const lc = sh.getLastColumn();
+  if (lr < 2 || lc < 1) return { updated: 0, reason: 'no_rows' };
+
+  const header = sh.getRange(1, 1, 1, lc).getValues()[0].map(__normalizeHeaderText06_);
+  const idxLastStatus = __findHeaderIndexFlexible06_(header, 'Last Status');
+  const idxRepairType = __findHeaderIndexFlexible06_(header, 'Repair Type');
+  if (idxLastStatus === -1 || idxRepairType === -1) return { updated: 0, reason: 'missing_header' };
+
+  const rows = lr - 1;
+  const statuses = sh.getRange(2, idxLastStatus + 1, rows, 1).getValues();
+  const output = statuses.map(function (row) {
+    return [(typeof resolveFinishRepairType_ === 'function') ? resolveFinishRepairType_(row[0]) : ''];
+  });
+  const dryRun = (typeof DRY_RUN !== 'undefined') ? DRY_RUN : false;
+  if (!dryRun) sh.getRange(2, idxRepairType + 1, rows, 1).setValues(output);
+  return { updated: rows, reason: 'ok' };
 }
 
 function getAllowedStatusSet_() {
-  const list =
-    (typeof VALIDATION_LISTS !== 'undefined' && VALIDATION_LISTS && VALIDATION_LISTS.UPDATE_STATUS)
-      ? VALIDATION_LISTS.UPDATE_STATUS
-      : [
-          'Pending Admin','Pending SC','Pending Partner','DONE','Pending Insurance',
-          'Pending TO','Pending Finance','Pending Meilani','Pending Cust'
-        ];
+  const list = (typeof STATUS_DROPDOWN_OPTIONS !== 'undefined') ? STATUS_DROPDOWN_OPTIONS : [];
 
   const set = new Set();
   for (let i = 0; i < list.length; i++) {
