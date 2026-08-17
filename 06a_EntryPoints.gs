@@ -710,7 +710,7 @@ function __runSubCore06a_(masterSs, oldBlob, newBlob, opt) {
   const relocateSheets = __getSubRelocationSheetNames06a_(opSheets);
   const relocateRes = __relocateOperationalRowsByLastStatusSub06a_(masterSs, relocateSheets);
   try { __refreshTokenOptionalSheetsFromSubRaw06a_(masterSs, [rawOldName, rawNewName]); } catch (eHiMove) {
-    try { logLine_('SUB_HIGHLIGHT_WARN', 'Post-relocation highlight refresh failed', String(eHiMove), '', 'WARN'); } catch (eHiLog) {}
+    try { logLine_('SUB_OPTIONAL_WARN', 'Post-relocation optional refresh failed', String(eHiMove), '', 'WARN'); } catch (eHiLog) {}
   }
   const sortRes = __sortOperationalSheetsSub06a_(masterSs, opSheets, sortSpecs);
 
@@ -1392,7 +1392,7 @@ function runSubEmailIngest(maxThreads, options) {
     const relocateSheets = __getSubRelocationSheetNames06a_(opSheets);
     const relocateRes = __relocateOperationalRowsByLastStatusSub06a_(masterSs, relocateSheets);
     try { __refreshTokenOptionalSheetsFromSubRaw06a_(masterSs, [rawOldName, rawNewName]); } catch (eHiMove) {
-      try { logLine_('SUB_HIGHLIGHT_WARN', 'Post-relocation highlight refresh failed', String(eHiMove), '', 'WARN'); } catch (eHiLog) {}
+      try { logLine_('SUB_OPTIONAL_WARN', 'Post-relocation optional refresh failed', String(eHiMove), '', 'WARN'); } catch (eHiLog) {}
     }
     try {
       if (typeof setLogEventContext_ === 'function') {
@@ -1457,8 +1457,6 @@ function isMainSubHandoffWindow06a_(now) {
 function __refreshTokenOptionalSheetsFromSubRaw06a_(ss, rawSheetNames) {
   const names = Array.isArray(rawSheetNames) ? rawSheetNames : [];
   const out = { sheets: {}, evBike: 0, doss: 0 };
-  let highlightHeader = null;
-  const highlightRows = [];
   for (let i = 0; i < names.length; i++) {
     const rawName = String(names[i] || '').trim();
     if (!rawName) continue;
@@ -1471,21 +1469,6 @@ function __refreshTokenOptionalSheetsFromSubRaw06a_(ss, rawSheetNames) {
     const header = vals[0].map(h => String(h || '').trim());
     const headerIndex = buildHeaderIndex_(header);
     const rows = vals.slice(1);
-    if (!highlightHeader) {
-      highlightHeader = header.slice();
-      for (let hr = 0; hr < rows.length; hr++) highlightRows.push(rows[hr]);
-    } else {
-      const curIdx = buildHeaderIndex_(header);
-      for (let hr = 0; hr < rows.length; hr++) {
-        const src = rows[hr] || [];
-        const dst = new Array(highlightHeader.length).fill('');
-        for (let hc = 0; hc < highlightHeader.length; hc++) {
-          const j = curIdx[highlightHeader[hc]];
-          if (j != null) dst[hc] = src[j];
-        }
-        highlightRows.push(dst);
-      }
-    }
     let ev = 0;
     let doss = 0;
     if (typeof processEVBike_ === 'function') ev = processEVBike_(ss, rows, headerIndex, 'SUB') || 0;
@@ -1493,13 +1476,6 @@ function __refreshTokenOptionalSheetsFromSubRaw06a_(ss, rawSheetNames) {
     out.evBike += ev;
     out.doss += doss;
     out.sheets[rawName] = { evBike: ev, doss: doss };
-  }
-  try {
-    if (highlightHeader && highlightRows.length && typeof applyOperationalClaimHighlightsByRaw_ === 'function') {
-      applyOperationalClaimHighlightsByRaw_(ss, highlightRows, buildHeaderIndex_(highlightHeader), 'SUB');
-    }
-  } catch (eHi) {
-    try { logLine_('SUB_HIGHLIGHT_WARN', 'Operational highlight refresh failed', '', String(eHi), 'WARN'); } catch (eHi2) {}
   }
   return out;
 }
@@ -2944,6 +2920,30 @@ function __relocateOperationalRowsByLastStatusSub06a_(ss, sheetNames) {
     } catch (e0) {}
   }
 
+  function preserveClaimHighlightToTarget(srcSheetName, srcRow1Based, srcHdr, tgtSheet, tgtHdr, tgtRow1Based, claim) {
+    try {
+      const srcData = data[srcSheetName];
+      if (!srcData || !tgtSheet) return;
+      const srcNorm = (srcHdr || []).map(function(h) { return String(h || '').trim().toLowerCase(); });
+      const tgtNorm = (tgtHdr || []).map(function(h) { return String(h || '').trim().toLowerCase(); });
+      const srcClaim = srcNorm.indexOf('claim number');
+      const tgtClaim = tgtNorm.indexOf('claim number');
+      if (srcClaim < 0 || tgtClaim < 0) return;
+
+      const srcCell = srcData.sh.getRange(srcRow1Based, srcClaim + 1, 1, 1);
+      const note = String(srcCell.getNote() || '');
+      if (!note) return; // preserve only an existing MAIN-owned flag
+      const background = String(srcCell.getBackground() || '').trim();
+      const dstCell = tgtSheet.getRange(tgtRow1Based, tgtClaim + 1, 1, 1);
+      dstCell.setNote(note);
+      if (background) dstCell.setBackground(background);
+    } catch (eHighlight) {
+      try {
+        logLine_('SUB_WARN', 'Claim flag preservation failed', srcSheetName + ' -> ' + (tgtSheet && tgtSheet.getName ? tgtSheet.getName() : '?') + ' | claim=' + String(claim || ''), String(eHighlight), 'WARN');
+      } catch (eLogHighlight) {}
+    }
+  }
+
 
   // Execute moves: append to target then delete from source (descending row order per source).
   Object.keys(movesBySource).forEach(srcName => {
@@ -2986,6 +2986,7 @@ function __relocateOperationalRowsByLastStatusSub06a_(ss, sheetNames) {
           const mergedAfterReset = resetMovedRowFieldsByHeader(merged, resetIdx, stageAgingForMove, preserveManualFields);
           tgt.sh.getRange(keepRow, 1, 1, tgt.lc).setValues([mergedAfterReset]);
           applyRichTextLinksToTarget(srcName, mv.row1Based, mv.srcHdr, tgt.sh, tgt.hdr, keepRow, tgt.lc);
+          preserveClaimHighlightToTarget(srcName, mv.row1Based, mv.srcHdr, tgt.sh, tgt.hdr, keepRow, mv.claim);
         }
 
         // Delete other duplicates in target (keepRow stays)
@@ -3015,6 +3016,7 @@ function __relocateOperationalRowsByLastStatusSub06a_(ss, sheetNames) {
             tgt.sh.getRange(appendRow, 1, 1, tgt.lc).setValues([alignedAfterReset]);
             applyRichTextLinksToTarget(srcName, mv.row1Based, mv.srcHdr, tgt.sh, tgt.hdr, appendRow, tgt.lc);
           }
+          preserveClaimHighlightToTarget(srcName, mv.row1Based, mv.srcHdr, tgt.sh, tgt.hdr, appendRow, mv.claim);
         }
         tgt.map.set(mv.claim, [appendRow]);
       }
@@ -3046,6 +3048,14 @@ function __relocateOperationalRowsByLastStatusSub06a_(ss, sheetNames) {
       deleteRowsGrouped(shData.sh, delRows);
     }
   });
+
+  // A SUB update can change Last Status without moving an existing Finish row.
+  // Recompute the managed classification for both moved and retained rows.
+  try {
+    if (typeof refreshFinishRepairType06c_ === 'function') refreshFinishRepairType06c_(ss);
+  } catch (eRepairType) {
+    try { logLine_('SUB_WARN', 'Finish Repair Type refresh failed', '', String(eRepairType), 'WARN'); } catch (eLog) {}
+  }
 
   try { logLine_('SUB_MOVE', 'Relocation summary', 'moved=' + res.moved + ' dedupDeleted=' + res.dedupDeleted, '', 'INFO'); } catch (e9) {}
   return res;
