@@ -79,6 +79,30 @@ const CONFIG_SECTION_INDEX = Object.freeze({
  * =========================
  * NOTE: keep these in sync with routing overrides (05a/05b) + SC post-processing (06c).
  */
+const FINISH_SC_MIRROR_STATUSES = Object.freeze([
+  'QOALA_WAITING_CUSTOMER_REPLACE',
+  'CUSTOMER_RECEIVE_REPLACE',
+  'COURIER_WAITING_REPLACE_PICKUP',
+  'COURIER_REPLACE_PICKUP',
+  'COURIER_REPLACE_PICKUP_DONE'
+]);
+
+const REPAIR_TYPE_REPAIR_STATUSES = Object.freeze([
+  'SERVICE_CENTER_CLAIM_DONE_REPAIR_WALKIN',
+  'SERVICE_CENTER_CLAIM_WAITING_WALKIN_FINISH',
+  'SERVICE_CENTER_CLAIM_DONE',
+  'SERVICE_CENTER_CLAIM_DONE_REPAIR_PICKUP',
+  'SERVICE_CENTER_CLAIM_WAITING_PICKUP_FINISH',
+  'COURIER_CLAIM_PICKUP_FINISH',
+  'COURIER_CLAIM_PICKUP_FINISH_DONE'
+]);
+
+function resolveFinishRepairType_(lastStatus) {
+  const status = String(lastStatus || '').trim().toUpperCase();
+  if (!status) return '';
+  return REPAIR_TYPE_REPAIR_STATUSES.indexOf(status) !== -1 ? 'Repair' : 'Replace';
+}
+
 const FINISH_STATUSES = Object.freeze([
   'DONE_REPAIR',
   'WAITING_WALKIN_FINISH',
@@ -91,7 +115,7 @@ const FINISH_STATUSES = Object.freeze([
   'SERVICE_CENTER_CLAIM_WAITING_PICKUP_FINISH',
   'COURIER_CLAIM_PICKUP_FINISH',
   'COURIER_CLAIM_PICKUP_FINISH_DONE'
-]);
+].concat(FINISH_SC_MIRROR_STATUSES));
 
 const SC_SHEET_NAMES = Object.freeze([
   'SC - Farhan',
@@ -761,19 +785,26 @@ const VALIDATION_POLICY = Object.freeze({
  * Fallback dropdown lists (NOT source-of-truth).
  * Kept to prevent total failure if both Raw+Target have no rule/options.
  */
+const STATUS_DROPDOWN_OPTIONS = Object.freeze([
+  'Pending Logistic', 'Pending Front', 'DONE', 'Pending Insurance',
+  'Pending TO', 'Pending Finance', 'Pending PIC', 'Pending Cust',
+  'Pending Buss. Team', 'Pending SC (TA)', 'Pending SC (Repair)',
+  'Pending SC (Estimation)', 'Delivering', 'Delivered', 'Waiting Courier',
+  'Re-pickup'
+]);
+
+// The colored chip rule is maintained manually in this one workbook cell and
+// cloned 1:1. Never rebuild it with DataValidationBuilder (that flattens chips).
+const STATUS_DROPDOWN_TEMPLATE = Object.freeze({
+  SHEET_NAME: 'Finish',
+  RECOVERY_SHEET_NAME: 'Raw Data',
+  HEADER: 'Status',
+  ROW: 2
+});
+
 const VALIDATION_FALLBACKS = Object.freeze({
   ASSOCIATE: Object.freeze(['Meilani', 'Farhan', 'Suci', 'Adi']),
-  STATUS: Object.freeze([
-    'Pending Admin',
-    'Pending SC',
-    'Pending Partner',
-    'DONE',
-    'Pending Insurance',
-    'Pending TO',
-    'Pending Finance',
-    'Pending Meilani',
-    'Pending Cust'
-  ])
+  STATUS: STATUS_DROPDOWN_OPTIONS
 });
 
 /**
@@ -1172,6 +1203,13 @@ const CLAIM_HIGHLIGHT_POLICY = Object.freeze({
   // Apply to both Admin and PIC workbooks
   APPLY_TO_WORKBOOK_PROFILES: Object.freeze(['ADMIN', 'PIC']),
 
+  // First matching flag owns the single Claim Number fill; all matching details
+  // are still combined in the note.
+  PRIORITY: Object.freeze([
+    'MIGRATION_POLICY', 'DUPLICATE', 'EXPIRED', 'FLEX', 'B2B',
+    'SECOND_YEAR', 'FIRST_MONTH_POLICY', 'REMAINING_1_MONTH'
+  ]),
+
   // Column identification
   CLAIM_NUMBER_HEADER: 'Claim Number',
   CLAIM_NUMBER_HEADER_ALIASES: Object.freeze(['Claim Number', 'Claim No', 'Claim No.', 'Claim #', 'Claim#']),
@@ -1181,7 +1219,11 @@ const CLAIM_HIGHLIGHT_POLICY = Object.freeze({
     EXPIRED: '#fff2cc', // light yellow
     FLEX: '#f4c7c3',    // light red/pink
     B2B: '#c9daf8',     // light blue
-    DUPLICATE: '#dd7e6b' // duplicate claim
+    DUPLICATE: '#dd7e6b', // duplicate claim
+    SECOND_YEAR: '#d9ead3',
+    FIRST_MONTH_POLICY: '#d9d2e9',
+    REMAINING_1_MONTH: '#fce5cd',
+    MIGRATION_POLICY: '#ff00ff'
   }),
 
   // Canonical notes (must be written by the pipeline)
@@ -1189,6 +1231,10 @@ const CLAIM_HIGHLIGHT_POLICY = Object.freeze({
     EXPIRED: 'Policy already expired.',
     FLEX: 'Flex claim.',
     B2B: 'B2B claim.',
+    SECOND_YEAR: 'Second-Year (Market Value).',
+    FIRST_MONTH_POLICY: 'First-Month Policy.',
+    REMAINING_1_MONTH: 'Policy Remaining <= 1 Month.',
+    MIGRATION_POLICY: 'Migration Policy.',
     DUPLICATE_PREFIX: 'Duplicate Claim - Refer to Claim Number'
   }),
 
@@ -1206,7 +1252,9 @@ const CLAIM_HIGHLIGHT_POLICY = Object.freeze({
    *   so the system can recover from any previous accidental mass-fill without breaking other styling.
    */
   CLEAR_MARKER_BACKGROUNDS_WHEN_NOT_FLAGGED: true,
-  MARKER_COLORS: Object.freeze(['#fff2cc', '#f4c7c3', '#c9daf8', '#dd7e6b'])
+  MARKER_COLORS: Object.freeze([
+    '#fff2cc', '#f4c7c3', '#c9daf8', '#dd7e6b', '#d9ead3', '#d9d2e9', '#fce5cd', '#ff00ff'
+  ])
 });
 
 
@@ -1404,7 +1452,7 @@ const OPS_ROUTING_POLICY = Object.freeze({
       'SERVICE_CENTER_CLAIM_WAITING_PICKUP_FINISH',
       'COURIER_CLAIM_PICKUP_FINISH',
       'COURIER_CLAIM_PICKUP_FINISH_DONE'
-    ]),
+    ].concat(FINISH_SC_MIRROR_STATUSES)),
 
     'Expired Claim': Object.freeze([
       'CLAIM_EXPIRE',
@@ -1456,7 +1504,7 @@ const OPS_ROUTING_POLICY = Object.freeze({
       'SERVICE_CENTER_CLAIM_WAITING_PICKUP_FINISH',
       'COURIER_CLAIM_PICKUP_FINISH',
       'COURIER_CLAIM_PICKUP_FINISH_DONE'
-    ]),
+    ].concat(FINISH_SC_MIRROR_STATUSES)),
 
     'PO': Object.freeze([
       'INSURANCE_APPROVED_REPLACED',
@@ -1466,14 +1514,9 @@ const OPS_ROUTING_POLICY = Object.freeze({
       'QOALA_PROCESS_REPLACE_WALKIN',
       'CUSTOMER_WAITING_EXCESS_REPLACE_WALKIN',
       'CUSTOMER_PAID_EXCESS_REPLACE_WALKIN',
-      'QOALA_WAITING_CUSTOMER_REPLACE',
-      'CUSTOMER_RECEIVE_REPLACE',
       'QOALA_PROCESS_REPLACE_PICKUP',
       'CUSTOMER_WAITING_EXCESS_REPLACE_PICKUP',
       'CUSTOMER_PAID_EXCESS_REPLACE_PICKUP',
-      'COURIER_WAITING_REPLACE_PICKUP',
-      'COURIER_REPLACE_PICKUP',
-      'COURIER_REPLACE_PICKUP_DONE',
       'CUSTOMER_WAITING_PAYMENT_DEDUCTIBLE_EXCESS_FEE_REPLACE',
       'CUSTOMER_APPROVE_DEDUCTIBLE_EXCESS_FEE_REPLACE',
       'CUSTOMER_APPROVE_DEDUCTIBLE_EXCESS_FEE_REPLACE_EXPIRED',
@@ -1602,7 +1645,7 @@ const OPS_ROUTING_POLICY = Object.freeze({
       'WAITING_WALKIN_FINISH',
       'COURIER_PICKED_UP',
       'WAITING_COURIER_FINISH'
-    ]),
+    ].concat(FINISH_SC_MIRROR_STATUSES)),
     'SC - Wait Rep': Object.freeze([
       'INSURANCE_CLAIM_APPROVE_REPAIR',
       'SERVICE_CENTER_CLAIM_WAITING_REPAIR',

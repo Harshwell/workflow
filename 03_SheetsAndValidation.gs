@@ -29,10 +29,7 @@ function sv03_normHeaderText_(v) {
 /** ---------- Safe access to registries (no ReferenceError) ---------- */
 const _SV03_VALIDATION_FALLBACK = (typeof VALIDATION_LISTS !== 'undefined') ? VALIDATION_LISTS : Object.freeze({
   PIC: Object.freeze(['Meilani', 'Farhan', 'Suci', 'Adi']),
-  UPDATE_STATUS: Object.freeze([
-    'Pending Admin','Pending SC','Pending Partner','DONE','Pending Insurance',
-    'Pending TO','Pending Finance','Pending Meilani','Pending Cust'
-  ])
+  UPDATE_STATUS: Object.freeze([])
 });
 
 const _SV03_VALIDATION_POLICY = (typeof VALIDATION_POLICY !== 'undefined') ? VALIDATION_POLICY : Object.freeze({
@@ -556,14 +553,18 @@ function ensurePicSheets_(ss, pic) {
   // Ensure operational sheets (profile-specific templates)
   (spec.operational || []).forEach(name => {
     if (profile === 'ADMIN') {
-      const tpl = SV03_WORKFLOW_SHEETS.has(String(name || '').trim())
+      let tpl = SV03_WORKFLOW_SHEETS.has(String(name || '').trim())
         ? SV03_TEMPLATES.OPS_ADMIN_WORKFLOW
         : SV03_TEMPLATES.OPS_ADMIN_DEFAULT;
+      if (String(name || '').trim() === 'Finish') tpl = tpl.concat(['Repair Type']);
       sv03_ensureSheetWithHeader_(ss, name, tpl, pic);
     } else {
       // PIC (single-master): all operational sheets live in one workbook.
       if (SV03_WORKFLOW_SHEETS.has(String(name || '').trim())) {
-        sv03_ensureSheetWithHeader_(ss, name, SV03_TEMPLATES.OPS_PIC_WORKFLOW, pic);
+        const tpl = String(name || '').trim() === 'Finish'
+          ? SV03_TEMPLATES.OPS_PIC_WORKFLOW.concat(['Repair Type'])
+          : SV03_TEMPLATES.OPS_PIC_WORKFLOW;
+        sv03_ensureSheetWithHeader_(ss, name, tpl, pic);
       } else if (name === 'PO') {
         sv03_ensureSheetWithHeader_(ss, 'PO', SV03_TEMPLATES.OPS_PIC_PO, pic);
       } else if (name === (OPS_ROUTING_POLICY && OPS_ROUTING_POLICY.SHEETS ? OPS_ROUTING_POLICY.SHEETS.SC_FARHAN : 'SC - Farhan')
@@ -900,18 +901,56 @@ function sv03_applyRuleCopyToColumn_(srcCell, dstSheet, dstCol1, rows, opt) {
     const dst = dstSheet.getRange(2, dstCol1, rows, 1);
 
     // Data validation is the key to preserve dropdown "chip" UI + option colors.
-    try { srcCell.copyTo(dst, SpreadsheetApp.CopyPasteType.PASTE_DATA_VALIDATION, false); } catch (e1) {}
+    try { srcCell.copyTo(dst, SpreadsheetApp.CopyPasteType.PASTE_DATA_VALIDATION, false); } catch (e1) { if (opt.failLoud) throw e1; }
 
-    // Optional: copy only non-destructive formatting (NO background fill) to avoid "mass fill" bugs.
+    // Optional: clone the complete cell format from the canonical template.
     if (opt.copyFormat) {
-      try { dst.setNumberFormat(srcCell.getNumberFormat()); } catch (e2) {}
-      try { dst.setHorizontalAlignment(srcCell.getHorizontalAlignment()); } catch (e3) {}
-      try { dst.setVerticalAlignment(srcCell.getVerticalAlignment()); } catch (e4) {}
-      try { dst.setWrap(srcCell.getWrap()); } catch (e5) {}
-      try { dst.setTextStyle(srcCell.getTextStyle()); } catch (e6) {}
-      try { dst.setFontColor(srcCell.getFontColor()); } catch (e7) {}
+      try { srcCell.copyTo(dst, SpreadsheetApp.CopyPasteType.PASTE_FORMAT, false); } catch (e2) { if (opt.failLoud) throw e2; }
     }
-  } catch (e) {}
+  } catch (e) { if (opt.failLoud) throw e; }
+}
+
+function sv03_getCanonicalStatusTemplateCell_(ss) {
+  if (!ss) return null;
+  const cfg = (typeof STATUS_DROPDOWN_TEMPLATE !== 'undefined' && STATUS_DROPDOWN_TEMPLATE)
+    ? STATUS_DROPDOWN_TEMPLATE
+    : null;
+  if (!cfg) return null;
+  const candidates = [cfg.SHEET_NAME, cfg.RECOVERY_SHEET_NAME].map(function(v) { return String(v || '').trim(); }).filter(Boolean);
+  for (let i = 0; i < candidates.length; i++) {
+    const sh = ss.getSheetByName(candidates[i]);
+    if (!sh) continue;
+    const col1 = sv03_findHeaderCol1_(sh, String(cfg.HEADER || 'Status'));
+    if (col1 < 1) continue;
+    const cell = sh.getRange(Number(cfg.ROW || 2), col1, 1, 1);
+    const spec = sv03_ruleCriteriaToList_(cell.getDataValidation());
+    if (!spec || (spec.kind !== 'LIST' && spec.kind !== 'RANGE')) continue;
+    let actual = [];
+    if (spec.kind === 'LIST') actual = (spec.list || []).map(function(v) { return String(v || ''); });
+    else {
+      try {
+        actual = spec.range.getDisplayValues().reduce(function(out, row) {
+          row.forEach(function(v) { if (String(v || '') !== '') out.push(String(v)); });
+          return out;
+        }, []);
+      } catch (eRange) { continue; }
+    }
+    const expected = (typeof STATUS_DROPDOWN_OPTIONS !== 'undefined') ? Array.from(STATUS_DROPDOWN_OPTIONS) : [];
+    if (JSON.stringify(actual) === JSON.stringify(expected)) return cell;
+  }
+  return null;
+}
+
+function sv03_copyCanonicalStatusTemplateToRange_(ss, dstRange) {
+  if (!ss || !dstRange) throw new Error('Canonical Status copy requires spreadsheet and destination range.');
+  const src = sv03_getCanonicalStatusTemplateCell_(ss);
+  if (!src) {
+    const cfg = (typeof STATUS_DROPDOWN_TEMPLATE !== 'undefined' && STATUS_DROPDOWN_TEMPLATE) ? STATUS_DROPDOWN_TEMPLATE : {};
+    throw new Error('Canonical Status chip template missing or option order mismatch at ' + String(cfg.SHEET_NAME || '?') + '!' + String(cfg.HEADER || 'Status') + String(cfg.ROW || 2));
+  }
+  src.copyTo(dstRange, SpreadsheetApp.CopyPasteType.PASTE_DATA_VALIDATION, false);
+  src.copyTo(dstRange, SpreadsheetApp.CopyPasteType.PASTE_FORMAT, false);
+  return true;
 }
 /**
  * Auto-heal dropdown rule:
@@ -1030,6 +1069,7 @@ function sv03_syncDropdownForWorkbook_(ss, pic, headerName, fallbackSeed, opts) 
 
   const allowBlank = (_SV03_VALIDATION_POLICY.ALLOW_BLANK || SV03_DROPDOWN_SYNC.FORCE_ALLOW_BLANK);
 
+  const exactOptions = (opts.exactOptions && opts.exactOptions.length) ? opts.exactOptions.slice() : null;
   if (fallbackSeed && fallbackSeed.length) sets.push(new Set(fallbackSeed));
 
   function addScanFromSheetList_(sheetList) {
@@ -1042,7 +1082,10 @@ function sv03_syncDropdownForWorkbook_(ss, pic, headerName, fallbackSeed, opts) 
     });
   }
 
-  if (mode === 'RAW') {
+  if (exactOptions) {
+    // Canonical dropdown options are authoritative; existing cell values are not scanned
+    // into the rule and remain untouched when validation is replaced.
+  } else if (mode === 'RAW') {
     addScanFromSheetList_(['Raw Data']);
   } else if (mode === 'TARGET') {
     addScanFromSheetList_((spec.operational || []).concat(profile !== 'ADMIN' ? (spec.optional || []) : []));
@@ -1050,11 +1093,15 @@ function sv03_syncDropdownForWorkbook_(ss, pic, headerName, fallbackSeed, opts) 
     addScanFromSheetList_(allSheets);
   }
 
-  const merged = sv03_unionSetsToArray_(sets, allowBlank);
+  const merged = exactOptions || sv03_unionSetsToArray_(sets, allowBlank);
 
   // choose a template target if missing
-  let template = tpl;
-  if (!template) {
+  let template = exactOptions ? null : tpl;
+  if (exactOptions && headerName === 'Status') {
+    const canonicalCell = sv03_getCanonicalStatusTemplateCell_(ss);
+    if (canonicalCell) template = { sh: canonicalCell.getSheet(), cell: canonicalCell, col1: canonicalCell.getColumn(), rule: canonicalCell.getDataValidation() };
+  }
+  if (!template && !exactOptions) {
     // pick first sheet that has the header
     for (let i = 0; i < templateSheets.length; i++) {
       const sh = ss.getSheetByName(templateSheets[i]);
@@ -1065,10 +1112,15 @@ function sv03_syncDropdownForWorkbook_(ss, pic, headerName, fallbackSeed, opts) 
       break;
     }
   }
-  if (!template || !template.cell) return { ok: false, notes: 'no_target_column_found' };
+  if (!template || !template.cell) {
+    const note = exactOptions ? 'canonical_status_chip_template_missing_or_mismatch' : 'no_target_column_found';
+    try { if (typeof logLine_ === 'function') logLine_('WARN', 'STATUS_TEMPLATE_INVALID', note, '', 'WARN'); } catch (eLog) {}
+    return { ok: false, notes: note };
+  }
 
-  // Create minimal fallback validation IF no rule exists at all (chip/colors won't exist)
-  if (!template.cell.getDataValidation()) {
+  // Never rebuild exact Status rules: cloning is required to retain chip colors,
+  // display style, allow-invalid, and help text from the canonical template.
+  if (!exactOptions && !template.cell.getDataValidation()) {
     if (!DRY_RUN) {
       try {
         const base = merged.length ? merged : (allowBlank ? [''] : []);
@@ -1085,10 +1137,13 @@ function sv03_syncDropdownForWorkbook_(ss, pic, headerName, fallbackSeed, opts) 
   template.rule = template.cell.getDataValidation();
 
   // heal template rule (range-safe only)
-  const heal = sv03_healTemplateRule_(template, merged);
+  const heal = exactOptions
+    ? { mode: 'canonical_template_copy', changed: true, notes: 'exact_chip_template_applied' }
+    : sv03_healTemplateRule_(template, merged);
 
   // copy rule to all sheets where column exists
   const applyToSheets = (opts.applyToSheets && opts.applyToSheets.length) ? opts.applyToSheets : allSheets;
+  let copyFailures = 0;
 
   applyToSheets.forEach(name => {
     const sh = ss.getSheetByName(name);
@@ -1098,10 +1153,21 @@ function sv03_syncDropdownForWorkbook_(ss, pic, headerName, fallbackSeed, opts) 
 
     const lastRow = Math.max(sh.getLastRow(), 2);
     const rows = Math.min(sh.getMaxRows() - 1, Math.max(1, (lastRow - 1) + SV03_DROPDOWN_SYNC.BUFFER_ROWS));
-    sv03_applyRuleCopyToColumn_(template.cell, sh, col1, rows, { copyFormat: (headerName === 'Status') });
+    try {
+      sv03_applyRuleCopyToColumn_(template.cell, sh, col1, rows, {
+        copyFormat: (headerName === 'Status'),
+        failLoud: (headerName === 'Status')
+      });
+    } catch (eCopy) {
+      copyFailures++;
+      const rangeA1 = 'R2C' + col1 + ':R' + (rows + 1) + 'C' + col1;
+      try {
+        if (typeof logLine_ === 'function') logLine_('WARN', 'STATUS_TEMPLATE_COPY_FAILED', 'sheet=' + name + ' | range=' + rangeA1, String(eCopy && eCopy.message ? eCopy.message : eCopy), 'WARN');
+      } catch (eLog) {}
+    }
   });
 
-  return { ok: true, mode: heal.mode, changed: heal.changed, notes: heal.notes, mergedCount: merged.length };
+  return { ok: copyFailures === 0, mode: heal.mode, changed: heal.changed, notes: copyFailures ? ('copy_failures=' + copyFailures) : heal.notes, mergedCount: merged.length };
 }
 
 /** =========================================================
@@ -1368,7 +1434,7 @@ function enforceStandardLayoutForPic_(ss, pic) {
   // STATUS dropdown policy:
   // - Admin: DO NOT rebuild/sync rules (can flatten chip styling). Preserve via template-row copy.
   // - PIC: allow workbook-level sync (preserve by copy, auto-heal).
-  const adminSkip = (profile === 'ADMIN' && SV03_DROPDOWN_SYNC.SKIP_SYNC_FOR_ADMIN);
+  const adminSkip = false; // canonical Status options must be enforced for every profile
 
   let resStatus = null;
 
@@ -1388,7 +1454,9 @@ function enforceStandardLayoutForPic_(ss, pic) {
     });
   } else {
     // STATUS: default policy MODE
-    resStatus = sv03_syncDropdownForWorkbook_(ss, pic, 'Status', seedStatus, {});
+    resStatus = sv03_syncDropdownForWorkbook_(ss, pic, 'Status', seedStatus, {
+      exactOptions: (typeof STATUS_DROPDOWN_OPTIONS !== 'undefined') ? STATUS_DROPDOWN_OPTIONS : seedStatus
+    });
   }
 
   // DO NOT sync "Last Status Date" as a dropdown (it is a date field, not a dropdown).

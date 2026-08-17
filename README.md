@@ -191,7 +191,7 @@ Daftar status lengkap dieksekusi oleh `OPS_ROUTING_POLICY.LAST_STATUS_BY_SHEET`;
 | `OR - OLD` | `WAITING_PAYMENT`. | SUB relocation. |
 | `Start` | Walk-in/pickup/courier start statuses. `COURIER_PICKUP_START_DONE` juga terlihat di SC universe. | Service/Claim Type dan SC mirror rule. |
 | SC universe | Receive, estimate, repair/on-progress, insurance review/approval, OR-repair, dan finish tracking statuses. | Split oleh `SC_NAME_KEYWORDS`, PIC, branch, Daily Report Base, standalone projects. |
-| `Finish` | Repair/checkout/finish statuses; sejumlah status tetap berada di SC dan dicloning ke Finish. | SUB clone/relocate dan reporting. |
+| `Finish` | Repair/checkout/finish statuses; replacement delivery final (`QOALA_WAITING_CUSTOMER_REPLACE`, `CUSTOMER_RECEIVE_REPLACE`, dan tiga courier replace-pickup statuses) tetap dimirror ke SC universe. | SUB clone/relocate, managed `Repair Type`, dan reporting. |
 | `Expired Claim` | `CLAIM_EXPIRE`, `CLAIM_EXPIRE_WALKIN`. | SUB relocation dapat memindahkan claim keluar lagi. |
 | `Reject Claim` | Status yang mengandung `reject` dan `Last Status Aging <= 30`; jika aging tidak tersedia, last-update datetime harus berada dalam 30 hari. | MAIN route, SUB relocation, `REJECT_CLAIM_TYPE_BY_LAST_STATUS`. |
 | `PO` | Replacement/back-stage statuses. | `OR` serta `Service Center PIC`. |
@@ -268,6 +268,7 @@ Reconciled contract: current runtime treats `claim_submitted_datetime` as primar
 | Field group | Ownership | Preservation/write contract |
 | --- | --- | --- |
 | `Update Status`, `Timestamp`, `Status`, `Remarks` | Manual/restored where columns exist. | Snapshot before clear; restore fills blank destination by claim, preserving rich text, formula, wrap, format, and validation where supported. |
+| `Repair Type` | Managed/derived khusus `Finish`. | Exact normalized Last Status pada repair-status policy menghasilkan `Repair`; Last Status lain yang terisi menghasilkan `Replace`; blank tetap blank. |
 | `AWB`, `Timestamp AWB` | Manual/restored, primarily Start contract. | Backed up to Raw and restored after routing; formula retention is required. |
 | `_OPS_MAIN_SUB_TEMP` | Hidden handoff state. | Match by Claim Number + Service Center; consumed by SUB only in the 09:00 handoff window. |
 | `_OPS_MANUAL_BACKUP` | Hidden fallback state. | Match by PIC + Claim Number when normal snapshot restore misses. |
@@ -275,6 +276,12 @@ Reconciled contract: current runtime treats `claim_submitted_datetime` as primar
 | `Start Date`, `End Date`, `Details` | Layout-dependent. | Active for operational/Special Case context; deprecated and removed from B2B/EV-Bike/Doss. |
 | `DB`, operational `Status Type` | Deprecated output columns. | May still exist in internal classification/maps, but MAIN/SUB/FORM operational writers must not create/write them. |
 | `Update Status Asso`, `Timestamp Asso`, `Update Status Admin`, `Timestamp Admin` | Deprecated. | Removed/ignored by layout enforcement and writers. |
+
+Dropdown `Status` pada Raw Data dan seluruh target memakai urutan canonical: `Pending Logistic`, `Pending Front`, `DONE`, `Pending Insurance`, `Pending TO`, `Pending Finance`, `Pending PIC`, `Pending Cust`, `Pending Buss. Team`, `Pending SC (TA)`, `Pending SC (Repair)`, `Pending SC (Estimation)`, `Delivering`, `Delivered`, `Waiting Courier`, dan `Re-pickup`. Pembaruan validation tidak memutasi nilai manual lama yang telah dibackup.
+
+`Finish.Status` row 2 adalah canonical template cell untuk dropdown tersebut; `Raw Data.Status` row 2 menjadi recovery replica bila Finish sedang dibuat ulang. MAIN meng-clone data validation dan format langsung dari cell template—bukan membangun ulang list—agar chip style, option colors/order, allow-invalid, help text, font, alignment, background, number format, dan wrap tetap identik. Restore `Status` membersihkan validation lama sebelum menulis backup, lalu meng-clone kembali template canonical. Dengan demikian nilai legacy tetap dipertahankan 1:1 tanpa ditolak rule lama; kegagalan restore menyertakan source restore, sheet, range/cell, Claim Number, dan nilai pada structured log.
+
+Template enforcement membersihkan data validation dari kolom operational yang bukan owner validation, lalu hanya mengembalikan validation untuk `Status`, `OR`, dan `Type`. Ini mencegah dropdown row-template bocor ke kolom seperti `Submission Date` atau `AWB`. Raw column reorder tetap opt-in; kegagalan move mencatat sheet, header, source column, destination column, dan row bound.
 
 Restore only fills blank destination manual cells. Existing non-empty destination value wins. Rerun tidak boleh membuat duplicate claim atau menghapus manual state yang valid.
 
@@ -413,7 +420,7 @@ Record runtime result, sample IDs yang sudah direduksi/redacted, rollback action
 | Device/customer | `device_type`, `device_brand`, `imei_number`, `device_imei`, `holder_name`, `customer_name`, `outlet_name`, `pa_name`, `spa_name`. | Destination fields; customer/device values classified restricted. |
 | Finance | `sum_insured_amount`, `claim_amount`, `claim_own_risk_amount`, `nett_claim_amount`. | Optional/layout-dependent; `Selisih` and `% Approval` derived when numeric. |
 | Classification | Claim token `SFP/SFX/SMR` = OLD; `VVMAR/GADLD` = NEW; duplicate comparison uses policy/source/claim/submission/status with configured 62-day window. | Internal classification can remain even though operational `DB` column is deprecated. |
-| Highlight flags | Migration Policy, expired, Flex, B2B, duplicate, second-year, first-month, remaining-one-month. | Priority comes from configured policy, not table order. `month_policy_aging > 12` is strict. |
+| Highlight flags | Migration Policy, expired, Flex, B2B, duplicate, second-year, first-month, remaining-one-month. | MAIN exclusively calculates and applies note/fill after final operational formatting and sorting; priority comes from configured policy, and `month_policy_aging > 12` is strict. SUB only preserves the existing Claim Number note/fill during updates and relocation. |
 | SC-specific output | `Type`, `Branch`, `Service Center PIC`. | Derived only where destination header exists. |
 | Workflow output | `Claim Type` on Reject Claim; service/claim type on Start/Finish/Expired depending template. | Status/source fallback must be tested per sheet. |
 
