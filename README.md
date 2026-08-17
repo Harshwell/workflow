@@ -279,7 +279,9 @@ Reconciled contract: current runtime treats `claim_submitted_datetime` as primar
 
 Dropdown `Status` pada Raw Data dan seluruh target memakai urutan canonical: `Pending Logistic`, `Pending Front`, `DONE`, `Pending Insurance`, `Pending TO`, `Pending Finance`, `Pending PIC`, `Pending Cust`, `Pending Buss. Team`, `Pending SC (TA)`, `Pending SC (Repair)`, `Pending SC (Estimation)`, `Delivering`, `Delivered`, `Waiting Courier`, dan `Re-pickup`. Pembaruan validation tidak memutasi nilai manual lama yang telah dibackup.
 
-Restore `Status` membersihkan validation lama sebelum menulis backup, lalu memasang kembali dropdown canonical. Dengan demikian nilai legacy tetap dipertahankan 1:1 tanpa ditolak rule lama; kegagalan restore menyertakan source restore, sheet, range/cell, Claim Number, dan nilai pada structured log.
+`Finish.Status` row 2 adalah canonical template cell untuk dropdown tersebut; `Raw Data.Status` row 2 menjadi recovery replica bila Finish sedang dibuat ulang. MAIN meng-clone data validation dan format langsung dari cell template—bukan membangun ulang list—agar chip style, option colors/order, allow-invalid, help text, font, alignment, background, number format, dan wrap tetap identik. Restore `Status` membersihkan validation lama sebelum menulis backup, lalu meng-clone kembali template canonical. Dengan demikian nilai legacy tetap dipertahankan 1:1 tanpa ditolak rule lama; kegagalan restore menyertakan source restore, sheet, range/cell, Claim Number, dan nilai pada structured log.
+
+Template enforcement membersihkan data validation dari kolom operational yang bukan owner validation, lalu hanya mengembalikan validation untuk `Status`, `OR`, dan `Type`. Ini mencegah dropdown row-template bocor ke kolom seperti `Submission Date` atau `AWB`. Raw column reorder tetap opt-in; kegagalan move mencatat sheet, header, source column, destination column, dan row bound.
 
 Restore only fills blank destination manual cells. Existing non-empty destination value wins. Rerun tidak boleh membuat duplicate claim atau menghapus manual state yang valid.
 

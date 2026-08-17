@@ -793,6 +793,15 @@ const STATUS_DROPDOWN_OPTIONS = Object.freeze([
   'Re-pickup'
 ]);
 
+// The colored chip rule is maintained manually in this one workbook cell and
+// cloned 1:1. Never rebuild it with DataValidationBuilder (that flattens chips).
+const STATUS_DROPDOWN_TEMPLATE = Object.freeze({
+  SHEET_NAME: 'Finish',
+  RECOVERY_SHEET_NAME: 'Raw Data',
+  HEADER: 'Status',
+  ROW: 2
+});
+
 const VALIDATION_FALLBACKS = Object.freeze({
   ASSOCIATE: Object.freeze(['Meilani', 'Farhan', 'Suci', 'Adi']),
   STATUS: STATUS_DROPDOWN_OPTIONS

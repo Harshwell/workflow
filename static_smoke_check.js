@@ -371,14 +371,23 @@ function runSmoke() {
       && resolveFinishRepairType_('  ') === '';
     const subSource = fs.readFileSync(path.join(ROOT, '06a_EntryPoints.gs'), 'utf8');
     const routingSource = fs.readFileSync(path.join(ROOT, '05b_Pipeline_RoutingOperational.gs'), 'utf8');
+    const sheetsSource = fs.readFileSync(path.join(ROOT, '03_SheetsAndValidation.gs'), 'utf8');
+    const postProcessSource = fs.readFileSync(path.join(ROOT, '06c_PostProcessAndUtils.gs'), 'utf8');
     const subFlagOwnershipOk = subSource.indexOf('applyOperationalClaimHighlightsByRaw_') === -1
       && subSource.indexOf('preserveClaimHighlightToTarget') !== -1
       && (routingSource.match(/applyOperationalClaimHighlightsByRaw_/g) || []).length === 1;
+    const statusTemplateCloneOk = STATUS_DROPDOWN_TEMPLATE.SHEET_NAME === 'Finish'
+      && sheetsSource.indexOf('sv03_copyCanonicalStatusTemplateToRange_') !== -1
+      && sheetsSource.indexOf('SpreadsheetApp.CopyPasteType.PASTE_DATA_VALIDATION') !== -1
+      && sheetsSource.indexOf('SpreadsheetApp.CopyPasteType.PASTE_FORMAT') !== -1
+      && postProcessSource.indexOf("['OR', 'Type']") !== -1
+      && postProcessSource.indexOf('allowedDvCols') !== -1;
     const legacyStatusSheet = {
       value: '',
       validationActive: true,
       appliedRule: null,
       getName: function() { return 'Finish'; },
+      getParent: function() { return {}; },
       getRange: function() {
         const sh = this;
         return {
@@ -393,12 +402,19 @@ function runSmoke() {
         };
       }
     };
+    const originalCanonicalStatusCopy = sv03_copyCanonicalStatusTemplateToRange_;
+    sv03_copyCanonicalStatusTemplateToRange_ = function(_ss, range) {
+      range.setDataValidation({ options: Array.from(STATUS_DROPDOWN_OPTIONS), chipStyleCloned: true });
+      return true;
+    };
     const statusRestoreResult = __restoreStatusValuesWithCanonicalValidation06c_(
       legacyStatusSheet, 4, 26, [['Pending Admin']], [['CLAIM-LEGACY']], 'SMOKE'
     );
+    sv03_copyCanonicalStatusTemplateToRange_ = originalCanonicalStatusCopy;
     const legacyStatusRestoreOk = statusRestoreResult.written === 1
       && legacyStatusSheet.value === 'Pending Admin'
       && legacyStatusSheet.appliedRule
+      && legacyStatusSheet.appliedRule.chipStyleCloned === true
       && JSON.stringify(legacyStatusSheet.appliedRule.options) === JSON.stringify(STATUS_DROPDOWN_OPTIONS);
     const rejectClaimTypeOk = REJECT_CLAIM_TYPE_BY_LAST_STATUS.COURIER_CLAIM_PICKUP_REJECT_DONE === 'SC - Middle'
       && REJECT_CLAIM_TYPE_BY_LAST_STATUS.QOALA_CLAIM_REJECT === 'Front';
@@ -474,7 +490,7 @@ function runSmoke() {
       && busyLockResult.pending === true
       && busyLockPendingConsumed === true;
 
-    return { ok: b2bOk && highlightOk && finishCloneOk && submissionDateOk && strictSyncOk && smartStageAgingOk && pendingSubOk && statusDropdownOk && finishMirrorOk && repairTypeOk && subFlagOwnershipOk && legacyStatusRestoreOk, b2bOk, highlightOk, finishCloneOk, submissionDateOk, strictSyncOk, smartStageAgingOk, pendingSubOk, statusDropdownOk, finishMirrorOk, repairTypeOk, subFlagOwnershipOk, legacyStatusRestoreOk, stageSameBucket, stageChangedBucket, stageMissingRaw, stageBlankRaw, strictVal: String(strictVal), validationCleared: strictSheet.validationCleared, b2bRow: b2bRow, bg: highlightSheet.bgs[0][0], note: highlightSheet.notes[0][0] };
+    return { ok: b2bOk && highlightOk && finishCloneOk && submissionDateOk && strictSyncOk && smartStageAgingOk && pendingSubOk && statusDropdownOk && finishMirrorOk && repairTypeOk && subFlagOwnershipOk && legacyStatusRestoreOk && statusTemplateCloneOk, b2bOk, highlightOk, finishCloneOk, submissionDateOk, strictSyncOk, smartStageAgingOk, pendingSubOk, statusDropdownOk, finishMirrorOk, repairTypeOk, subFlagOwnershipOk, legacyStatusRestoreOk, statusTemplateCloneOk, stageSameBucket, stageChangedBucket, stageMissingRaw, stageBlankRaw, strictVal: String(strictVal), validationCleared: strictSheet.validationCleared, b2bRow: b2bRow, bg: highlightSheet.bgs[0][0], note: highlightSheet.notes[0][0] };
   })()`, ctx);
   if (!workflowGuard || workflowGuard.ok !== true) {
     throw new Error('MAIN/SUB workflow regression guard failed: ' + JSON.stringify(workflowGuard || {}, null, 2));

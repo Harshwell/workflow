@@ -654,14 +654,9 @@ function __restoreStatusValuesWithCanonicalValidation06c_(sh, startRow, col1, va
   }
 
   try {
-    const options = (typeof STATUS_DROPDOWN_OPTIONS !== 'undefined') ? Array.from(STATUS_DROPDOWN_OPTIONS) : [];
-    if (options.length) {
-      const rule = SpreadsheetApp.newDataValidation()
-        .requireValueInList(options, true)
-        .setAllowInvalid(false)
-        .build();
-      range.setDataValidation(rule);
-    }
+    const ss = sh.getParent ? sh.getParent() : null;
+    if (typeof sv03_copyCanonicalStatusTemplateToRange_ !== 'function') throw new Error('canonical Status copy helper unavailable');
+    sv03_copyCanonicalStatusTemplateToRange_(ss, range);
   } catch (eValidation) {
     throw new Error('Status restore canonical validation failed | source=' + sourceLabel + ' | sheet=' + sheetName + ' | range=' + rangeA1 + ' | written=' + written + ' | failed=' + failed + ' | error=' + (eValidation && eValidation.message ? eValidation.message : eValidation));
   }
@@ -955,14 +950,42 @@ function applyTemplateRowToOperationalSheets_(ss, pic) {
     const fmtRowCount = fmtTargetLastRow - 1;
 
     const src = sh.getRange(2, 1, 1, lastCol);
+    const hdr1 = sh.getRange(1, 1, 1, lastCol).getValues()[0].map(__normalizeHeaderText06_);
 
     if (dvRowCount > 0) {
-      const dstDv = sh.getRange(2, 1, dvRowCount, lastCol);
-      try { src.copyTo(dstDv, SpreadsheetApp.CopyPasteType.PASTE_DATA_VALIDATION, false); } catch (e) {}
+      // Never copy the whole template row's validations: one contaminated row-2
+      // cell can otherwise put a Status dropdown on unrelated columns such as A.
+      const allowedDvCols = new Set(['Status', 'OR', 'Type'].map(function(headerName) {
+        return __findHeaderIndexFlexible06_(hdr1, headerName);
+      }).filter(function(idx) { return idx !== -1; }));
+      for (let col0 = 0; col0 < lastCol; col0++) {
+        if (allowedDvCols.has(col0)) continue;
+        try { sh.getRange(2, col0 + 1, dvRowCount, 1).clearDataValidations(); } catch (eClearDv) {
+          throw new Error('Operational validation cleanup failed | sheet=' + name + ' | column=' + (col0 + 1) + ' | rows=2:' + (dvRowCount + 1) + ' | error=' + (eClearDv && eClearDv.message ? eClearDv.message : eClearDv));
+        }
+      }
+      ['OR', 'Type'].forEach(function(headerName) {
+        const idx = __findHeaderIndexFlexible06_(hdr1, headerName);
+        if (idx === -1) return;
+        const srcCell = sh.getRange(2, idx + 1, 1, 1);
+        try {
+          if (srcCell.getDataValidation()) {
+            srcCell.copyTo(sh.getRange(2, idx + 1, dvRowCount, 1), SpreadsheetApp.CopyPasteType.PASTE_DATA_VALIDATION, false);
+          }
+        } catch (eDv) {}
+      });
+      const idxStatus = __findHeaderIndexFlexible06_(hdr1, 'Status');
+      if (idxStatus !== -1) {
+        const dstStatus = sh.getRange(2, idxStatus + 1, dvRowCount, 1);
+        try {
+          sv03_copyCanonicalStatusTemplateToRange_(ss, dstStatus);
+        } catch (eStatusTemplate) {
+          throw new Error('Status template copy failed | sheet=' + name + ' | range=' + (dstStatus.getA1Notation ? dstStatus.getA1Notation() : '?') + ' | error=' + (eStatusTemplate && eStatusTemplate.message ? eStatusTemplate.message : eStatusTemplate));
+        }
+      }
       // Do NOT apply DV to "Status Type" (derived by script; must remain non-dropdown).
       // Do NOT apply DV to "Submission Date" (must stay date/plain, never checkbox).
       try {
-        const hdr1 = sh.getRange(1, 1, 1, lastCol).getValues()[0].map(__normalizeHeaderText06_);
         const idxStatusType = __findHeaderIndexFlexible06_(hdr1, 'Status Type');
         if (idxStatusType !== -1) {
           sh.getRange(2, idxStatusType + 1, dvRowCount, 1).clearDataValidations();
@@ -977,6 +1000,15 @@ function applyTemplateRowToOperationalSheets_(ss, pic) {
     if (fmtRowCount > 0) {
       const dstFmt = sh.getRange(2, 1, fmtRowCount, lastCol);
       try { src.copyTo(dstFmt, SpreadsheetApp.CopyPasteType.PASTE_FORMAT, false); } catch (e) {}
+      const idxStatusFmt = __findHeaderIndexFlexible06_(hdr1, 'Status');
+      if (idxStatusFmt !== -1) {
+        const dstStatusFmt = sh.getRange(2, idxStatusFmt + 1, fmtRowCount, 1);
+        try {
+          sv03_copyCanonicalStatusTemplateToRange_(ss, dstStatusFmt);
+        } catch (eStatusFormat) {
+          throw new Error('Status format copy failed | sheet=' + name + ' | range=' + (dstStatusFmt.getA1Notation ? dstStatusFmt.getA1Notation() : '?') + ' | error=' + (eStatusFormat && eStatusFormat.message ? eStatusFormat.message : eStatusFormat));
+        }
+      }
     }
   });
 }
@@ -2896,7 +2928,12 @@ function reorderColumnsByHeaderPriority06_(sheet, headers, desiredHeaders) {
 
     // Move entire column (all rows) to destination position.
     const maxRows = sheet.getMaxRows ? sheet.getMaxRows() : Math.max(1, sheet.getLastRow ? sheet.getLastRow() : 1);
-    sheet.moveColumns(sheet.getRange(1, currentCol, maxRows, 1), dest);
+    try {
+      sheet.moveColumns(sheet.getRange(1, currentCol, maxRows, 1), dest);
+    } catch (eMove) {
+      const sheetName = sheet.getName ? sheet.getName() : 'Raw Data';
+      throw new Error('Raw column reorder failed | sheet=' + sheetName + ' | header=' + h + ' | fromCol=' + currentCol + ' | toCol=' + dest + ' | rows=1:' + maxRows + ' | error=' + (eMove && eMove.message ? eMove.message : eMove));
+    }
 
     // Update local header array to reflect move.
     const [moved] = headers.splice(idx0, 1);
@@ -3674,7 +3711,35 @@ function restoreNamedOpsFieldsFromRaw06c_(ss, rawSheet, headerIndexRaw, pic, nam
       const rawIdx = headerIndexRaw[field], opsIdx = __findHeaderIndexFlexible06_(hdr, field);
       if (rawIdx == null || opsIdx === -1) return;
       const out = rows.map(function(row) { const saved = map[__claimKey06_(row[iClaim])]; const v = saved ? saved[rawIdx] : ''; if ((row[opsIdx] === '' || row[opsIdx] == null) && v !== '' && v != null) { restored++; return [v]; } return [row[opsIdx]]; });
-      sh.getRange(2, opsIdx + 1, count, 1).setValues(out);
+      const range = sh.getRange(2, opsIdx + 1, count, 1);
+      const rangeA1 = range.getA1Notation ? range.getA1Notation() : ('R2C' + (opsIdx + 1));
+      // AWB fields do not own a validation rule. Remove any stale validation
+      // leaked from a template row before restoring their values.
+      try { range.clearDataValidations(); } catch (eClear) {
+        throw new Error('Named restore validation cleanup failed | field=' + field + ' | sheet=' + name + ' | range=' + rangeA1 + ' | error=' + (eClear && eClear.message ? eClear.message : eClear));
+      }
+      try {
+        range.setValues(out);
+      } catch (batchErr) {
+        for (let r = 0; r < out.length; r++) {
+          const cell = sh.getRange(r + 2, opsIdx + 1, 1, 1);
+          try {
+            cell.clearDataValidations();
+            cell.setValue(out[r][0]);
+          } catch (cellErr) {
+            const cellA1 = cell.getA1Notation ? cell.getA1Notation() : ('R' + (r + 2) + 'C' + (opsIdx + 1));
+            try {
+              if (typeof logLine_ === 'function') logLine_(
+                'WARN',
+                'NAMED_RESTORE_WRITE_FAILED',
+                'field=' + field + ' | sheet=' + name + ' | range=' + cellA1 + ' | claim=' + String(rows[r][iClaim] || '') + ' | value=' + String(out[r][0] || ''),
+                String(cellErr && cellErr.message ? cellErr.message : cellErr),
+                'WARN'
+              );
+            } catch (eLog) {}
+          }
+        }
+      }
     });
   });
   return restored;
