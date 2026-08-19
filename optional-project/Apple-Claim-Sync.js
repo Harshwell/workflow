@@ -8,7 +8,7 @@
  * - all statuses except EXCLUDED_STATUSES
  *
  * Output : unique Claim Number only
- * Sync   : installable OnEdit + manual recheck
+ * Sync   : installable OnEdit + daily 09:00 trigger + manual recheck
  */
 
 const CONFIG = {
@@ -28,7 +28,8 @@ const CONFIG = {
     SUBMITTED_AT: 'claim_submitted_datetime'
   },
 
-  MIN_SUBMITTED_DATE: new Date(2026, 6, 1) // 1 Jul 2026
+  MIN_SUBMITTED_DATE: new Date(2026, 6, 1), // 1 Jul 2026
+  DAILY_TRIGGER_HOUR: 9
 };
 
 const EXCLUDED_STATUSES = new Set([
@@ -68,17 +69,18 @@ function onOpen() {
     .createMenu('Apple Claim')
     .addItem('Recheck Claim Number', 'manualRecheckAppleClaims')
     .addSeparator()
-    .addItem('Setup / Reset OnEdit Trigger', 'createOnEditTrigger')
+    .addItem('Setup / Reset Automation', 'setupAppleClaimSync')
     .addToUi();
 }
 
 function setupAppleClaimSync() {
-  createOnEditTrigger_(false);
+  createAutomationTriggers_();
   const result = syncAppleClaims_('INITIAL_SETUP');
 
   showAlertSafe_(
     'Apple Claim Sync Berhasil',
-    buildResultMessage_(result) + '\n\nInstallable OnEdit trigger sudah aktif.'
+    buildResultMessage_(result) +
+      '\n\nTrigger OnEdit dan harian pukul 09:00 sudah aktif.'
   );
 }
 
@@ -116,6 +118,10 @@ function manualRecheckAppleClaims() {
     showAlertSafe_('Apple Claim Recheck Gagal', error.message);
     throw error;
   }
+}
+
+function dailyAppleClaimSync() {
+  syncAppleClaims_('DAILY_09');
 }
 
 function syncAppleClaims_(mode) {
@@ -278,6 +284,11 @@ function createOnEditTrigger() {
   createOnEditTrigger_(true);
 }
 
+function createAutomationTriggers_() {
+  createOnEditTrigger_(false);
+  createDailyTrigger_();
+}
+
 function createOnEditTrigger_(showAlert) {
   const handlerName = 'onEditAppleClaims';
 
@@ -300,8 +311,23 @@ function createOnEditTrigger_(showAlert) {
   }
 }
 
-function deleteOnEditTrigger() {
-  const handlerName = 'onEditAppleClaims';
+function createDailyTrigger_() {
+  const handlerName = 'dailyAppleClaimSync';
+
+  deleteTriggersByHandler_(handlerName);
+
+  ScriptApp.newTrigger(handlerName)
+    .timeBased()
+    .atHour(CONFIG.DAILY_TRIGGER_HOUR)
+    .everyDays(1)
+    .create();
+
+  console.log(
+    `[TRIGGER] Daily trigger pukul ${String(CONFIG.DAILY_TRIGGER_HOUR).padStart(2, '0')}:00 berhasil dibuat/reset.`
+  );
+}
+
+function deleteTriggersByHandler_(handlerName) {
   let deleted = 0;
 
   ScriptApp.getProjectTriggers()
@@ -310,6 +336,13 @@ function deleteOnEditTrigger() {
       ScriptApp.deleteTrigger(trigger);
       deleted++;
     });
+
+  return deleted;
+}
+
+function deleteOnEditTrigger() {
+  const handlerName = 'onEditAppleClaims';
+  const deleted = deleteTriggersByHandler_(handlerName);
 
   showAlertSafe_('Apple Claim', `${deleted} OnEdit trigger berhasil dihapus.`);
 }
