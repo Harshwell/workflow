@@ -14,6 +14,9 @@
 const CONFIG = {
   SOURCE_SPREADSHEET_ID: '1zRlYrSRssv9LVcPKEq90CmmvTRsZoN_TqfIg2pNufbc',
   SOURCE_SHEET_NAME: 'Raw Data',
+  REQ_FU_SHEET_NAME: 'REQ FU',
+  REQ_FU_STATUS_COLUMN: 14,
+  REQ_FU_CLOSED_BACKGROUND: '#b7b7b7',
 
   TARGET_SPREADSHEET_ID: '18_JazMtrwsj7loSfPhtduhvSvR_SuZDrWxtf5rJkjJM',
   TARGET_SHEET_GID: 0,
@@ -82,11 +85,48 @@ function onEditAppleClaims(e) {
   const sheet = e.range.getSheet();
   const ss = sheet.getParent();
 
+  if (
+    ss.getId() === CONFIG.TARGET_SPREADSHEET_ID &&
+    sheet.getName() === CONFIG.REQ_FU_SHEET_NAME
+  ) {
+    applyReqFuClosedFormatting_(sheet, e.range);
+    return;
+  }
   if (ss.getId() !== CONFIG.SOURCE_SPREADSHEET_ID) return;
   if (sheet.getName() !== CONFIG.SOURCE_SHEET_NAME) return;
   if (e.range.getLastRow() <= CONFIG.HEADER_ROW) return;
 
   syncAppleClaims_('ON_EDIT');
+}
+
+function applyReqFuClosedFormatting_(sheet, editedRange) {
+  const statusColumn = CONFIG.REQ_FU_STATUS_COLUMN;
+  const editsStatus =
+    editedRange.getColumn() <= statusColumn &&
+    editedRange.getLastColumn() >= statusColumn;
+
+  if (!editsStatus || editedRange.getLastRow() <= CONFIG.HEADER_ROW) return;
+
+  const firstRow = Math.max(editedRange.getRow(), CONFIG.HEADER_ROW + 1);
+  const rowCount = editedRange.getLastRow() - firstRow + 1;
+  const lastColumn = Math.max(sheet.getLastColumn(), statusColumn);
+  const statuses = sheet.getRange(firstRow, statusColumn, rowCount, 1).getValues();
+  const fontLines = statuses.map(([status]) => {
+    const fontLine = String(status ?? '').trim().toUpperCase() === 'CLOSED'
+      ? 'line-through'
+      : 'none';
+    return Array(lastColumn).fill(fontLine);
+  });
+  const backgrounds = statuses.map(([status]) => {
+    const background = String(status ?? '').trim().toUpperCase() === 'CLOSED'
+      ? CONFIG.REQ_FU_CLOSED_BACKGROUND
+      : null;
+    return Array(lastColumn).fill(background);
+  });
+
+  const rowsRange = sheet.getRange(firstRow, 1, rowCount, lastColumn);
+  rowsRange.setFontLines(fontLines);
+  rowsRange.setBackgrounds(backgrounds);
 }
 
 function manualRecheckAppleClaims() {
@@ -288,12 +328,21 @@ function createOnEditTrigger_(showAlert) {
     .filter(trigger => trigger.getHandlerFunction() === handlerName)
     .forEach(trigger => ScriptApp.deleteTrigger(trigger));
 
-  ScriptApp.newTrigger(handlerName)
-    .forSpreadsheet(CONFIG.SOURCE_SPREADSHEET_ID)
-    .onEdit()
-    .create();
+  const spreadsheetIds = Array.from(new Set([
+    CONFIG.SOURCE_SPREADSHEET_ID,
+    CONFIG.TARGET_SPREADSHEET_ID
+  ]));
 
-  console.log('[TRIGGER] Installable OnEdit trigger berhasil dibuat/reset.');
+  spreadsheetIds.forEach(spreadsheetId => {
+    ScriptApp.newTrigger(handlerName)
+      .forSpreadsheet(spreadsheetId)
+      .onEdit()
+      .create();
+  });
+
+  console.log(
+    `[TRIGGER] ${spreadsheetIds.length} installable OnEdit trigger berhasil dibuat/reset.`
+  );
 
   if (showAlert) {
     showAlertSafe_(
