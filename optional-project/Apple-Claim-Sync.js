@@ -19,7 +19,6 @@ const CONFIG = {
   REQ_FU_CLOSED_BACKGROUND: '#b7b7b7',
 
   TARGET_SPREADSHEET_ID: '18_JazMtrwsj7loSfPhtduhvSvR_SuZDrWxtf5rJkjJM',
-  TARGET_SHEET_GID: 0,
 
   HEADER_ROW: 1,
   TARGET_HEADER: 'Claim Number',
@@ -255,12 +254,12 @@ function syncAppleClaims_(mode) {
 
 function writeTargetClaims_(claimNumbers) {
   const targetSS = SpreadsheetApp.openById(CONFIG.TARGET_SPREADSHEET_ID);
-  const targetSheet = targetSS
-    .getSheets()
-    .find(sheet => sheet.getSheetId() === CONFIG.TARGET_SHEET_GID);
+  const targetSheet = targetSS.getSheetByName(CONFIG.REQ_FU_SHEET_NAME);
 
   if (!targetSheet) {
-    throw new Error(`Sheet tujuan GID ${CONFIG.TARGET_SHEET_GID} tidak ditemukan.`);
+    throw new Error(
+      `Sheet tujuan "${CONFIG.REQ_FU_SHEET_NAME}" tidak ditemukan di target.`
+    );
   }
 
   const lastColumn = Math.max(targetSheet.getLastColumn(), 1);
@@ -272,7 +271,10 @@ function writeTargetClaims_(claimNumbers) {
   const headerIndex = headers.indexOf(normalizeHeader_(CONFIG.TARGET_HEADER));
 
   if (headerIndex === -1) {
-    throw new Error(`Kolom "${CONFIG.TARGET_HEADER}" tidak ditemukan di target.`);
+    throw new Error(
+      `Kolom "${CONFIG.TARGET_HEADER}" tidak ditemukan pada header row ` +
+        `${CONFIG.HEADER_ROW} sheet "${CONFIG.REQ_FU_SHEET_NAME}".`
+    );
   }
 
   const targetColumn = headerIndex + 1;
