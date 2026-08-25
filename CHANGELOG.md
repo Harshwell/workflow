@@ -4,7 +4,7 @@ Perubahan material repository dicatat di sini berdasarkan outcome, flow/project 
 
 ## Unreleased
 
-- Apple Claim Sync sekarang menulis hasil sync ke target sheet bernama `REQ FU`, bukan tab GID 0, sehingga initial setup tidak salah memilih tab lalu gagal mencari header `Claim Number`; error missing sheet/header juga menyebut lokasi target secara eksplisit.
+- Apple Claim Sync sekarang dipisah menjadi daily/manual sync dan OnEdit dalam folder `optional-project/Project Apple`: append-only `Claim Number` diarahkan ke sheet `General`, installable OnEdit hanya memantau target `REQ FU`, dan source/target ID wajib berasal dari Script Properties.
 - Apple Claim Sync sekarang memberi strikethrough dan fill abu-abu pada seluruh baris `REQ FU` saat dropdown `Status` kolom N bernilai `CLOSED`, termasuk edit multi-row, dan menghapus kedua format tersebut bila status dibuka kembali.
 - Apple Claim Sync sekarang dapat memasang trigger harian pukul 09:00 bersama trigger OnEdit melalui satu setup idempotent; standalone syntax validation juga mencakup script ini.
 - Dropdown `Status` kini di-clone 1:1 dari canonical chip template `Finish.Status` row 2, termasuk data-validation metadata dan format; whole-row validation propagation dihapus agar rule tidak bocor ke kolom A/AWB, restore AWB mendapat error context per sheet/cell, dan kegagalan Raw reorder menyertakan header serta posisi kolom.
