@@ -18,8 +18,12 @@ const APPLE_CLAIM_SYNC_CONFIG = {
 
   TARGET_SPREADSHEET_PROPERTY: 'APPLE_CLAIM_TARGET_SPREADSHEET_ID',
 
-  HEADER_ROW: 1,
+  SOURCE_HEADER_ROW: 1,
+  TARGET_HEADER_SCAN_ROWS: 20,
   TARGET_HEADER: 'Claim Number',
+  RUN_TIMESTAMP_CELL: 'G2',
+  RUN_STATUS_CELL: 'H2',
+  RUN_TIMESTAMP_FORMAT: 'yyyy-mm-dd hh:mm:ss',
 
   SOURCE_HEADERS: {
     CLAIM_NUMBER: 'claim_number',
@@ -105,6 +109,7 @@ function dailyAppleClaimSync() {
 
 function syncAppleClaims_(mode) {
   const lock = LockService.getScriptLock();
+  const startedAt = new Date();
   let locked = false;
 
   try {
@@ -112,6 +117,7 @@ function syncAppleClaims_(mode) {
     locked = true;
 
     console.log(`[${mode}] Mulai Apple Claim Sync`);
+    writeAppleClaimRunStatus_(startedAt, 'ON PROGRESS');
 
     const sourceSS = SpreadsheetApp.openById(
       getRequiredAppleClaimSpreadsheetId_(
@@ -129,35 +135,36 @@ function syncAppleClaims_(mode) {
     const lastRow = sourceSheet.getLastRow();
     const lastColumn = sourceSheet.getLastColumn();
 
-    if (lastRow <= APPLE_CLAIM_SYNC_CONFIG.HEADER_ROW || lastColumn === 0) {
+    if (lastRow === 0 || lastColumn === 0) {
       const targetResult = writeTargetClaims_([]);
-      return Object.assign(emptyResult_(), targetResult);
+      const result = Object.assign(emptyResult_(), targetResult);
+      writeAppleClaimRunStatus_(startedAt, 'UPDATED');
+      return result;
     }
 
     const values = sourceSheet
       .getRange(
-        APPLE_CLAIM_SYNC_CONFIG.HEADER_ROW,
+        APPLE_CLAIM_SYNC_CONFIG.SOURCE_HEADER_ROW,
         1,
-        lastRow - APPLE_CLAIM_SYNC_CONFIG.HEADER_ROW + 1,
+        lastRow - APPLE_CLAIM_SYNC_CONFIG.SOURCE_HEADER_ROW + 1,
         lastColumn
       )
       .getValues();
 
-    const headers = values[0].map(normalizeHeader_);
-
-    const claimIndex = findHeaderIndex_(
+    const headers = values[0].map(normalizeSourceHeader_);
+    const claimIndex = findSourceHeaderIndex_(
       headers,
       APPLE_CLAIM_SYNC_CONFIG.SOURCE_HEADERS.CLAIM_NUMBER
     );
-    const brandIndex = findHeaderIndex_(
+    const brandIndex = findSourceHeaderIndex_(
       headers,
       APPLE_CLAIM_SYNC_CONFIG.SOURCE_HEADERS.DEVICE_BRAND
     );
-    const statusIndex = findHeaderIndex_(
+    const statusIndex = findSourceHeaderIndex_(
       headers,
       APPLE_CLAIM_SYNC_CONFIG.SOURCE_HEADERS.STATUS
     );
-    const submittedIndex = findHeaderIndex_(
+    const submittedIndex = findSourceHeaderIndex_(
       headers,
       APPLE_CLAIM_SYNC_CONFIG.SOURCE_HEADERS.SUBMITTED_AT
     );
@@ -204,10 +211,12 @@ function syncAppleClaims_(mode) {
       appendedClaims: targetResult.appendedClaims
     };
 
+    writeAppleClaimRunStatus_(startedAt, 'UPDATED');
     console.log(`[${mode}] ${JSON.stringify(result)}`);
     return result;
 
   } catch (error) {
+    if (locked) writeAppleClaimRunStatusSafe_(startedAt, 'FAILED', mode);
     console.error(`[${mode}] ERROR: ${error.message}`);
     console.error(error.stack || '');
     throw error;
@@ -234,25 +243,9 @@ function writeTargetClaims_(claimNumbers) {
     );
   }
 
-  const lastColumn = Math.max(targetSheet.getLastColumn(), 1);
-  const headers = targetSheet
-    .getRange(APPLE_CLAIM_SYNC_CONFIG.HEADER_ROW, 1, 1, lastColumn)
-    .getValues()[0]
-    .map(normalizeHeader_);
-
-  const headerIndex = headers.indexOf(
-    normalizeHeader_(APPLE_CLAIM_SYNC_CONFIG.TARGET_HEADER)
-  );
-
-  if (headerIndex === -1) {
-    throw new Error(
-      `Kolom "${APPLE_CLAIM_SYNC_CONFIG.TARGET_HEADER}" tidak ditemukan pada header row ` +
-        `${APPLE_CLAIM_SYNC_CONFIG.HEADER_ROW} sheet "${APPLE_CLAIM_SYNC_CONFIG.TARGET_SHEET_NAME}".`
-    );
-  }
-
-  const targetColumn = headerIndex + 1;
-  const dataStartRow = APPLE_CLAIM_SYNC_CONFIG.HEADER_ROW + 1;
+  const targetHeader = findTargetClaimHeader_(targetSheet);
+  const targetColumn = targetHeader.column;
+  const dataStartRow = targetHeader.row + 1;
   const targetLastRow = targetSheet.getLastRow();
   const existingClaimRows = targetLastRow >= dataStartRow
     ? targetSheet
@@ -357,23 +350,104 @@ function getRequiredAppleClaimSpreadsheetId_(propertyName) {
       `Script Property "${propertyName}" wajib diisi dengan Spreadsheet ID.`
     );
   }
-  return value;
+  const urlMatch = value.match(/\/spreadsheets\/d\/([A-Za-z0-9_-]+)/);
+  const spreadsheetId = urlMatch ? urlMatch[1] : value;
+  if (!/^[A-Za-z0-9_-]{20,}$/.test(spreadsheetId)) {
+    throw new Error(
+      `Script Property "${propertyName}" harus berisi Spreadsheet ID atau URL Google Sheets yang valid.`
+    );
+  }
+  return spreadsheetId;
 }
 
-function normalizeHeader_(value) {
+function normalizeSourceHeader_(value) {
   return String(value ?? '').trim().toLowerCase();
 }
 
-function findHeaderIndex_(headers, headerName) {
-  const index = headers.indexOf(normalizeHeader_(headerName));
-
+function findSourceHeaderIndex_(headers, headerName) {
+  const index = headers.indexOf(normalizeSourceHeader_(headerName));
   if (index === -1) {
     throw new Error(
-      `Header "${headerName}" tidak ditemukan di sheet "${APPLE_CLAIM_SYNC_CONFIG.SOURCE_SHEET_NAME}".`
+      `Header source "${headerName}" tidak ditemukan pada row ` +
+        `${APPLE_CLAIM_SYNC_CONFIG.SOURCE_HEADER_ROW} sheet ` +
+        `"${APPLE_CLAIM_SYNC_CONFIG.SOURCE_SHEET_NAME}".`
+    );
+  }
+  return index;
+}
+
+function normalizeTargetHeader_(value) {
+  return String(value ?? '').trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
+function findTargetClaimHeader_(targetSheet) {
+  const lastRow = targetSheet.getLastRow();
+  const lastColumn = targetSheet.getLastColumn();
+  const scanRows = Math.min(
+    Math.max(lastRow, 1),
+    APPLE_CLAIM_SYNC_CONFIG.TARGET_HEADER_SCAN_ROWS
+  );
+  if (lastColumn === 0) {
+    throw new Error(
+      `Sheet target "${APPLE_CLAIM_SYNC_CONFIG.TARGET_SHEET_NAME}" kosong; ` +
+        `header "${APPLE_CLAIM_SYNC_CONFIG.TARGET_HEADER}" tidak ditemukan.`
     );
   }
 
-  return index;
+  const values = targetSheet.getRange(1, 1, scanRows, lastColumn).getValues();
+  const expected = normalizeTargetHeader_(APPLE_CLAIM_SYNC_CONFIG.TARGET_HEADER);
+  for (let rowOffset = 0; rowOffset < values.length; rowOffset++) {
+    for (let columnOffset = 0; columnOffset < values[rowOffset].length; columnOffset++) {
+      if (normalizeTargetHeader_(values[rowOffset][columnOffset]) === expected) {
+        console.log(
+          `[TARGET] Header Claim Number terdeteksi pada row ${rowOffset + 1}, ` +
+            `column ${columnOffset + 1}.`
+        );
+        return { row: rowOffset + 1, column: columnOffset + 1 };
+      }
+    }
+  }
+
+  throw new Error(
+    `Header target "${APPLE_CLAIM_SYNC_CONFIG.TARGET_HEADER}" tidak ditemukan ` +
+      `pada row 1-${scanRows} sheet "${APPLE_CLAIM_SYNC_CONFIG.TARGET_SHEET_NAME}".`
+  );
+}
+
+function writeAppleClaimRunStatus_(startedAt, status) {
+  const targetSS = SpreadsheetApp.openById(
+    getRequiredAppleClaimSpreadsheetId_(
+      APPLE_CLAIM_SYNC_CONFIG.TARGET_SPREADSHEET_PROPERTY
+    )
+  );
+  const targetSheet = targetSS.getSheetByName(
+    APPLE_CLAIM_SYNC_CONFIG.TARGET_SHEET_NAME
+  );
+  if (!targetSheet) {
+    throw new Error(
+      `Sheet tujuan "${APPLE_CLAIM_SYNC_CONFIG.TARGET_SHEET_NAME}" tidak ditemukan di target.`
+    );
+  }
+
+  targetSheet
+    .getRange(
+      APPLE_CLAIM_SYNC_CONFIG.RUN_TIMESTAMP_CELL + ':' +
+        APPLE_CLAIM_SYNC_CONFIG.RUN_STATUS_CELL
+    )
+    .setValues([[startedAt, status]]);
+  targetSheet
+    .getRange(APPLE_CLAIM_SYNC_CONFIG.RUN_TIMESTAMP_CELL)
+    .setNumberFormat(APPLE_CLAIM_SYNC_CONFIG.RUN_TIMESTAMP_FORMAT);
+}
+
+function writeAppleClaimRunStatusSafe_(startedAt, status, mode) {
+  try {
+    writeAppleClaimRunStatus_(startedAt, status);
+  } catch (statusError) {
+    console.error(
+      `[${mode}] Gagal menulis status ${status}: ${statusError.message}`
+    );
+  }
 }
 
 function parseSheetDate_(value) {
