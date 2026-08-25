@@ -253,10 +253,12 @@ function writeTargetClaims_(claimNumbers) {
       .getDisplayValues()
     : [];
   const existingClaims = new Set();
+  let lastClaimRow = dataStartRow - 1;
 
   existingClaimRows.forEach(([claimNumber], rowOffset) => {
     const normalizedClaim = String(claimNumber ?? '').trim();
     if (!normalizedClaim) return;
+    lastClaimRow = dataStartRow + rowOffset;
     if (existingClaims.has(normalizedClaim)) {
       throw new Error(
         `Duplicate Claim Number "${normalizedClaim}" ditemukan di target ` +
@@ -281,7 +283,7 @@ function writeTargetClaims_(claimNumbers) {
     };
   }
 
-  const appendStartRow = Math.max(targetLastRow + 1, dataStartRow);
+  const appendStartRow = Math.max(lastClaimRow + 1, dataStartRow);
   const requiredLastRow = appendStartRow + newClaims.length - 1;
   const currentMaxRows = targetSheet.getMaxRows();
 
