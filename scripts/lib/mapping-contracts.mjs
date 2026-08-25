@@ -5,8 +5,8 @@ import {
 
 export function validateCriticalMappings(sources) {
   const errors = [];
-  const finishScMirrorStatuses = evaluateInitializer(sources.config, 'FINISH_SC_MIRROR_STATUSES');
-  const rootPolicy = evaluateInitializer(sources.config, 'OPS_ROUTING_POLICY', { FINISH_SC_MIRROR_STATUSES: finishScMirrorStatuses });
+  const finishOnlyReplacementStatuses = evaluateInitializer(sources.config, 'FINISH_ONLY_REPLACEMENT_STATUSES');
+  const rootPolicy = evaluateInitializer(sources.config, 'OPS_ROUTING_POLICY', { FINISH_ONLY_REPLACEMENT_STATUSES: finishOnlyReplacementStatuses });
   const statusTypes = evaluateInitializer(sources.config, 'STATUS_TYPE_BY_LAST_STATUS');
   const positions = evaluateInitializer(sources.config, 'POSITION_BY_LAST_STATUS');
   const rawTail = evaluateInitializer(sources.config, 'RAW_DATA_CUSTOM_TAIL_HEADERS');
@@ -15,6 +15,7 @@ export function validateCriticalMappings(sources) {
   const extractorConfig = evaluateInitializer(sources.extractor, 'CONFIG');
 
   expectIncludes(errors, rootPolicy.SC_NAME_KEYWORDS['SC - Meilani'], 'GSI', 'root GSI -> Meilani');
+  expectIncludes(errors, rootPolicy.SC_NAME_KEYWORDS['SC - Meilani'], 'Sitcomtara', 'root Sitcomtara -> Meilani');
   expectIncludes(errors, rootPolicy.SC_NAME_KEYWORDS['SC - Farhan'], 'Rejeki Seluler', 'root Rejeki Seluler -> Farhan');
   expectIncludes(errors, rootPolicy.SC_NAME_KEYWORDS['SC - Farhan'], 'Rejeki Seluller', 'root Rejeki Seluller -> Farhan');
   expectIncludes(errors, rootPolicy.SC_NAME_KEYWORDS['SC - Farhan'], 'CV Berkah', 'root CV Berkah -> Farhan');
@@ -81,7 +82,7 @@ export function validateCriticalMappings(sources) {
   expectValue(errors, salvage.resolvePicByBranch_('Deltafone', 'Deltasindo', '', '', ''), 'Meindar', 'Salvage Deltasindo');
   expectValue(errors, salvage.resolvePicByBranch_('', 'CV Berkah', '', '', ''), 'Farhan', 'Salvage CV Berkah');
   expectValue(errors, salvage.resolvePicByBranch_('', 'Rejeki Seluller', '', '', ''), 'Farhan', 'Salvage Rejeki Seluller');
-  expectValue(errors, salvage.resolvePicByBranch_('EzCare', 'EzCare', 'Apple', '', '2026-07-15'), 'Farhan', 'Salvage EzCare Apple cutoff');
+  expectValue(errors, salvage.resolvePicByBranch_('EzCare', 'EzCare', 'Apple', '', '2026-01-01'), 'Farhan', 'Salvage EzCare Apple without date gate');
   expectValue(errors, salvage.resolvePicByBranch_('EzCare', 'EzCare', 'Samsung', '', '2026-07-15'), 'Meindar', 'Salvage EzCare non-Apple');
 
   const utils = loadFunctions(sources.utils, ['normalizeImeiSnText_'], {
@@ -90,8 +91,8 @@ export function validateCriticalMappings(sources) {
   expectValue(errors, utils.normalizeImeiSnText_('001,234,567'), '001234567', 'IMEI leading-zero preservation');
   expectValue(errors, utils.normalizeImeiSnText_(123456789012345), '123456789012345', 'numeric IMEI normalization');
 
-  expectPattern(errors, sources.routing, /isEzCare\s*&&\s*isApple[\s\S]*new Date\(2026,\s*6,\s*15\)[\s\S]*scFarhanName/, 'root EzCare Apple split');
-  expectPattern(errors, sources.routing, /all other EzCare claims retain the existing Meindar mapping/, 'root EzCare non-Apple contract');
+  expectPattern(errors, sources.routing, /isEzCare\s*&&\s*isApple[\s\S]*scFarhanName/, 'root EzCare Apple split');
+  expectPattern(errors, sources.routing, /other EzCare claims remain Meindar/, 'root EzCare non-Apple contract');
   return errors;
 }
 

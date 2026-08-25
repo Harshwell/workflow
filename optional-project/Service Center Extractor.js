@@ -91,7 +91,7 @@ const CONFIG = {
   SERVICE_CENTER_MAPPING: Object.freeze([
     Object.freeze({ name: "iBox", pic: "FARHAN" }),
     Object.freeze({ name: "Mitracare", pic: "FARHAN" }),
-    Object.freeze({ name: "Sitcomtara", pic: "FARHAN" }),
+    Object.freeze({ name: "Sitcomtara", pic: "MEILANI" }),
     Object.freeze({ name: "CV Berkah Athallah", pic: "FARHAN" }),
     Object.freeze({ name: "Rejeki Seluler", pic: "FARHAN" }),
     Object.freeze({ name: "EzCare", pic: "FARHAN" }),

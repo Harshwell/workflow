@@ -79,7 +79,9 @@ const CONFIG_SECTION_INDEX = Object.freeze({
  * =========================
  * NOTE: keep these in sync with routing overrides (05a/05b) + SC post-processing (06c).
  */
-const FINISH_SC_MIRROR_STATUSES = Object.freeze([
+// Replacement-delivery claims are terminal Finish-only records. They must not
+// leak into an SC universe merely because other repair Finish statuses do.
+const FINISH_ONLY_REPLACEMENT_STATUSES = Object.freeze([
   'QOALA_WAITING_CUSTOMER_REPLACE',
   'CUSTOMER_RECEIVE_REPLACE',
   'COURIER_WAITING_REPLACE_PICKUP',
@@ -115,7 +117,7 @@ const FINISH_STATUSES = Object.freeze([
   'SERVICE_CENTER_CLAIM_WAITING_PICKUP_FINISH',
   'COURIER_CLAIM_PICKUP_FINISH',
   'COURIER_CLAIM_PICKUP_FINISH_DONE'
-].concat(FINISH_SC_MIRROR_STATUSES));
+].concat(FINISH_ONLY_REPLACEMENT_STATUSES));
 
 const SC_SHEET_NAMES = Object.freeze([
   'SC - Farhan',
@@ -1452,7 +1454,7 @@ const OPS_ROUTING_POLICY = Object.freeze({
       'SERVICE_CENTER_CLAIM_WAITING_PICKUP_FINISH',
       'COURIER_CLAIM_PICKUP_FINISH',
       'COURIER_CLAIM_PICKUP_FINISH_DONE'
-    ].concat(FINISH_SC_MIRROR_STATUSES)),
+    ].concat(FINISH_ONLY_REPLACEMENT_STATUSES)),
 
     'Expired Claim': Object.freeze([
       'CLAIM_EXPIRE',
@@ -1504,7 +1506,7 @@ const OPS_ROUTING_POLICY = Object.freeze({
       'SERVICE_CENTER_CLAIM_WAITING_PICKUP_FINISH',
       'COURIER_CLAIM_PICKUP_FINISH',
       'COURIER_CLAIM_PICKUP_FINISH_DONE'
-    ].concat(FINISH_SC_MIRROR_STATUSES)),
+    ]),
 
     'PO': Object.freeze([
       'INSURANCE_APPROVED_REPLACED',
@@ -1557,7 +1559,6 @@ const OPS_ROUTING_POLICY = Object.freeze({
   SC_NAME_KEYWORDS: Object.freeze({
     'SC - Farhan': Object.freeze([
       'Mitracare',
-      'Sitcomtara',
       'iBox',
       'Rejeki Seluler',
       'Rejeki Seluller',
@@ -1580,6 +1581,7 @@ const OPS_ROUTING_POLICY = Object.freeze({
       'GH Store'
     ]),
     'SC - Meilani': Object.freeze([
+      'Sitcomtara',
       'Andalas',
       'Unicom',
       'Authorized Service Centre by Unicom',
@@ -1645,7 +1647,7 @@ const OPS_ROUTING_POLICY = Object.freeze({
       'WAITING_WALKIN_FINISH',
       'COURIER_PICKED_UP',
       'WAITING_COURIER_FINISH'
-    ].concat(FINISH_SC_MIRROR_STATUSES)),
+    ].concat(FINISH_ONLY_REPLACEMENT_STATUSES)),
     'SC - Wait Rep': Object.freeze([
       'INSURANCE_CLAIM_APPROVE_REPAIR',
       'SERVICE_CENTER_CLAIM_WAITING_REPAIR',

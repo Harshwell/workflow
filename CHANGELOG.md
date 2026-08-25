@@ -4,6 +4,8 @@ Perubahan material repository dicatat di sini berdasarkan outcome, flow/project 
 
 ## Unreleased
 
+- Routing MAIN/SUB memindahkan Sitcomtara ke `SC - Meilani`, mengarahkan seluruh EzCare/Ez Care dengan `Device Brand` Apple ke `SC - Farhan`, membatasi lima replacement-delivery status hanya ke `Finish`, dan memirror row `Start` ber-Status manual `Delivered` ke SC owner tanpa menghapus mirror saat status manual berikutnya berubah.
+- Backup split MAIN kini mengembalikan cell `Update Status`, `Timestamp`, `Status`, dan `Remarks` 1:1 dari handoff durable termasuk value/formula, rich text, format, wrap, dan data validation; relocation SUB tidak lagi mengosongkan empat field manual tersebut.
 - Apple Claim Sync sekarang menentukan append row dari Claim Number terakhir yang benar-benar terisi, bukan `sheet.getLastRow()`, sehingga formula/control di kolom lain sampai row 1001 tidak lagi membuat claim berikutnya melompat ke row 1002.
 - Apple Claim Sync menulis timestamp `General!G2` dan lifecycle `General!H2` sebagai cell update terpisah, sehingga status run tidak lagi gagal karena dimensi range gabungan/merged layout berbeda dari matriks `setValues`.
 - Apple Claim Sync sekarang menerima ID atau URL Google Sheets pada Script Properties, mempertahankan contract source raw `claim_number` di row 1, mendeteksi header target `General`.`Claim Number` pada 20 row pertama termasuk row 2/6 tanpa bergantung posisi kolom, dan mencatat waktu mulai serta status run di `General!G2:H2`.

@@ -581,10 +581,10 @@ function restoreOpsManualFromMainTempForSub06c_(ss, pic, opts) {
       // batch can flatten rich text/font styling and recreate the shifted color
       // issue during MAIN -> SUB restore.
       if (rec.rowNo) {
-        if (iU !== -1 && outU && String(outU[r][0] || '').trim() !== '') styleJobs.push({ srcRow: rec.rowNo, srcCol: 6, dstRow: r + 2, dstCol: iU + 1 });
-        if (iT !== -1 && outT && String(outT[r][0] || '').trim() !== '') styleJobs.push({ srcRow: rec.rowNo, srcCol: 7, dstRow: r + 2, dstCol: iT + 1 });
-        if (iS !== -1 && outS && String(outS[r][0] || '').trim() !== '') styleJobs.push({ srcRow: rec.rowNo, srcCol: 8, dstRow: r + 2, dstCol: iS + 1, statusFormatOnly: true });
-        if (iR !== -1 && outR && String(outR[r][0] || '').trim() !== '') styleJobs.push({ srcRow: rec.rowNo, srcCol: 9, dstRow: r + 2, dstCol: iR + 1 });
+        if (iU !== -1) styleJobs.push({ srcRow: rec.rowNo, srcCol: 6, dstRow: r + 2, dstCol: iU + 1 });
+        if (iT !== -1) styleJobs.push({ srcRow: rec.rowNo, srcCol: 7, dstRow: r + 2, dstCol: iT + 1 });
+        if (iS !== -1) styleJobs.push({ srcRow: rec.rowNo, srcCol: 8, dstRow: r + 2, dstCol: iS + 1 });
+        if (iR !== -1) styleJobs.push({ srcRow: rec.rowNo, srcCol: 9, dstRow: r + 2, dstCol: iR + 1 });
       }
     }
 
@@ -597,8 +597,7 @@ function restoreOpsManualFromMainTempForSub06c_(ss, pic, opts) {
       try {
         const src = shBak.getRange(job.srcRow, job.srcCol);
         const dst = sh.getRange(job.dstRow, job.dstCol);
-        if (job.statusFormatOnly) src.copyTo(dst, SpreadsheetApp.CopyPasteType.PASTE_FORMAT, false);
-        else src.copyTo(dst, { contentsOnly: false });
+        src.copyTo(dst, { contentsOnly: false });
       } catch (eCopy) {}
     }
   }

@@ -43,7 +43,7 @@ const SC_MEILANI_CONFIG = Object.freeze({
   }),
   repairUpdateSync: Object.freeze({
     sourceSheetName: 'Repair',
-    targetSheetNames: Object.freeze(['SC - Farhan']),
+    targetSheetNames: Object.freeze(['SC - Meilani']),
     identifierHeader: 'Claim Number',
     sourceUpdateHeader: 'Update from Service Center',
     targetRemarksHeader: 'Remarks',

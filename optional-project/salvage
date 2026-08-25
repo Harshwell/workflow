@@ -1502,9 +1502,8 @@ function normalizeServiceCenterKey_(value) {
 function resolvePicByBranch_(branchValue, serviceCenterValue, deviceBrandValue, deviceTypeValue, submissionDateValue) {
   var scKey = normalizeServiceCenterKey_(serviceCenterValue);
   if (scKey.indexOf('cvberkah') >= 0 || scKey.indexOf('rejekiseluler') >= 0 || scKey.indexOf('rejekiseluller') >= 0) return 'Farhan';
-  var submitted = new Date(submissionDateValue || '');
-  var isApple = /apple/i.test(String(deviceBrandValue || '')) || /apple/i.test(String(deviceTypeValue || ''));
-  if (scKey.indexOf('ezcare') >= 0 && isApple && !isNaN(submitted.getTime()) && submitted.getTime() >= new Date(2026, 6, 15).getTime()) return 'Farhan';
+  var isApple = /apple/i.test(String(deviceBrandValue || ''));
+  if (scKey.indexOf('ezcare') >= 0 && isApple) return 'Farhan';
   const branchKey = normalizeKey_(branchValue);
   if (!branchKey) return '';
 
@@ -1516,7 +1515,7 @@ function resolvePicByBranch_(branchValue, serviceCenterValue, deviceBrandValue, 
     cvberkahathallah: 'Farhan',
     ibox: 'Farhan',
     mitracare: 'Farhan',
-    sitcomtara: 'Farhan',
+    sitcomtara: 'Meilani',
     andalas: 'Meilani',
     carlcare: 'Meilani',
     samsungexclusive: 'Meilani',

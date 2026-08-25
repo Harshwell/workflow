@@ -2424,6 +2424,7 @@ function __getStatusTypeSub06a_(lastStatus) {
 function __shouldKeepScRowAndCloneFinishSub06a_(status) {
   const s = String(status || '').trim();
   if (!s) return false;
+  if (typeof FINISH_ONLY_REPLACEMENT_STATUSES !== 'undefined' && Array.isArray(FINISH_ONLY_REPLACEMENT_STATUSES) && FINISH_ONLY_REPLACEMENT_STATUSES.indexOf(s.toUpperCase()) !== -1) return false;
   try {
     if (typeof isFinishStatus05a_ === 'function' && isFinishStatus05a_(s)) return true;
   } catch (e0) {}
@@ -2432,6 +2433,11 @@ function __shouldKeepScRowAndCloneFinishSub06a_(status) {
 
 function __shouldMirrorStartAndScSub06a_(status) {
   return String(status || '').trim().toUpperCase() === 'COURIER_PICKUP_START_DONE';
+}
+
+function __shouldMirrorDeliveredStartToScSub06a_(sheetName, manualStatus) {
+  return String(sheetName || '').trim() === 'Start'
+    && String(manualStatus || '').trim().toUpperCase() === 'DELIVERED';
 }
 
 function __isScSheetNameSub06a_(sheetName, scPolicy) {
@@ -2601,6 +2607,20 @@ function __relocateOperationalRowsByLastStatusSub06a_(ss, sheetNames) {
     return fb || null;
   }
 
+  // Delivered creates a durable mirror. Keep its SC copy when the manual
+  // Status later changes (for example to Pending TO) while Start still owns
+  // the counterpart row.
+  const startClaims = new Set();
+  if (data.Start) {
+    const startClaimIdx = idxOfAny(data.Start.norm, ['claim number', 'claim_number', 'claim no', 'claim_no']);
+    if (startClaimIdx >= 0) {
+      for (let sr = 1; sr < data.Start.vals.length; sr++) {
+        const startClaim = String(data.Start.vals[sr][startClaimIdx] || '').trim();
+        if (startClaim) startClaims.add(startClaim);
+      }
+    }
+  }
+
 
 
   // Build moves and dedupe deletes
@@ -2687,8 +2707,11 @@ function __relocateOperationalRowsByLastStatusSub06a_(ss, sheetNames) {
       if (scPolicy.sharedStatusSet.has(status) && !__shouldMirrorStartAndScSub06a_(status)) {
         candidates = scPolicy.scSheets.filter(function (n) { return !!ss.getSheetByName(n); });
       }
-      const mirrorStartAndSc = __shouldMirrorStartAndScSub06a_(status) && !!ss.getSheetByName('Start');
+      const mirrorDeliveredStart = __shouldMirrorDeliveredStartToScSub06a_(sheetName, idxStatus >= 0 ? row[idxStatus] : '');
+      const mirrorStartAndSc = (__shouldMirrorStartAndScSub06a_(status) || mirrorDeliveredStart) && !!ss.getSheetByName('Start');
       const keepScAndCloneFinish = __shouldKeepScRowAndCloneFinishSub06a_(status) && !!ss.getSheetByName('Finish');
+      if (__isScSheetNameSub06a_(sheetName, scPolicy) && startClaims.has(claim)
+          && candidates && candidates.length === 1 && candidates[0] === 'Start') continue;
       if ((!candidates || !candidates.length) && !mirrorStartAndSc) continue;
 
       const scName = (idxSc >= 0) ? row[idxSc] : '';
@@ -2698,7 +2721,7 @@ function __relocateOperationalRowsByLastStatusSub06a_(ss, sheetNames) {
         const scDest = pickDest(status, scName, scSheets);
         if (scDest && scDest !== sheetName && !(exclusiveTokenClaim && scDest === scFallbackSheet)) {
           movesBySource[sheetName] = movesBySource[sheetName] || [];
-          movesBySource[sheetName].push({ row1Based: r + 1, claim, dest: scDest, status: status, rowVals: row.slice(), srcHdr: d.hdr, copyOnly: sheetName === startDest, preserveManualFields: rowTypeIsFinish });
+          movesBySource[sheetName].push({ row1Based: r + 1, claim, dest: scDest, status: status, rowVals: row.slice(), srcHdr: d.hdr, copyOnly: sheetName === startDest, preserveManualFields: true });
         }
         if (sheetName !== startDest) {
           movesBySource[sheetName] = movesBySource[sheetName] || [];
@@ -2822,13 +2845,8 @@ function __relocateOperationalRowsByLastStatusSub06a_(ss, sheetNames) {
     // SUB Finish rows must keep the four user/workflow columns. MAIN has already backed
     // them up, and clearing them during SUB relocation makes Type=Finish claims look
     // "lost" right after Update Status/Timestamp/Status/Remarks are refreshed.
-    if (!preserveManualFields) {
-      const keys = ['updateStatus', 'timestamp', 'status', 'remarks'];
-      for (let i = 0; i < keys.length; i++) {
-        const ix = resetIdx[keys[i]];
-        if (ix != null && ix >= 0 && ix < out.length) out[ix] = '';
-      }
-    }
+    // SUB only relocates/mirrors rows. The four manual workflow fields are never
+    // reset or rewritten as business data during a move.
     const idxStageAging = resetIdx.stageAging;
     if (idxStageAging != null && idxStageAging >= 0 && idxStageAging < out.length) out[idxStageAging] = (stageAgingValue === '' || stageAgingValue == null) ? 0 : stageAgingValue;
     return out;
