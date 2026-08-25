@@ -4,6 +4,7 @@ Perubahan material repository dicatat di sini berdasarkan outcome, flow/project 
 
 ## Unreleased
 
+- Apple Claim Sync menulis timestamp `General!G2` dan lifecycle `General!H2` sebagai cell update terpisah, sehingga status run tidak lagi gagal karena dimensi range gabungan/merged layout berbeda dari matriks `setValues`.
 - Apple Claim Sync sekarang menerima ID atau URL Google Sheets pada Script Properties, mempertahankan contract source raw `claim_number` di row 1, mendeteksi header target `General`.`Claim Number` pada 20 row pertama termasuk row 2/6 tanpa bergantung posisi kolom, dan mencatat waktu mulai serta status run di `General!G2:H2`.
 - Apple Claim Sync sekarang dipisah menjadi daily/manual sync dan OnEdit dalam folder `optional-project/Project Apple`: append-only `Claim Number` diarahkan ke sheet `General`, installable OnEdit hanya memantau target `REQ FU`, dan source/target ID wajib berasal dari Script Properties.
 - Apple Claim Sync sekarang memberi strikethrough dan fill abu-abu pada seluruh baris `REQ FU` saat dropdown `Status` kolom N bernilai `CLOSED`, termasuk edit multi-row, dan menghapus kedua format tersebut bila status dibuka kembali.

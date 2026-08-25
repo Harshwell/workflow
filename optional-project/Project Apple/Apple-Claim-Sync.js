@@ -429,15 +429,15 @@ function writeAppleClaimRunStatus_(startedAt, status) {
     );
   }
 
-  targetSheet
-    .getRange(
-      APPLE_CLAIM_SYNC_CONFIG.RUN_TIMESTAMP_CELL + ':' +
-        APPLE_CLAIM_SYNC_CONFIG.RUN_STATUS_CELL
-    )
-    .setValues([[startedAt, status]]);
-  targetSheet
-    .getRange(APPLE_CLAIM_SYNC_CONFIG.RUN_TIMESTAMP_CELL)
+  const timestampRange = targetSheet.getRange(
+    APPLE_CLAIM_SYNC_CONFIG.RUN_TIMESTAMP_CELL
+  );
+  timestampRange
+    .setValue(startedAt)
     .setNumberFormat(APPLE_CLAIM_SYNC_CONFIG.RUN_TIMESTAMP_FORMAT);
+  targetSheet
+    .getRange(APPLE_CLAIM_SYNC_CONFIG.RUN_STATUS_CELL)
+    .setValue(status);
 }
 
 function writeAppleClaimRunStatusSafe_(startedAt, status, mode) {
