@@ -211,15 +211,10 @@ function compileRoutingIndex_(routingMap) {
 function enforceRequiredMultiDestinationTargets05b_(status, targets, opsPolicy) {
   const statusKey = String(status || '').trim().toUpperCase();
   const out = Array.isArray(targets) ? targets.slice() : [];
-  const mirrorFinish = (typeof FINISH_SC_MIRROR_STATUSES !== 'undefined' && Array.isArray(FINISH_SC_MIRROR_STATUSES))
-    ? FINISH_SC_MIRROR_STATUSES.indexOf(statusKey) !== -1
-    : false;
-  if (statusKey !== 'COURIER_PICKUP_START_DONE' && !mirrorFinish) return uniq05a_(out);
+  if (statusKey !== 'COURIER_PICKUP_START_DONE') return uniq05a_(out);
 
   const sheets = (opsPolicy && opsPolicy.SHEETS) ? opsPolicy.SHEETS : {};
-  const workflowSheet = mirrorFinish
-    ? String(sheets.FINISH || 'Finish').trim()
-    : String(sheets.START || 'Start').trim();
+  const workflowSheet = String(sheets.START || 'Start').trim();
   const scSheets = [
     String(sheets.SC_FARHAN || 'SC - Farhan').trim(),
     String(sheets.SC_MEILANI || 'SC - Meilani').trim(),
@@ -1734,27 +1729,26 @@ function routeRawToOperationalSheetsInMemory_(ss, rawValues, headerIndexRaw, pic
     }
 
     // Patch B1: force Finish statuses into SC routing.
-    if (targets.indexOf('Reject Claim') === -1 && isFinishStatus05a_(statusVal)) {
+    const finishOnlyReplacement = (typeof FINISH_ONLY_REPLACEMENT_STATUSES !== 'undefined' && Array.isArray(FINISH_ONLY_REPLACEMENT_STATUSES))
+      ? FINISH_ONLY_REPLACEMENT_STATUSES.indexOf(String(statusVal || '').trim().toUpperCase()) !== -1
+      : false;
+    if (targets.indexOf('Reject Claim') === -1 && isFinishStatus05a_(statusVal) && !finishOnlyReplacement) {
       targets = uniq05a_(targets.concat([scFarhanName, scMeilaniName, scIvanName, scFallbackName]));
     }
 
-    // EzCare Apple project: from 15 Jul 2026 (inclusive), Apple device brand/type is Farhan;
-    // all other EzCare claims retain the existing Meindar mapping.
+    // EzCare Apple claims belong to Farhan; other EzCare claims remain Meindar.
     const scNameForOverride = (idxScName != null) ? String(rawRow[idxScName] || '') : '';
     const isEzCare = /ez\s*care/i.test(scNameForOverride);
-    const subDateIdx = headerIndexRaw[h.claimSubmissionDate] != null ? headerIndexRaw[h.claimSubmissionDate] : headerIndexRaw['claim_submission_date'];
     const brandIdx = headerIndexRaw[h.deviceBrand] != null ? headerIndexRaw[h.deviceBrand] : headerIndexRaw['device_brand'];
-    const typeIdx = headerIndexRaw[h.deviceType] != null ? headerIndexRaw[h.deviceType] : headerIndexRaw['device_type'];
-    const subDate = subDateIdx != null ? coerceDateOnly_(rawRow[subDateIdx]) : null;
-    const isApple = /apple/i.test(String((brandIdx != null ? rawRow[brandIdx] : '') || '')) || /apple/i.test(String((typeIdx != null ? rawRow[typeIdx] : '') || ''));
-    if (isEzCare && isApple && subDate && subDate.getTime() >= new Date(2026, 6, 15).getTime()) {
-      targets = targets.filter(x => x !== scMeilaniName && x !== scIvanName && x !== scFallbackName).concat([scFarhanName]);
-    }
+    const isApple = /apple/i.test(String((brandIdx != null ? rawRow[brandIdx] : '') || ''));
 
     // SC sheet split by sc_name keywords (only if targets include SC sheets)
     const scNameVal = (idxScName != null) ? String(rawRow[idxScName] || '') : '';
     if (targets.length && (targets.indexOf(scFarhanName) > -1 || targets.indexOf(scMeilaniName) > -1 || targets.indexOf(scIvanName) > -1)) {
       targets = filterScTargets05b_(targets, scNameVal, scFarhanName, scMeilaniName, scIvanName, kwFarhan, kwMeilani, kwIvan, scFallbackName);
+    }
+    if (isEzCare && isApple && targets.some(function(name) { return name === scIvanName || name === scFallbackName; })) {
+      targets = targets.filter(function(name) { return name !== scIvanName && name !== scFallbackName; }).concat([scFarhanName]);
     }
 
     if (exclusiveTokenClaim && targets.length) {
