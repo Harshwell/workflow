@@ -4,7 +4,10 @@ Perubahan material repository dicatat di sini berdasarkan outcome, flow/project 
 
 ## Unreleased
 
-- Apple Claim Sync sekarang menulis hasil sync ke target sheet bernama `REQ FU`, bukan tab GID 0, sehingga initial setup tidak salah memilih tab lalu gagal mencari header `Claim Number`; error missing sheet/header juga menyebut lokasi target secara eksplisit.
+- Apple Claim Sync sekarang menentukan append row dari Claim Number terakhir yang benar-benar terisi, bukan `sheet.getLastRow()`, sehingga formula/control di kolom lain sampai row 1001 tidak lagi membuat claim berikutnya melompat ke row 1002.
+- Apple Claim Sync menulis timestamp `General!G2` dan lifecycle `General!H2` sebagai cell update terpisah, sehingga status run tidak lagi gagal karena dimensi range gabungan/merged layout berbeda dari matriks `setValues`.
+- Apple Claim Sync sekarang menerima ID atau URL Google Sheets pada Script Properties, mempertahankan contract source raw `claim_number` di row 1, mendeteksi header target `General`.`Claim Number` pada 20 row pertama termasuk row 2/6 tanpa bergantung posisi kolom, dan mencatat waktu mulai serta status run di `General!G2:H2`.
+- Apple Claim Sync sekarang dipisah menjadi daily/manual sync dan OnEdit dalam folder `optional-project/Project Apple`: append-only `Claim Number` diarahkan ke sheet `General`, installable OnEdit hanya memantau target `REQ FU`, dan source/target ID wajib berasal dari Script Properties.
 - Apple Claim Sync sekarang memberi strikethrough dan fill abu-abu pada seluruh baris `REQ FU` saat dropdown `Status` kolom N bernilai `CLOSED`, termasuk edit multi-row, dan menghapus kedua format tersebut bila status dibuka kembali.
 - Apple Claim Sync sekarang dapat memasang trigger harian pukul 09:00 bersama trigger OnEdit melalui satu setup idempotent; standalone syntax validation juga mencakup script ini.
 - Dropdown `Status` kini di-clone 1:1 dari canonical chip template `Finish.Status` row 2, termasuk data-validation metadata dan format; whole-row validation propagation dihapus agar rule tidak bocor ke kolom A/AWB, restore AWB mendapat error context per sheet/cell, dan kegagalan Raw reorder menyertakan header serta posisi kolom.
