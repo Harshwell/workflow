@@ -93,6 +93,33 @@ export function validateCriticalMappings(sources) {
 
   expectPattern(errors, sources.routing, /isEzCare\s*&&\s*isApple[\s\S]*scFarhanName/, 'root EzCare Apple split');
   expectPattern(errors, sources.routing, /other EzCare claims remain Meindar/, 'root EzCare non-Apple contract');
+  expectPattern(errors, sources.entryPoints, /ez\\s\*care[\s\S]*deviceBrand[\s\S]*SC - Farhan/, 'SUB EzCare Apple split');
+  expectPattern(errors, sources.postProcess, /backedStatus[\s\S]*currentStatus/, 'blank-safe manual Status restore');
+
+  const scMeilani = loadFunctions(sources.scMeilani, [
+    'scMeilaniResolveMissingRepairClaimMarker_',
+    'scMeilaniShouldDeleteSalvageTargetClaim_',
+    'scMeilaniEqualsText_',
+    'scMeilaniNormalizeText_',
+    'scMeilaniIsInMonthConfig_',
+    'scMeilaniParseDateOnly_'
+  ], {
+    SC_MEILANI_CONFIG: {
+      repair: {
+        missingSourceNote: 'missing',
+        missingSourceColor: '#pink',
+        defaultClaimColor: '#white'
+      }
+    }
+  });
+  expectObject(errors, scMeilani.scMeilaniResolveMissingRepairClaimMarker_(false, '#blue', 'manual'), { background: '#pink', note: 'missing', marked: true, restored: false }, 'SC-Meilani missing source marker');
+  expectObject(errors, scMeilani.scMeilaniResolveMissingRepairClaimMarker_(true, '#pink', 'missing'), { background: '#white', note: '', marked: false, restored: true }, 'SC-Meilani restored source marker');
+  expectObject(errors, scMeilani.scMeilaniResolveMissingRepairClaimMarker_(true, '#blue', 'manual'), { background: '#blue', note: 'manual', marked: false, restored: false }, 'SC-Meilani unrelated claim style preservation');
+  expectPattern(errors, sources.scMeilani, /if\s*\(!targetRow\)/, 'SC-Meilani upsert uses target row index');
+  expectValue(errors, scMeilani.scMeilaniShouldDeleteSalvageTargetClaim_('Unit belum ada', 'Unit belum ada'), false, 'SC-Meilani retains unresolved Salvage claim');
+  expectValue(errors, scMeilani.scMeilaniShouldDeleteSalvageTargetClaim_('Unit sudah ada', 'Unit belum ada'), true, 'SC-Meilani deletes resolved Salvage claim');
+  expectValue(errors, scMeilani.scMeilaniIsInMonthConfig_(new Date(2026, 7, 31), { year: 2026, month: 8 }), true, 'SC-Meilani August 2026 Approval Date');
+  expectValue(errors, scMeilani.scMeilaniIsInMonthConfig_(new Date(2026, 8, 1), { year: 2026, month: 8 }), false, 'SC-Meilani rejects September 2026 Approval Date');
   return errors;
 }
 
