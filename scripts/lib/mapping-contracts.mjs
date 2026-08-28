@@ -93,6 +93,8 @@ export function validateCriticalMappings(sources) {
 
   expectPattern(errors, sources.routing, /isEzCare\s*&&\s*isApple[\s\S]*scFarhanName/, 'root EzCare Apple split');
   expectPattern(errors, sources.routing, /other EzCare claims remain Meindar/, 'root EzCare non-Apple contract');
+  expectPattern(errors, sources.entryPoints, /ez\\s\*care[\s\S]*deviceBrand[\s\S]*SC - Farhan/, 'SUB EzCare Apple split');
+  expectPattern(errors, sources.postProcess, /backedStatus[\s\S]*currentStatus/, 'blank-safe manual Status restore');
   return errors;
 }
 
