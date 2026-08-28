@@ -4,6 +4,7 @@ Perubahan material repository dicatat di sini berdasarkan outcome, flow/project 
 
 ## Unreleased
 
+- Restore MAIN kini menggabungkan snapshot manual per field di seluruh mirror dan tidak pernah mengganti `Status` existing dengan backup Raw yang blank; relocation SUB menerapkan override EzCare Apple ke `SC - Farhan` agar tidak kembali ke default Meindar.
 - Routing MAIN/SUB memindahkan Sitcomtara ke `SC - Meilani`, mengarahkan seluruh EzCare/Ez Care dengan `Device Brand` Apple ke `SC - Farhan`, membatasi lima replacement-delivery status hanya ke `Finish`, dan memirror row `Start` ber-Status manual `Delivered` ke SC owner tanpa menghapus mirror saat status manual berikutnya berubah.
 - Backup split MAIN kini mengembalikan cell `Update Status`, `Timestamp`, `Status`, dan `Remarks` 1:1 dari handoff durable termasuk value/formula, rich text, format, wrap, dan data validation; relocation SUB tidak lagi mengosongkan empat field manual tersebut.
 - Apple Claim Sync sekarang menentukan append row dari Claim Number terakhir yang benar-benar terisi, bukan `sheet.getLastRow()`, sehingga formula/control di kolom lain sampai row 1001 tidak lagi membuat claim berikutnya melompat ke row 1002.

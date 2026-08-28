@@ -2578,7 +2578,7 @@ function __relocateOperationalRowsByLastStatusSub06a_(ss, sheetNames) {
     return String(s || '').trim().toLowerCase().replace(/\s+/g, ' ');
   }
 
-  function pickDest(status, scName, candidates) {
+  function pickDest(status, scName, deviceBrand, candidates) {
     const cands = Array.isArray(candidates) ? candidates.slice() : [];
     if (!cands.length) return null;
 
@@ -2601,7 +2601,17 @@ function __relocateOperationalRowsByLastStatusSub06a_(ss, sheetNames) {
       }
     }
 
-    if (bestSheet && bestScore > 0) return bestSheet;
+    if (bestSheet && bestScore > 0) {
+      // EzCare is owned by Meindar by default, except Apple devices which are
+      // always owned by Farhan. MAIN applies the same override after keyword
+      // routing; SUB must apply it here as well or relocation sends every
+      // EzCare claim back to Meindar.
+      if (/ez\s*care/i.test(String(scName || '')) && /apple/i.test(String(deviceBrand || ''))) {
+        const farhan = scPolicy.scSheets.filter(function(name) { return String(name || '').trim() === 'SC - Farhan'; })[0];
+        if (farhan && cands.indexOf(farhan) !== -1) return farhan;
+      }
+      return bestSheet;
+    }
 
     // No keyword match -> route to fallback sheet (quarantine), not to a random SC PIC sheet.
     return fb || null;
@@ -2634,6 +2644,7 @@ function __relocateOperationalRowsByLastStatusSub06a_(ss, sheetNames) {
     const idxClaim = idxOfAny(norm, ['claim number', 'claim_number', 'claim no', 'claim_no']);
     const idxStatus = idxOfAny(norm, ['last status', 'claim_last_status_name', 'last_status']);
     const idxSc = idxOfAny(norm, ['service center', 'repairer_location_store_name', 'sc_name', 'service_center']);
+    const idxDeviceBrand = idxOfAny(norm, ['device brand', 'device_brand']);
     const idxLsd = idxOfAny(norm, ['last status date', 'claim_last_updated_datetime', 'claim last updated datetime', 'last update datetime', 'last_update_datetime']);
     const idxLsa = idxOfAny(norm, ['last status aging', 'days_aging_from_last_activity', 'last_status_aging', 'lsa']);
     const idxType = idxOfAny(norm, ['type']);
@@ -2715,10 +2726,11 @@ function __relocateOperationalRowsByLastStatusSub06a_(ss, sheetNames) {
       if ((!candidates || !candidates.length) && !mirrorStartAndSc) continue;
 
       const scName = (idxSc >= 0) ? row[idxSc] : '';
+      const deviceBrand = (idxDeviceBrand >= 0) ? row[idxDeviceBrand] : '';
       if (mirrorStartAndSc) {
         const startDest = 'Start';
         const scSheets = scPolicy.scSheets.filter(function (n) { return !!ss.getSheetByName(n); });
-        const scDest = pickDest(status, scName, scSheets);
+        const scDest = pickDest(status, scName, deviceBrand, scSheets);
         if (scDest && scDest !== sheetName && !(exclusiveTokenClaim && scDest === scFallbackSheet)) {
           movesBySource[sheetName] = movesBySource[sheetName] || [];
           movesBySource[sheetName].push({ row1Based: r + 1, claim, dest: scDest, status: status, rowVals: row.slice(), srcHdr: d.hdr, copyOnly: sheetName === startDest, preserveManualFields: true });
@@ -2732,7 +2744,7 @@ function __relocateOperationalRowsByLastStatusSub06a_(ss, sheetNames) {
 
       if (keepScAndCloneFinish) {
         const scSheets = scPolicy.scSheets.filter(function (n) { return !!ss.getSheetByName(n); });
-        const scDest = pickDest(status, scName, scSheets);
+        const scDest = pickDest(status, scName, deviceBrand, scSheets);
         if (scDest && scDest !== sheetName && !(exclusiveTokenClaim && scDest === scFallbackSheet)) {
           movesBySource[sheetName] = movesBySource[sheetName] || [];
           movesBySource[sheetName].push({ row1Based: r + 1, claim, dest: scDest, status: status, rowVals: row.slice(), srcHdr: d.hdr, copyOnly: sheetName === 'Finish', preserveManualFields: true });
@@ -2744,7 +2756,7 @@ function __relocateOperationalRowsByLastStatusSub06a_(ss, sheetNames) {
         continue;
       }
 
-      let dest = pickDest(status, scName, candidates);
+      let dest = pickDest(status, scName, deviceBrand, candidates);
       if (exclusiveTokenClaim && dest === scFallbackSheet) continue;
 
       // [Inference] If a row is already in SC - Farhan but Service Center is outside allowlist, push it to SC - Meilani as a safe default.
