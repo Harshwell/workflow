@@ -101,7 +101,7 @@ const SC_MEILANI_CONFIG = Object.freeze({
       'IMEI/SN': 'imei_number',
       'Last Status': 'claim_last_status_name',
     }),
-    minApprovalDate: Object.freeze({ year: 2026, month: 8, day: 1 }),
+    approvalMonth: Object.freeze({ year: 2026, month: 8 }),
     allowedLastStatuses: Object.freeze([
       'SERVICE_CENTER_CLAIM_DONE_REPAIR_WALKIN',
       'SERVICE_CENTER_CLAIM_WAITING_WALKIN_FINISH',
@@ -195,16 +195,9 @@ function runSCMeilaniSalvage() {
       scMeilaniLogStep_(ctx.destinationSpreadsheet, ctx.flowName, 'Process target ' + target.sheetName, 'START', 0, 'Preparing target year ' + target.year + '.', '', ctx.startedAt);
       const targetSheet = scMeilaniRequireSheet_(ctx.destinationSpreadsheet, target.sheetName);
       const targetMeta = scMeilaniReadTargetMeta_(targetSheet);
-      const rowNumbers = scMeilaniCollectRowNumbers_(sourceMeta, function (row) {
-        return scMeilaniIsAllowedBranch_(row[branchCol])
-          && scMeilaniMatchesYear_(row[yosCol], target.year)
-          && scMeilaniEqualsText_(row[remarksCol], cfg.salvage.requiredRemarksValue);
-      }, ctx);
-      scMeilaniLogStep_(ctx.destinationSpreadsheet, ctx.flowName, 'Filter target ' + target.sheetName, rowNumbers.length ? 'SUCCESS' : 'SKIPPED', rowNumbers.length, 'Filter completed for target year ' + target.year + '.', 'sourceRows=' + sourceRows + ', matched=' + rowNumbers.length, ctx.startedAt);
-
-      const written = scMeilaniMirrorRows_(sourceSheet, sourceMeta, targetSheet, targetMeta, rowNumbers, cfg.outputHeaders, ctx);
-      results.push(target.sheetName + ': ' + written + ' row');
-      scMeilaniLogStep_(ctx.destinationSpreadsheet, ctx.flowName, 'Process target ' + target.sheetName, 'SUCCESS', written, 'Target completed.', '', ctx.startedAt);
+      const sync = scMeilaniUpsertSalvageTarget_(sourceMeta, targetSheet, targetMeta, branchCol, yosCol, remarksCol, target.year, ctx);
+      results.push(target.sheetName + ': update ' + sync.updated + ', append ' + sync.appended + ', delete ' + sync.deleted);
+      scMeilaniLogStep_(ctx.destinationSpreadsheet, ctx.flowName, 'Process target ' + target.sheetName, 'SUCCESS', sync.updated + sync.appended, 'Target completed without full clear.', JSON.stringify(sync), ctx.startedAt);
     });
 
     scMeilaniToast_(ctx.destinationSpreadsheet, 'Salvage selesai. ' + results.join(' | '));
@@ -317,7 +310,7 @@ function runSCMeilaniSalvageRepair() {
     scMeilaniLogStep_(ctx.destinationSpreadsheet, ctx.flowName, 'Scan existing target', 'SUCCESS', targetIndex.uniqueCount, 'Existing target identifiers indexed.', 'duplicateTarget=' + targetIndex.duplicateCount + ', duplicateSamples=' + targetIndex.duplicateSamples.join(' | '), ctx.startedAt);
 
     const sourceRows = Math.max(sourceMeta.values.length - sourceMeta.headerRowNumber, 0);
-    scMeilaniLogStep_(ctx.destinationSpreadsheet, ctx.flowName, 'Filter Salvage Repair source', 'START', sourceRows, 'Filtering ' + cfg.repair.sourceSheetName + ' rows by branch, repair last status, and Approval Date cutoff.', 'allowedBranches=' + cfg.allowedBranches.join(', ') + ', allowedStatuses=' + cfg.repair.allowedLastStatuses.length + ', minApprovalDate=' + scMeilaniFormatDateConfig_(cfg.repair.minApprovalDate), ctx.startedAt);
+    scMeilaniLogStep_(ctx.destinationSpreadsheet, ctx.flowName, 'Filter Salvage Repair source', 'START', sourceRows, 'Filtering ' + cfg.repair.sourceSheetName + ' rows by branch, repair last status, and exact Approval Date month.', 'allowedBranches=' + cfg.allowedBranches.join(', ') + ', allowedStatuses=' + cfg.repair.allowedLastStatuses.length + ', approvalMonth=' + scMeilaniFormatMonthConfig_(cfg.repair.approvalMonth), ctx.startedAt);
     const sourceSnapshot = scMeilaniCollectRepairRecords_(sourceMeta, columnMap, allowedStatuses, targetIndex, ctx);
     scMeilaniWriteReasonLogs_(ctx, 'Filter Salvage Repair source', 'SKIPPED', sourceSnapshot.skippedByReason);
     scMeilaniWriteReasonLogs_(ctx, 'Filter Salvage Repair source', 'FAILED', sourceSnapshot.failedByReason);
@@ -553,6 +546,95 @@ function scMeilaniMirrorRows_(sourceSheet, sourceMeta, targetSheet, targetMeta, 
   return sourceRowNumbers.length;
 }
 
+function scMeilaniShouldDeleteSalvageTargetClaim_(sourceRemarks, requiredRemarksValue) {
+  return !scMeilaniEqualsText_(sourceRemarks, requiredRemarksValue);
+}
+
+function scMeilaniUpsertSalvageTarget_(sourceMeta, targetSheet, targetMeta, branchCol, yosCol, remarksCol, targetYear, ctx) {
+  const cfg = SC_MEILANI_CONFIG;
+  const sourceClaimCol = scMeilaniRequireSourceColumn_(sourceMeta, 'Claim Number');
+  const targetClaimCol = scMeilaniRequireHeader_(targetMeta.headerMap, 'Claim Number');
+  const sourceByClaim = Object.create(null);
+  const sourceDuplicates = [];
+
+  for (let r = sourceMeta.headerRowIndex + 1; r < sourceMeta.values.length; r++) {
+    const row = sourceMeta.values[r] || [];
+    const key = scMeilaniIdentifierKey_(row[sourceClaimCol]);
+    if (!key) continue;
+    if (sourceByClaim[key]) {
+      sourceDuplicates.push(String(row[sourceClaimCol] || '') + ' @ row ' + (r + 1));
+      continue;
+    }
+    sourceByClaim[key] = { row: row, rowNumber: r + 1 };
+  }
+  if (sourceDuplicates.length) throw new Error('Duplicate Claim Number di source Salvage: ' + sourceDuplicates.slice(0, 10).join(' | '));
+
+  const targetStartRow = targetMeta.headerRowNumber + 1;
+  const targetRowCount = Math.max(targetSheet.getLastRow() - targetMeta.headerRowNumber, 0);
+  const targetLastCol = Math.max(targetSheet.getLastColumn(), 1);
+  const targetValues = targetRowCount ? targetSheet.getRange(targetStartRow, 1, targetRowCount, targetLastCol).getValues() : [];
+  const targetByClaim = Object.create(null);
+  const deleteRows = [];
+
+  for (let i = 0; i < targetValues.length; i++) {
+    const key = scMeilaniIdentifierKey_(targetValues[i][targetClaimCol]);
+    if (!key) continue;
+    if (targetByClaim[key] != null) throw new Error('Duplicate Claim Number di target Salvage "' + targetSheet.getName() + '": ' + key);
+    targetByClaim[key] = i;
+    const sourceItem = sourceByClaim[key];
+    if (sourceItem && scMeilaniShouldDeleteSalvageTargetClaim_(sourceItem.row[remarksCol], cfg.salvage.requiredRemarksValue)) {
+      deleteRows.push(targetStartRow + i);
+    }
+  }
+
+  scMeilaniCheckStop_(ctx, 'Before deleting resolved Salvage claims ' + targetSheet.getName());
+  deleteRows.sort(function(a, b) { return b - a; }).forEach(function(rowNumber) { targetSheet.deleteRow(rowNumber); });
+
+  const refreshedMeta = scMeilaniReadTargetMeta_(targetSheet);
+  const refreshedStartRow = refreshedMeta.headerRowNumber + 1;
+  const refreshedRowCount = Math.max(targetSheet.getLastRow() - refreshedMeta.headerRowNumber, 0);
+  const refreshedLastCol = Math.max(targetSheet.getLastColumn(), cfg.outputHeaders.length, 1);
+  const values = refreshedRowCount ? targetSheet.getRange(refreshedStartRow, 1, refreshedRowCount, refreshedLastCol).getValues() : [];
+  const rowByClaim = Object.create(null);
+  const refreshedClaimCol = scMeilaniRequireHeader_(refreshedMeta.headerMap, 'Claim Number');
+  values.forEach(function(row, index) {
+    const key = scMeilaniIdentifierKey_(row[refreshedClaimCol]);
+    if (key) rowByClaim[key] = index;
+  });
+
+  const sourceCols = cfg.outputHeaders.map(function(header) { return scMeilaniRequireHeader_(sourceMeta.headerMap, header); });
+  const targetCols = cfg.outputHeaders.map(function(header) { return scMeilaniRequireHeader_(refreshedMeta.headerMap, header); });
+  let updated = 0;
+  let appended = 0;
+
+  Object.keys(sourceByClaim).forEach(function(key) {
+    const sourceRow = sourceByClaim[key].row;
+    if (!scMeilaniIsAllowedBranch_(sourceRow[branchCol])) return;
+    if (!scMeilaniMatchesYear_(sourceRow[yosCol], targetYear)) return;
+    if (!scMeilaniEqualsText_(sourceRow[remarksCol], cfg.salvage.requiredRemarksValue)) return;
+
+    let index = rowByClaim[key];
+    if (index == null) {
+      index = values.length;
+      rowByClaim[key] = index;
+      values.push(scMeilaniBlankArray_(refreshedLastCol));
+      appended += 1;
+    } else {
+      updated += 1;
+    }
+    for (let c = 0; c < targetCols.length; c++) values[index][targetCols[c]] = sourceRow[sourceCols[c]];
+  });
+
+  scMeilaniCheckStop_(ctx, 'Before writing Salvage upsert ' + targetSheet.getName());
+  if (values.length) {
+    scMeilaniEnsureRows_(targetSheet, refreshedMeta.headerRowNumber + values.length);
+    targetCols.forEach(function(targetCol) {
+      targetSheet.getRange(refreshedStartRow, targetCol + 1, values.length, 1).setValues(values.map(function(row) { return [row[targetCol]]; }));
+    });
+  }
+  return { updated: updated, appended: appended, deleted: deleteRows.length, preservedMissingSource: Object.keys(rowByClaim).filter(function(key) { return !sourceByClaim[key]; }).length };
+}
+
 function scMeilaniLogStepSafe_(ctx, processName, status, count, message, details) {
   if (!ctx || !ctx.destinationSpreadsheet) return;
   scMeilaniLogStep_(ctx.destinationSpreadsheet, ctx.flowName || '', processName, status, count, message, details || '', ctx.startedAt);
@@ -682,6 +764,16 @@ function scMeilaniIsOnOrAfterDateConfig_(value, dateConfig) {
   return parsed.getTime() >= cutoff.getTime();
 }
 
+function scMeilaniIsInMonthConfig_(value, monthConfig) {
+  const parsed = scMeilaniParseDateOnly_(value);
+  if (!parsed || !monthConfig) return false;
+  return parsed.getFullYear() === Number(monthConfig.year) && parsed.getMonth() + 1 === Number(monthConfig.month);
+}
+
+function scMeilaniFormatMonthConfig_(monthConfig) {
+  return String(monthConfig && monthConfig.year || '') + '-' + String(monthConfig && monthConfig.month || '').padStart(2, '0');
+}
+
 function scMeilaniParseDateOnly_(value) {
   if (value instanceof Date && !isNaN(value.getTime())) {
     return new Date(value.getFullYear(), value.getMonth(), value.getDate());
@@ -807,9 +899,9 @@ function scMeilaniCollectRepairRecords_(sourceMeta, columnMap, allowedStatuses, 
         scMeilaniAddReason_(skippedByReason, 'Last Status bukan Salvage Repair', rowNumber, claimValue, 'Last Status="' + String(statusValue || '') + '".');
         continue;
       }
-      if (!scMeilaniIsOnOrAfterDateConfig_(approvalDateValue, cfg.repair.minApprovalDate)) {
+      if (!scMeilaniIsInMonthConfig_(approvalDateValue, cfg.repair.approvalMonth)) {
         skippedCount += 1;
-        scMeilaniAddReason_(skippedByReason, 'Approval Date sebelum cutoff Salvage Repair', rowNumber, claimValue, 'Approval Date="' + String(approvalDateValue || '') + '", cutoff=' + scMeilaniFormatDateConfig_(cfg.repair.minApprovalDate) + '.');
+        scMeilaniAddReason_(skippedByReason, 'Approval Date di luar bulan Salvage Repair', rowNumber, claimValue, 'Approval Date="' + String(approvalDateValue || '') + '", requiredMonth=' + scMeilaniFormatMonthConfig_(cfg.repair.approvalMonth) + '.');
         continue;
       }
 

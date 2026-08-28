@@ -96,7 +96,14 @@ export function validateCriticalMappings(sources) {
   expectPattern(errors, sources.entryPoints, /ez\\s\*care[\s\S]*deviceBrand[\s\S]*SC - Farhan/, 'SUB EzCare Apple split');
   expectPattern(errors, sources.postProcess, /backedStatus[\s\S]*currentStatus/, 'blank-safe manual Status restore');
 
-  const scMeilani = loadFunctions(sources.scMeilani, ['scMeilaniResolveMissingRepairClaimMarker_'], {
+  const scMeilani = loadFunctions(sources.scMeilani, [
+    'scMeilaniResolveMissingRepairClaimMarker_',
+    'scMeilaniShouldDeleteSalvageTargetClaim_',
+    'scMeilaniEqualsText_',
+    'scMeilaniNormalizeText_',
+    'scMeilaniIsInMonthConfig_',
+    'scMeilaniParseDateOnly_'
+  ], {
     SC_MEILANI_CONFIG: {
       repair: {
         missingSourceNote: 'missing',
@@ -109,6 +116,10 @@ export function validateCriticalMappings(sources) {
   expectObject(errors, scMeilani.scMeilaniResolveMissingRepairClaimMarker_(true, '#pink', 'missing'), { background: '#white', note: '', marked: false, restored: true }, 'SC-Meilani restored source marker');
   expectObject(errors, scMeilani.scMeilaniResolveMissingRepairClaimMarker_(true, '#blue', 'manual'), { background: '#blue', note: 'manual', marked: false, restored: false }, 'SC-Meilani unrelated claim style preservation');
   expectPattern(errors, sources.scMeilani, /if\s*\(!targetRow\)/, 'SC-Meilani upsert uses target row index');
+  expectValue(errors, scMeilani.scMeilaniShouldDeleteSalvageTargetClaim_('Unit belum ada', 'Unit belum ada'), false, 'SC-Meilani retains unresolved Salvage claim');
+  expectValue(errors, scMeilani.scMeilaniShouldDeleteSalvageTargetClaim_('Unit sudah ada', 'Unit belum ada'), true, 'SC-Meilani deletes resolved Salvage claim');
+  expectValue(errors, scMeilani.scMeilaniIsInMonthConfig_(new Date(2026, 7, 31), { year: 2026, month: 8 }), true, 'SC-Meilani August 2026 Approval Date');
+  expectValue(errors, scMeilani.scMeilaniIsInMonthConfig_(new Date(2026, 8, 1), { year: 2026, month: 8 }), false, 'SC-Meilani rejects September 2026 Approval Date');
   return errors;
 }
 

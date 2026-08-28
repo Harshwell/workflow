@@ -4,6 +4,7 @@ Perubahan material repository dicatat di sini berdasarkan outcome, flow/project 
 
 ## Unreleased
 
+- SC-Meilani Salvage sekarang meng-upsert claim ber-Remarks `Unit belum ada` tanpa full clear, mempertahankan target-only claim, dan hanya menghapus target claim yang masih ada di source tetapi Remarks-nya berubah; Salvage Repair membatasi Approval Date tepat pada Agustus 2026, bukan seluruh tanggal setelah cutoff.
 - SC-Meilani Salvage Repair kini melakukan upsert non-destructive berdasarkan `Claim Number`, memperbaiki lookup target row, serta menandai cell Claim Number pink dan memberi note untuk row target yang tidak ada di source `Raw Data`; marker otomatis dibersihkan saat claim kembali tanpa mengubah note/style claim lain.
 - Restore MAIN kini menggabungkan snapshot manual per field di seluruh mirror dan tidak pernah mengganti `Status` existing dengan backup Raw yang blank; relocation SUB menerapkan override EzCare Apple ke `SC - Farhan` agar tidak kembali ke default Meindar.
 - Routing MAIN/SUB memindahkan Sitcomtara ke `SC - Meilani`, mengarahkan seluruh EzCare/Ez Care dengan `Device Brand` Apple ke `SC - Farhan`, membatasi lima replacement-delivery status hanya ke `Finish`, dan memirror row `Start` ber-Status manual `Delivered` ke SC owner tanpa menghapus mirror saat status manual berikutnya berubah.
