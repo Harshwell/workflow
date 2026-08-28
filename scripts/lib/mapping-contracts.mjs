@@ -95,6 +95,20 @@ export function validateCriticalMappings(sources) {
   expectPattern(errors, sources.routing, /other EzCare claims remain Meindar/, 'root EzCare non-Apple contract');
   expectPattern(errors, sources.entryPoints, /ez\\s\*care[\s\S]*deviceBrand[\s\S]*SC - Farhan/, 'SUB EzCare Apple split');
   expectPattern(errors, sources.postProcess, /backedStatus[\s\S]*currentStatus/, 'blank-safe manual Status restore');
+
+  const scMeilani = loadFunctions(sources.scMeilani, ['scMeilaniResolveMissingRepairClaimMarker_'], {
+    SC_MEILANI_CONFIG: {
+      repair: {
+        missingSourceNote: 'missing',
+        missingSourceColor: '#pink',
+        defaultClaimColor: '#white'
+      }
+    }
+  });
+  expectObject(errors, scMeilani.scMeilaniResolveMissingRepairClaimMarker_(false, '#blue', 'manual'), { background: '#pink', note: 'missing', marked: true, restored: false }, 'SC-Meilani missing source marker');
+  expectObject(errors, scMeilani.scMeilaniResolveMissingRepairClaimMarker_(true, '#pink', 'missing'), { background: '#white', note: '', marked: false, restored: true }, 'SC-Meilani restored source marker');
+  expectObject(errors, scMeilani.scMeilaniResolveMissingRepairClaimMarker_(true, '#blue', 'manual'), { background: '#blue', note: 'manual', marked: false, restored: false }, 'SC-Meilani unrelated claim style preservation');
+  expectPattern(errors, sources.scMeilani, /if\s*\(!targetRow\)/, 'SC-Meilani upsert uses target row index');
   return errors;
 }
 

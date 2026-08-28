@@ -86,6 +86,9 @@ const SC_MEILANI_CONFIG = Object.freeze({
     sourceSheetName: 'Raw Data',
     targetSheetName: 'Pickup Sparepart Repair (Salvage)',
     identifierHeader: 'Claim Number',
+    missingSourceNote: 'Data klaim ini tidak ditemukan pada source Salvage Repair terbaru.',
+    missingSourceColor: '#f4cccc',
+    defaultClaimColor: '#ffffff',
     sourceHeaders: Object.freeze({
       'Submission Date': 'claim_submitted_datetime',
       'Claim Number': 'claim_number',
@@ -322,6 +325,7 @@ function runSCMeilaniSalvageRepair() {
 
     scMeilaniCheckStop_(ctx, 'SALVAGE_REPAIR before upsert');
     const writeResult = scMeilaniUpsertRepairRecords_(targetSheet, targetMeta, columnMap, targetIndex, sourceSnapshot.validRecords, ctx);
+    const missingResult = scMeilaniMarkRepairClaimsMissingFromSource_(targetSheet, targetMeta, sourceSnapshot.sourceClaimKeys, ctx);
     const sortResult = scMeilaniSortRepairTarget_(targetSheet, targetMeta, columnMap, ctx);
     const verify = scMeilaniVerifyRepairResult_(targetSheet, targetMeta, cfg.repair.identifierHeader, sourceSnapshot.validRecords);
     scMeilaniLogStep_(ctx.destinationSpreadsheet, ctx.flowName, 'Post-write verification', verify.missingClaims.length || verify.duplicateCount ? 'FAILED' : 'SUCCESS', verify.matchedSourceClaims, 'Target verification completed.', 'targetClaims=' + verify.targetClaims + ', duplicateTargetAfter=' + verify.duplicateCount + ', missingAfter=' + verify.missingClaims.join(' | '), ctx.startedAt);
@@ -332,6 +336,8 @@ function runSCMeilaniSalvageRepair() {
       skipped: sourceSnapshot.skippedCount,
       updated: writeResult.updated,
       appended: writeResult.appended,
+      missingSource: missingResult.marked,
+      restoredSource: missingResult.restored,
       failed: sourceSnapshot.failedCount + writeResult.failed + verify.missingClaims.length,
       duplicateTargetSkipped: sourceSnapshot.duplicateTargetSkipped,
       targetSheetName: targetSheet.getName(),
@@ -754,6 +760,7 @@ function scMeilaniCollectRepairRecords_(sourceMeta, columnMap, allowedStatuses, 
   const cfg = SC_MEILANI_CONFIG;
   const records = [];
   const seenSource = {};
+  const sourceClaimKeys = Object.create(null);
   const skippedByReason = {};
   const failedByReason = {};
   let skippedCount = 0;
@@ -767,6 +774,7 @@ function scMeilaniCollectRepairRecords_(sourceMeta, columnMap, allowedStatuses, 
     try {
       const claimValue = row[columnMap.identifierSource];
       const claimKey = scMeilaniIdentifierKey_(claimValue);
+      if (claimKey) sourceClaimKeys[claimKey] = true;
       const serviceCenterValue = columnMap.serviceCenterSource == null ? '' : row[columnMap.serviceCenterSource];
       const branchValue = scMeilaniResolveRepairBranch_(row[columnMap.branchSource], serviceCenterValue);
       const statusValue = row[columnMap.lastStatusSource];
@@ -827,6 +835,7 @@ function scMeilaniCollectRepairRecords_(sourceMeta, columnMap, allowedStatuses, 
     skippedCount: skippedCount,
     failedCount: failedCount,
     duplicateTargetSkipped: duplicateTargetSkipped,
+    sourceClaimKeys: sourceClaimKeys,
   };
 }
 
@@ -853,7 +862,7 @@ function scMeilaniUpsertRepairRecords_(targetSheet, targetMeta, columnMap, targe
     if (index % 250 === 0) scMeilaniCheckStop_(ctx, 'Prepare upsert record ' + (index + 1));
     try {
       const targetRow = targetIndex.rowByKey[record.claimKey];
-      if (!targetItem) {
+      if (!targetRow) {
         const newRow = scMeilaniBlankArray_(lastColumn);
         scMeilaniApplyRepairValuesToRow_(newRow, columnMap, record.values);
         appendRows.push({ row: newRow, record: record });
@@ -910,6 +919,48 @@ function scMeilaniUpsertRepairRecords_(targetSheet, targetMeta, columnMap, targe
 
   scMeilaniLogStep_(ctx.destinationSpreadsheet, ctx.flowName, 'Upsert target rows', failed ? 'FAILED' : 'SUCCESS', updated + appended, 'Upsert completed.', 'updated=' + updated + ', appended=' + appended + ', failed=' + failed, ctx.startedAt);
   return { updated: updated, appended: appended, failed: failed };
+}
+
+function scMeilaniResolveMissingRepairClaimMarker_(isPresentInSource, currentBackground, currentNote) {
+  const cfg = SC_MEILANI_CONFIG.repair;
+  const note = String(currentNote == null ? '' : currentNote);
+  if (!isPresentInSource) {
+    return { background: cfg.missingSourceColor, note: cfg.missingSourceNote, marked: true, restored: false };
+  }
+  if (note === cfg.missingSourceNote) {
+    return { background: cfg.defaultClaimColor, note: '', marked: false, restored: true };
+  }
+  return { background: currentBackground, note: currentNote, marked: false, restored: false };
+}
+
+function scMeilaniMarkRepairClaimsMissingFromSource_(targetSheet, targetMeta, sourceClaimKeys, ctx) {
+  const claimCol = scMeilaniRequireHeader_(targetMeta.headerMap, SC_MEILANI_CONFIG.repair.identifierHeader) + 1;
+  const rowCount = Math.max(targetSheet.getLastRow() - targetMeta.headerRowNumber, 0);
+  if (!rowCount) return { marked: 0, restored: 0 };
+
+  const startRow = targetMeta.headerRowNumber + 1;
+  const claimRange = targetSheet.getRange(startRow, claimCol, rowCount, 1);
+  const claims = claimRange.getValues();
+  const backgrounds = claimRange.getBackgrounds();
+  const notes = claimRange.getNotes();
+  let marked = 0;
+  let restored = 0;
+
+  for (let i = 0; i < rowCount; i++) {
+    const key = scMeilaniIdentifierKey_(claims[i][0]);
+    if (!key) continue;
+    const marker = scMeilaniResolveMissingRepairClaimMarker_(!!sourceClaimKeys[key], backgrounds[i][0], notes[i][0]);
+    backgrounds[i][0] = marker.background;
+    notes[i][0] = marker.note;
+    if (marker.marked) marked += 1;
+    if (marker.restored) restored += 1;
+  }
+
+  scMeilaniCheckStop_(ctx, 'Before marking Salvage Repair claims missing from source');
+  claimRange.setBackgrounds(backgrounds);
+  claimRange.setNotes(notes);
+  scMeilaniLogStep_(ctx.destinationSpreadsheet, ctx.flowName, 'Mark claims missing from source', 'SUCCESS', marked, 'Target claims absent from Raw Data were marked without deleting rows.', 'marked=' + marked + ', restored=' + restored, ctx.startedAt);
+  return { marked: marked, restored: restored };
 }
 
 function scMeilaniWriteExistingRepairColumns_(targetSheet, dataStartRow, existingValues, columnMap) {

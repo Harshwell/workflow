@@ -13,6 +13,7 @@ export function loadSources() {
     enrichment: fs.readFileSync('06b_PipelineAndEnrichment.gs', 'utf8'),
     postProcess: fs.readFileSync('06c_PostProcessAndUtils.gs', 'utf8'),
     extractor: fs.readFileSync('optional-project/Service Center Extractor.js', 'utf8'),
+    scMeilani: fs.readFileSync('optional-project/SC-Meilani.js', 'utf8'),
     salvage: fs.readFileSync('optional-project/salvage', 'utf8')
   };
 }
