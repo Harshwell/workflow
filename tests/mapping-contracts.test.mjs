@@ -9,9 +9,11 @@ export function loadSources() {
     utils: fs.readFileSync('01_Utils.gs', 'utf8'),
     sheets: fs.readFileSync('03_SheetsAndValidation.gs', 'utf8'),
     routing: fs.readFileSync('05b_Pipeline_RoutingOperational.gs', 'utf8'),
+    entryPoints: fs.readFileSync('06a_EntryPoints.gs', 'utf8'),
     enrichment: fs.readFileSync('06b_PipelineAndEnrichment.gs', 'utf8'),
     postProcess: fs.readFileSync('06c_PostProcessAndUtils.gs', 'utf8'),
     extractor: fs.readFileSync('optional-project/Service Center Extractor.js', 'utf8'),
+    scMeilani: fs.readFileSync('optional-project/SC-Meilani.js', 'utf8'),
     salvage: fs.readFileSync('optional-project/salvage', 'utf8')
   };
 }

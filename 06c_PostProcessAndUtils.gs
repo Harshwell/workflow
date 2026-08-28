@@ -262,13 +262,14 @@ function snapshotOpsManualColumnsRich06c_(ss, pic) {
       if (!claim) continue;
       const key = claim.toUpperCase();
 
-      // Skip overwrite if already captured from a higher-priority sheet; first-win keeps prior user context.
-      if (out[key]) continue;
-
-      const rec = {};
+      // Merge field-by-field across mirrors. A claim can exist in Start and an
+      // SC sheet at the same time; first-win for the whole record could retain
+      // an Update Status from Start but accidentally discard a non-empty Status
+      // that exists only on the SC mirror.
+      const rec = out[key] || {};
       let any = false;
 
-      if (updRT) {
+      if (updRT && !rec.u) {
         const rt = (updRT[i] && updRT[i][0]) ? updRT[i][0] : null;
         const txt = (rt && rt.getText) ? String(rt.getText() || '') : '';
         if (txt !== '') {
@@ -277,7 +278,7 @@ function snapshotOpsManualColumnsRich06c_(ss, pic) {
         }
       }
 
-      if (tsVals) {
+      if (tsVals && !rec.t) {
         const v = tsVals[i] ? tsVals[i][0] : '';
         if (v !== '' && v != null) {
           rec.t = { v: v, fmt: (tsFmt && tsFmt[i] && tsFmt[i][0]) ? tsFmt[i][0] : null, formula: (tsFormula && tsFormula[i]) ? tsFormula[i][0] : '' };
@@ -285,7 +286,7 @@ function snapshotOpsManualColumnsRich06c_(ss, pic) {
         }
       }
 
-      if (stVals) {
+      if (stVals && !rec.s) {
         const v = stVals[i] ? stVals[i][0] : '';
         if (v !== '' && v != null) {
           rec.s = { v: v, formula: (stFormula && stFormula[i]) ? stFormula[i][0] : '' };
@@ -293,7 +294,7 @@ function snapshotOpsManualColumnsRich06c_(ss, pic) {
         }
       }
 
-      if (remRT) {
+      if (remRT && !rec.r) {
         const rt = (remRT[i] && remRT[i][0]) ? remRT[i][0] : null;
         const txt = (rt && rt.getText) ? String(rt.getText() || '') : '';
         if (txt !== '') {
@@ -302,20 +303,21 @@ function snapshotOpsManualColumnsRich06c_(ss, pic) {
         }
       }
 
-      if (awbVals) {
+      if (awbVals && !rec.a) {
         const v = awbVals[i] ? awbVals[i][0] : '';
         const f = (awbFormula && awbFormula[i]) ? awbFormula[i][0] : '';
         if (v !== '' || f) { rec.a = { v: v, formula: f }; any = true; }
       }
-      if (tsAwbVals) {
+      if (tsAwbVals && !rec.ta) {
         const v = tsAwbVals[i] ? tsAwbVals[i][0] : '';
         const f = (tsAwbFormula && tsAwbFormula[i]) ? tsAwbFormula[i][0] : '';
         if (v !== '' || f) { rec.ta = { v: v, fmt: (tsAwbFmt && tsAwbFmt[i]) ? tsAwbFmt[i][0] : null, formula: f }; any = true; }
       }
 
       if (any) {
+        const isNew = !out[key];
         out[key] = rec;
-        count++;
+        if (isNew) count++;
       }
     }
   }
@@ -1166,12 +1168,20 @@ function restoreOpsFieldsFromRawBackup_(ss, rawSheet, headerIndexRaw, pic) {
     const outTsAsso = (idxTsAssoOps !== -1 && rawTsAsso) ? new Array(m) : null;
     const outUpAdmin = (idxUpAdminOps !== -1 && rawUpAdmin) ? new Array(m) : null;
     const outTsAdmin = (idxTsAdminOps !== -1 && rawTsAdmin) ? new Array(m) : null;
+    const currentStatuses = outStatus ? sh.getRange(2, idxStatusOps + 1, m, 1).getValues() : null;
 
     for (let r = 0; r < m; r++) {
       const claimKey = __claimKey06_(claimsOps[r][0]);
       const ri = claimKey ? rawMap[claimKey] : null;
 
-      if (outStatus) outStatus[r] = [ (ri != null ? rawStatus[ri][0] : '') ];
+      // Manual Status is restore-only. A missing/blank Raw backup must never
+      // erase a value that survived routing through another snapshot layer.
+      // This also makes a partial backup failure non-destructive.
+      if (outStatus) {
+        const currentStatus = currentStatuses[r][0];
+        const backedStatus = ri != null ? rawStatus[ri][0] : '';
+        outStatus[r] = [String(backedStatus == null ? '' : backedStatus).trim() !== '' ? backedStatus : currentStatus];
+      }
       if (outOR) outOR[r] = [ (ri != null ? normalizeCheckbox_(rawOR[ri][0]) : '') ];
       if (outTs) outTs[r] = [ (ri != null ? rawTs[ri][0] : '') ];
 
