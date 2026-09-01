@@ -376,10 +376,10 @@ function runSmoke() {
     const subFlagOwnershipOk = subSource.indexOf('applyOperationalClaimHighlightsByRaw_') === -1
       && subSource.indexOf('preserveClaimHighlightToTarget') !== -1
       && (routingSource.match(/applyOperationalClaimHighlightsByRaw_/g) || []).length === 1;
-    const statusTemplateCloneOk = STATUS_DROPDOWN_TEMPLATE.SHEET_NAME === 'Finish'
-      && sheetsSource.indexOf('sv03_copyCanonicalStatusTemplateToRange_') !== -1
-      && sheetsSource.indexOf('SpreadsheetApp.CopyPasteType.PASTE_DATA_VALIDATION') !== -1
-      && sheetsSource.indexOf('SpreadsheetApp.CopyPasteType.PASTE_FORMAT') !== -1
+    const generalStatusValidationOk = typeof STATUS_DROPDOWN_TEMPLATE === 'undefined'
+      && sheetsSource.indexOf('sv03_applyGeneralStatusValidationToRange_') !== -1
+      && sheetsSource.indexOf('requireValueInList(options, true)') !== -1
+      && sheetsSource.indexOf('.setAllowInvalid(true)') !== -1
       && postProcessSource.indexOf("['OR', 'Type']") !== -1
       && postProcessSource.indexOf('allowedDvCols') !== -1;
     const legacyStatusSheet = {
@@ -402,19 +402,19 @@ function runSmoke() {
         };
       }
     };
-    const originalCanonicalStatusCopy = sv03_copyCanonicalStatusTemplateToRange_;
-    sv03_copyCanonicalStatusTemplateToRange_ = function(_ss, range) {
-      range.setDataValidation({ options: Array.from(STATUS_DROPDOWN_OPTIONS), chipStyleCloned: true });
+    const originalGeneralStatusValidation = sv03_applyGeneralStatusValidationToRange_;
+    sv03_applyGeneralStatusValidationToRange_ = function(range) {
+      range.setDataValidation({ options: Array.from(STATUS_DROPDOWN_OPTIONS), generalRule: true });
       return true;
     };
     const statusRestoreResult = __restoreStatusValuesWithCanonicalValidation06c_(
       legacyStatusSheet, 4, 26, [['Pending Admin']], [['CLAIM-LEGACY']], 'SMOKE'
     );
-    sv03_copyCanonicalStatusTemplateToRange_ = originalCanonicalStatusCopy;
+    sv03_applyGeneralStatusValidationToRange_ = originalGeneralStatusValidation;
     const legacyStatusRestoreOk = statusRestoreResult.written === 1
       && legacyStatusSheet.value === 'Pending Admin'
       && legacyStatusSheet.appliedRule
-      && legacyStatusSheet.appliedRule.chipStyleCloned === true
+      && legacyStatusSheet.appliedRule.generalRule === true
       && JSON.stringify(legacyStatusSheet.appliedRule.options) === JSON.stringify(STATUS_DROPDOWN_OPTIONS);
     const rejectClaimTypeOk = REJECT_CLAIM_TYPE_BY_LAST_STATUS.COURIER_CLAIM_PICKUP_REJECT_DONE === 'SC - Middle'
       && REJECT_CLAIM_TYPE_BY_LAST_STATUS.QOALA_CLAIM_REJECT === 'Front';
@@ -490,7 +490,7 @@ function runSmoke() {
       && busyLockResult.pending === true
       && busyLockPendingConsumed === true;
 
-    return { ok: b2bOk && highlightOk && finishCloneOk && submissionDateOk && strictSyncOk && smartStageAgingOk && pendingSubOk && statusDropdownOk && finishOnlyOk && repairTypeOk && subFlagOwnershipOk && legacyStatusRestoreOk && statusTemplateCloneOk, b2bOk, highlightOk, finishCloneOk, submissionDateOk, strictSyncOk, smartStageAgingOk, pendingSubOk, statusDropdownOk, finishOnlyOk, repairTypeOk, subFlagOwnershipOk, legacyStatusRestoreOk, statusTemplateCloneOk, stageSameBucket, stageChangedBucket, stageMissingRaw, stageBlankRaw, strictVal: String(strictVal), validationCleared: strictSheet.validationCleared, b2bRow: b2bRow, bg: highlightSheet.bgs[0][0], note: highlightSheet.notes[0][0] };
+    return { ok: b2bOk && highlightOk && finishCloneOk && submissionDateOk && strictSyncOk && smartStageAgingOk && pendingSubOk && statusDropdownOk && finishOnlyOk && repairTypeOk && subFlagOwnershipOk && legacyStatusRestoreOk && generalStatusValidationOk, b2bOk, highlightOk, finishCloneOk, submissionDateOk, strictSyncOk, smartStageAgingOk, pendingSubOk, statusDropdownOk, finishOnlyOk, repairTypeOk, subFlagOwnershipOk, legacyStatusRestoreOk, generalStatusValidationOk, stageSameBucket, stageChangedBucket, stageMissingRaw, stageBlankRaw, strictVal: String(strictVal), validationCleared: strictSheet.validationCleared, b2bRow: b2bRow, bg: highlightSheet.bgs[0][0], note: highlightSheet.notes[0][0] };
   })()`, ctx);
   if (!workflowGuard || workflowGuard.ok !== true) {
     throw new Error('MAIN/SUB workflow regression guard failed: ' + JSON.stringify(workflowGuard || {}, null, 2));
