@@ -656,8 +656,8 @@ function __restoreStatusValuesWithCanonicalValidation06c_(sh, startRow, col1, va
 
   try {
     const ss = sh.getParent ? sh.getParent() : null;
-    if (typeof sv03_copyCanonicalStatusTemplateToRange_ !== 'function') throw new Error('canonical Status copy helper unavailable');
-    sv03_copyCanonicalStatusTemplateToRange_(ss, range);
+    if (typeof sv03_applyGeneralStatusValidationToRange_ !== 'function') throw new Error('general Status validation helper unavailable');
+    sv03_applyGeneralStatusValidationToRange_(range);
   } catch (eValidation) {
     throw new Error('Status restore canonical validation failed | source=' + sourceLabel + ' | sheet=' + sheetName + ' | range=' + rangeA1 + ' | written=' + written + ' | failed=' + failed + ' | error=' + (eValidation && eValidation.message ? eValidation.message : eValidation));
   }
@@ -979,7 +979,7 @@ function applyTemplateRowToOperationalSheets_(ss, pic) {
       if (idxStatus !== -1) {
         const dstStatus = sh.getRange(2, idxStatus + 1, dvRowCount, 1);
         try {
-          sv03_copyCanonicalStatusTemplateToRange_(ss, dstStatus);
+          sv03_applyGeneralStatusValidationToRange_(dstStatus);
         } catch (eStatusTemplate) {
           throw new Error('Status template copy failed | sheet=' + name + ' | range=' + (dstStatus.getA1Notation ? dstStatus.getA1Notation() : '?') + ' | error=' + (eStatusTemplate && eStatusTemplate.message ? eStatusTemplate.message : eStatusTemplate));
         }
@@ -1005,7 +1005,7 @@ function applyTemplateRowToOperationalSheets_(ss, pic) {
       if (idxStatusFmt !== -1) {
         const dstStatusFmt = sh.getRange(2, idxStatusFmt + 1, fmtRowCount, 1);
         try {
-          sv03_copyCanonicalStatusTemplateToRange_(ss, dstStatusFmt);
+          sv03_applyGeneralStatusValidationToRange_(dstStatusFmt);
         } catch (eStatusFormat) {
           throw new Error('Status format copy failed | sheet=' + name + ' | range=' + (dstStatusFmt.getA1Notation ? dstStatusFmt.getA1Notation() : '?') + ' | error=' + (eStatusFormat && eStatusFormat.message ? eStatusFormat.message : eStatusFormat));
         }

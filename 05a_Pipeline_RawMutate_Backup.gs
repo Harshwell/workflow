@@ -1018,21 +1018,17 @@ function backupOpsToRawFull_(ss, rawSheet, rawValues, headerIndexRaw, pic) {
   if (idxRawOR != null) {
     try { rawSheet.getRange(2, idxRawOR + 1, workingRawValues.length, 1).insertCheckboxes(); } catch (e) {}
   }
+  if (idxRawStatus != null) {
+    const dstStatus = rawSheet.getRange(2, idxRawStatus + 1, workingRawValues.length, 1);
+    sv03_applyGeneralStatusValidationToRange_(dstStatus);
+  }
   if (formatSource) {
     try {
-      // Status: preserve dropdown *chip* rule + visuals on Raw (do NOT overwrite values)
-      // Rationale: setDataValidation(dv) can drop "chip" display + option colors; copyTo(PASTE_DATA_VALIDATION) preserves it.
+      // Status visuals may still follow the operational row format, but its
+      // validation above always comes from the general repository-owned list.
       if (idxRawStatus != null && formatSource.idxStatus !== -1) {
         const srcCell = formatSource.sh.getRange(2, formatSource.idxStatus + 1, 1, 1);
         const dstCol  = rawSheet.getRange(2, idxRawStatus + 1, workingRawValues.length, 1);
-
-        try { srcCell.copyTo(dstCol, SpreadsheetApp.CopyPasteType.PASTE_DATA_VALIDATION, false); } catch (e) {
-          // Fallback (may lose chip styling, but keeps dropdown rule at least)
-          try {
-            const dv = srcCell.getDataValidation();
-            if (dv) dstCol.setDataValidation(dv);
-          } catch (e2) {}
-        }
 
         // Visuals (number format, fonts, alignment, borders)
         try { srcCell.copyTo(dstCol, SpreadsheetApp.CopyPasteType.PASTE_FORMAT, false); } catch (e) {}

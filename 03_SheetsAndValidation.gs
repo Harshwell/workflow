@@ -910,46 +910,18 @@ function sv03_applyRuleCopyToColumn_(srcCell, dstSheet, dstCol1, rows, opt) {
   } catch (e) { if (opt.failLoud) throw e; }
 }
 
-function sv03_getCanonicalStatusTemplateCell_(ss) {
-  if (!ss) return null;
-  const cfg = (typeof STATUS_DROPDOWN_TEMPLATE !== 'undefined' && STATUS_DROPDOWN_TEMPLATE)
-    ? STATUS_DROPDOWN_TEMPLATE
-    : null;
-  if (!cfg) return null;
-  const candidates = [cfg.SHEET_NAME, cfg.RECOVERY_SHEET_NAME].map(function(v) { return String(v || '').trim(); }).filter(Boolean);
-  for (let i = 0; i < candidates.length; i++) {
-    const sh = ss.getSheetByName(candidates[i]);
-    if (!sh) continue;
-    const col1 = sv03_findHeaderCol1_(sh, String(cfg.HEADER || 'Status'));
-    if (col1 < 1) continue;
-    const cell = sh.getRange(Number(cfg.ROW || 2), col1, 1, 1);
-    const spec = sv03_ruleCriteriaToList_(cell.getDataValidation());
-    if (!spec || (spec.kind !== 'LIST' && spec.kind !== 'RANGE')) continue;
-    let actual = [];
-    if (spec.kind === 'LIST') actual = (spec.list || []).map(function(v) { return String(v || ''); });
-    else {
-      try {
-        actual = spec.range.getDisplayValues().reduce(function(out, row) {
-          row.forEach(function(v) { if (String(v || '') !== '') out.push(String(v)); });
-          return out;
-        }, []);
-      } catch (eRange) { continue; }
-    }
-    const expected = (typeof STATUS_DROPDOWN_OPTIONS !== 'undefined') ? Array.from(STATUS_DROPDOWN_OPTIONS) : [];
-    if (JSON.stringify(actual) === JSON.stringify(expected)) return cell;
-  }
-  return null;
-}
-
-function sv03_copyCanonicalStatusTemplateToRange_(ss, dstRange) {
-  if (!ss || !dstRange) throw new Error('Canonical Status copy requires spreadsheet and destination range.');
-  const src = sv03_getCanonicalStatusTemplateCell_(ss);
-  if (!src) {
-    const cfg = (typeof STATUS_DROPDOWN_TEMPLATE !== 'undefined' && STATUS_DROPDOWN_TEMPLATE) ? STATUS_DROPDOWN_TEMPLATE : {};
-    throw new Error('Canonical Status chip template missing or option order mismatch at ' + String(cfg.SHEET_NAME || '?') + '!' + String(cfg.HEADER || 'Status') + String(cfg.ROW || 2));
-  }
-  src.copyTo(dstRange, SpreadsheetApp.CopyPasteType.PASTE_DATA_VALIDATION, false);
-  src.copyTo(dstRange, SpreadsheetApp.CopyPasteType.PASTE_FORMAT, false);
+/** Apply the repository-wide Status dropdown without depending on any sheet row. */
+function sv03_applyGeneralStatusValidationToRange_(dstRange) {
+  if (!dstRange) throw new Error('General Status validation requires a destination range.');
+  const options = (typeof STATUS_DROPDOWN_OPTIONS !== 'undefined') ? Array.from(STATUS_DROPDOWN_OPTIONS) : [];
+  if (!options.length) throw new Error('General Status dropdown options are empty.');
+  const rule = SpreadsheetApp.newDataValidation()
+    .requireValueInList(options, true)
+    // Existing legacy/manual values must survive a rerun even when they are no
+    // longer part of the current selectable list.
+    .setAllowInvalid(true)
+    .build();
+  dstRange.setDataValidation(rule);
   return true;
 }
 /**
