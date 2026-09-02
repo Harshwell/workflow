@@ -191,7 +191,7 @@ Daftar status lengkap dieksekusi oleh `OPS_ROUTING_POLICY.LAST_STATUS_BY_SHEET`;
 | `Submission` | `SUBMITTED`, `CLAIM_INITIATE`. | SUB append rules dan report base. |
 | `Ask Detail` | Ask-detail, resubmit-document, dan reopen depan. | Position/Status Type maps. |
 | `OR - OLD` | `WAITING_PAYMENT`. | SUB relocation. |
-| `Start` | Walk-in/pickup/courier start statuses. `COURIER_PICKUP_START_DONE` juga terlihat di SC universe. | Service/Claim Type dan SC mirror rule. |
+| `Start` | Walk-in/pickup/courier start statuses. `COURIER_PICKUP_START_DONE` juga terlihat di SC universe. Pada SUB berikutnya, row dengan dropdown manual `Status = Delivered` dimirror ke SC owner: `Service Center PIC` diprioritaskan, lalu `Branch`, dan fallback ke `Service Center`. Row sumber tidak dihapus; `AWB`, `Timestamp AWB`, `Branch`, `Claim Type`, dan `Service Center PIC` tidak ikut dimirror, sedangkan SC `Type` diisi `Start`. | Service/Claim Type dan SC mirror rule. |
 | SC universe | Receive, estimate, repair/on-progress, insurance review/approval, OR-repair, dan finish tracking statuses. | Split oleh `SC_NAME_KEYWORDS`, PIC, branch, Daily Report Base, standalone projects. |
 | `Finish` | Repair/checkout/finish statuses; lima replacement-delivery status hanya masuk `Finish` dan tidak masuk SC universe. | SUB clone/relocate, managed `Repair Type`, dan reporting. |
 | `Expired Claim` | `CLAIM_EXPIRE`, `CLAIM_EXPIRE_WALKIN`. | SUB relocation dapat memindahkan claim keluar lagi. |
