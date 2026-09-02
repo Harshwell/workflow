@@ -112,7 +112,8 @@ export function validateCriticalMappings(sources) {
     'scMeilaniShouldDeleteSalvageTargetClaim_',
     'scMeilaniEqualsText_',
     'scMeilaniNormalizeText_',
-    'scMeilaniIsInMonthConfig_',
+    'scMeilaniIsOnOrAfterDateConfig_',
+    'scMeilaniBuildDashboardUrl_',
     'scMeilaniParseDateOnly_'
   ], {
     SC_MEILANI_CONFIG: {
@@ -129,8 +130,14 @@ export function validateCriticalMappings(sources) {
   expectPattern(errors, sources.scMeilani, /if\s*\(!targetRow\)/, 'SC-Meilani upsert uses target row index');
   expectValue(errors, scMeilani.scMeilaniShouldDeleteSalvageTargetClaim_('Unit belum ada', 'Unit belum ada'), false, 'SC-Meilani retains unresolved Salvage claim');
   expectValue(errors, scMeilani.scMeilaniShouldDeleteSalvageTargetClaim_('Unit sudah ada', 'Unit belum ada'), true, 'SC-Meilani deletes resolved Salvage claim');
-  expectValue(errors, scMeilani.scMeilaniIsInMonthConfig_(new Date(2026, 7, 31), { year: 2026, month: 8 }), true, 'SC-Meilani August 2026 Approval Date');
-  expectValue(errors, scMeilani.scMeilaniIsInMonthConfig_(new Date(2026, 8, 1), { year: 2026, month: 8 }), false, 'SC-Meilani rejects September 2026 Approval Date');
+  expectValue(errors, scMeilani.scMeilaniIsOnOrAfterDateConfig_(new Date(2026, 6, 31), { year: 2026, month: 8, day: 1 }), false, 'SC-Meilani rejects July 31 Approval Date');
+  expectValue(errors, scMeilani.scMeilaniIsOnOrAfterDateConfig_(new Date(2026, 7, 1), { year: 2026, month: 8, day: 1 }), true, 'SC-Meilani accepts August 1 Approval Date');
+  expectValue(errors, scMeilani.scMeilaniIsOnOrAfterDateConfig_(new Date(2026, 8, 1), { year: 2026, month: 8, day: 1 }), true, 'SC-Meilani accepts Approval Date after August 2026');
+  const partnerHost = 'https:' + ['//partner', 'qoala', 'app'].join('.');
+  expectValue(errors, scMeilani.scMeilaniBuildDashboardUrl_('SFP-001'), partnerHost + '/gadget/claim/SFP-001', 'SC-Meilani gadget DB Link uses partner portal');
+  expectValue(errors, scMeilani.scMeilaniBuildDashboardUrl_('C-001'), partnerHost + '/partnership/claim/C-001', 'SC-Meilani partnership DB Link uses partner portal');
+  expectValue(errors, scMeilani.scMeilaniBuildDashboardUrl_(''), '', 'SC-Meilani blank claim has no DB Link URL');
+  expectPattern(errors, sources.scMeilani, /function scMeilaniBuildDashboardLinkFormula_[\s\S]{0,300}=HYPERLINK\([\s\S]{0,200}scMeilaniBuildDashboardUrl_\(claim\)/, 'SC-Meilani DB Link uses simple HYPERLINK formula');
   return errors;
 }
 

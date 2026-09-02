@@ -86,7 +86,7 @@ const SC_MEILANI_CONFIG = Object.freeze({
     sourceSheetName: 'Raw Data',
     targetSheetName: 'Pickup Sparepart Repair (Salvage)',
     identifierHeader: 'Claim Number',
-    missingSourceNote: 'Data klaim ini tidak ditemukan pada source Salvage Repair terbaru.',
+    missingSourceNote: 'Data klaim tidak ada pada Raw Data.',
     missingSourceColor: '#f4cccc',
     defaultClaimColor: '#ffffff',
     sourceHeaders: Object.freeze({
@@ -101,7 +101,7 @@ const SC_MEILANI_CONFIG = Object.freeze({
       'IMEI/SN': 'imei_number',
       'Last Status': 'claim_last_status_name',
     }),
-    approvalMonth: Object.freeze({ year: 2026, month: 8 }),
+    minApprovalDate: Object.freeze({ year: 2026, month: 8, day: 1 }),
     allowedLastStatuses: Object.freeze([
       'SERVICE_CENTER_CLAIM_DONE_REPAIR_WALKIN',
       'SERVICE_CENTER_CLAIM_WAITING_WALKIN_FINISH',
@@ -310,7 +310,7 @@ function runSCMeilaniSalvageRepair() {
     scMeilaniLogStep_(ctx.destinationSpreadsheet, ctx.flowName, 'Scan existing target', 'SUCCESS', targetIndex.uniqueCount, 'Existing target identifiers indexed.', 'duplicateTarget=' + targetIndex.duplicateCount + ', duplicateSamples=' + targetIndex.duplicateSamples.join(' | '), ctx.startedAt);
 
     const sourceRows = Math.max(sourceMeta.values.length - sourceMeta.headerRowNumber, 0);
-    scMeilaniLogStep_(ctx.destinationSpreadsheet, ctx.flowName, 'Filter Salvage Repair source', 'START', sourceRows, 'Filtering ' + cfg.repair.sourceSheetName + ' rows by branch, repair last status, and exact Approval Date month.', 'allowedBranches=' + cfg.allowedBranches.join(', ') + ', allowedStatuses=' + cfg.repair.allowedLastStatuses.length + ', approvalMonth=' + scMeilaniFormatMonthConfig_(cfg.repair.approvalMonth), ctx.startedAt);
+    scMeilaniLogStep_(ctx.destinationSpreadsheet, ctx.flowName, 'Filter Salvage Repair source', 'START', sourceRows, 'Filtering ' + cfg.repair.sourceSheetName + ' rows by branch, repair last status, and Approval Date cutoff.', 'allowedBranches=' + cfg.allowedBranches.join(', ') + ', allowedStatuses=' + cfg.repair.allowedLastStatuses.length + ', minApprovalDate=' + scMeilaniFormatDateConfig_(cfg.repair.minApprovalDate), ctx.startedAt);
     const sourceSnapshot = scMeilaniCollectRepairRecords_(sourceMeta, columnMap, allowedStatuses, targetIndex, ctx);
     scMeilaniWriteReasonLogs_(ctx, 'Filter Salvage Repair source', 'SKIPPED', sourceSnapshot.skippedByReason);
     scMeilaniWriteReasonLogs_(ctx, 'Filter Salvage Repair source', 'FAILED', sourceSnapshot.failedByReason);
@@ -746,11 +746,19 @@ function scMeilaniGetRepairSourceValue_(row, columnMap, header) {
 
 function scMeilaniBuildDashboardLinkFormula_(claimValue) {
   const claim = String(claimValue == null ? '' : claimValue).trim();
-  const literal = scMeilaniSheetsStringLiteral_(claim);
-  const host = 'https:' + ['//internal', 'qoala', 'app'].join('.');
-  const gadgetBase = host + '/gadget/claim/';
-  const partnershipBase = host + '/partnership/claim/';
-  return '=IF(' + literal + '="", "", LET(link, IF(REGEXMATCH(' + literal + ', "SFP|SFX|SMR|SPP"), "' + gadgetBase + '" & ' + literal + ', "' + partnershipBase + '" & ' + literal + '), HYPERLINK(link, "LINK")))';
+  if (!claim) return '';
+  return '=HYPERLINK(' + scMeilaniSheetsStringLiteral_(scMeilaniBuildDashboardUrl_(claim)) + ', "LINK")';
+}
+
+function scMeilaniBuildDashboardUrl_(claimValue) {
+  const claim = String(claimValue == null ? '' : claimValue).trim();
+  if (!claim) return '';
+  const isGadgetClaim = /SFP|SFX|SMR|SPP/i.test(claim);
+  const host = 'https:' + ['//partner', 'qoala', 'app'].join('.');
+  const baseUrl = isGadgetClaim
+    ? host + '/gadget/claim/'
+    : host + '/partnership/claim/';
+  return baseUrl + claim;
 }
 
 function scMeilaniSheetsStringLiteral_(value) {
@@ -762,16 +770,6 @@ function scMeilaniIsOnOrAfterDateConfig_(value, dateConfig) {
   if (!parsed) return false;
   const cutoff = new Date(Number(dateConfig.year), Number(dateConfig.month) - 1, Number(dateConfig.day || 1));
   return parsed.getTime() >= cutoff.getTime();
-}
-
-function scMeilaniIsInMonthConfig_(value, monthConfig) {
-  const parsed = scMeilaniParseDateOnly_(value);
-  if (!parsed || !monthConfig) return false;
-  return parsed.getFullYear() === Number(monthConfig.year) && parsed.getMonth() + 1 === Number(monthConfig.month);
-}
-
-function scMeilaniFormatMonthConfig_(monthConfig) {
-  return String(monthConfig && monthConfig.year || '') + '-' + String(monthConfig && monthConfig.month || '').padStart(2, '0');
 }
 
 function scMeilaniParseDateOnly_(value) {
@@ -899,9 +897,9 @@ function scMeilaniCollectRepairRecords_(sourceMeta, columnMap, allowedStatuses, 
         scMeilaniAddReason_(skippedByReason, 'Last Status bukan Salvage Repair', rowNumber, claimValue, 'Last Status="' + String(statusValue || '') + '".');
         continue;
       }
-      if (!scMeilaniIsInMonthConfig_(approvalDateValue, cfg.repair.approvalMonth)) {
+      if (!scMeilaniIsOnOrAfterDateConfig_(approvalDateValue, cfg.repair.minApprovalDate)) {
         skippedCount += 1;
-        scMeilaniAddReason_(skippedByReason, 'Approval Date di luar bulan Salvage Repair', rowNumber, claimValue, 'Approval Date="' + String(approvalDateValue || '') + '", requiredMonth=' + scMeilaniFormatMonthConfig_(cfg.repair.approvalMonth) + '.');
+        scMeilaniAddReason_(skippedByReason, 'Approval Date sebelum cutoff Salvage Repair', rowNumber, claimValue, 'Approval Date="' + String(approvalDateValue || '') + '", cutoff=' + scMeilaniFormatDateConfig_(cfg.repair.minApprovalDate) + '.');
         continue;
       }
 
