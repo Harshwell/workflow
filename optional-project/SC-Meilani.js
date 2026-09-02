@@ -746,11 +746,19 @@ function scMeilaniGetRepairSourceValue_(row, columnMap, header) {
 
 function scMeilaniBuildDashboardLinkFormula_(claimValue) {
   const claim = String(claimValue == null ? '' : claimValue).trim();
-  const literal = scMeilaniSheetsStringLiteral_(claim);
-  const host = 'https:' + ['//internal', 'qoala', 'app'].join('.');
-  const gadgetBase = host + '/gadget/claim/';
-  const partnershipBase = host + '/partnership/claim/';
-  return '=IF(' + literal + '="", "", LET(link, IF(REGEXMATCH(' + literal + ', "SFP|SFX|SMR|SPP"), "' + gadgetBase + '" & ' + literal + ', "' + partnershipBase + '" & ' + literal + '), HYPERLINK(link, "LINK")))';
+  if (!claim) return '';
+  return '=HYPERLINK(' + scMeilaniSheetsStringLiteral_(scMeilaniBuildDashboardUrl_(claim)) + ', "LINK")';
+}
+
+function scMeilaniBuildDashboardUrl_(claimValue) {
+  const claim = String(claimValue == null ? '' : claimValue).trim();
+  if (!claim) return '';
+  const isGadgetClaim = /SFP|SFX|SMR|SPP/i.test(claim);
+  const host = 'https:' + ['//partner', 'qoala', 'app'].join('.');
+  const baseUrl = isGadgetClaim
+    ? host + '/gadget/claim/'
+    : host + '/partnership/claim/';
+  return baseUrl + claim;
 }
 
 function scMeilaniSheetsStringLiteral_(value) {

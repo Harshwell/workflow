@@ -4,6 +4,7 @@ Perubahan material repository dicatat di sini berdasarkan outcome, flow/project 
 
 ## Unreleased
 
+- DB Link SC-Meilani Salvage Repair sekarang memakai formula `HYPERLINK` sederhana menuju partner portal, sehingga tidak lagi menghasilkan `#ERROR!` dari formula `LET`/`REGEXMATCH` atau mengarah ke host internal.
 - Dropdown manual `Status` tidak lagi bergantung pada template cell `Finish.Status` atau `Raw Data.Status`; backup MAIN, restore, dan seluruh operational consumer memasang satu validation general langsung dari `STATUS_DROPDOWN_OPTIONS` sambil mempertahankan nilai legacy.
 - SC-Meilani Salvage sekarang meng-upsert claim ber-Remarks `Unit belum ada` tanpa full clear, mempertahankan target-only claim, dan hanya menghapus target claim yang masih ada di source tetapi Remarks-nya berubah; Salvage Repair mengecualikan Approval Date sebelum 1 Agustus 2026 dan tetap menerima tanggal setelah cutoff.
 - SC-Meilani Salvage Repair kini melakukan upsert non-destructive berdasarkan `Claim Number`, memperbaiki lookup target row, serta menandai cell Claim Number pink dan memberi note untuk row target yang tidak ada di source `Raw Data`; marker otomatis dibersihkan saat claim kembali tanpa mengubah note/style claim lain.
