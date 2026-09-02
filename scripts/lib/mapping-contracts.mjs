@@ -112,7 +112,7 @@ export function validateCriticalMappings(sources) {
     'scMeilaniShouldDeleteSalvageTargetClaim_',
     'scMeilaniEqualsText_',
     'scMeilaniNormalizeText_',
-    'scMeilaniIsInMonthConfig_',
+    'scMeilaniIsOnOrAfterDateConfig_',
     'scMeilaniParseDateOnly_'
   ], {
     SC_MEILANI_CONFIG: {
@@ -129,8 +129,9 @@ export function validateCriticalMappings(sources) {
   expectPattern(errors, sources.scMeilani, /if\s*\(!targetRow\)/, 'SC-Meilani upsert uses target row index');
   expectValue(errors, scMeilani.scMeilaniShouldDeleteSalvageTargetClaim_('Unit belum ada', 'Unit belum ada'), false, 'SC-Meilani retains unresolved Salvage claim');
   expectValue(errors, scMeilani.scMeilaniShouldDeleteSalvageTargetClaim_('Unit sudah ada', 'Unit belum ada'), true, 'SC-Meilani deletes resolved Salvage claim');
-  expectValue(errors, scMeilani.scMeilaniIsInMonthConfig_(new Date(2026, 7, 31), { year: 2026, month: 8 }), true, 'SC-Meilani August 2026 Approval Date');
-  expectValue(errors, scMeilani.scMeilaniIsInMonthConfig_(new Date(2026, 8, 1), { year: 2026, month: 8 }), false, 'SC-Meilani rejects September 2026 Approval Date');
+  expectValue(errors, scMeilani.scMeilaniIsOnOrAfterDateConfig_(new Date(2026, 6, 31), { year: 2026, month: 8, day: 1 }), false, 'SC-Meilani rejects July 31 Approval Date');
+  expectValue(errors, scMeilani.scMeilaniIsOnOrAfterDateConfig_(new Date(2026, 7, 1), { year: 2026, month: 8, day: 1 }), true, 'SC-Meilani accepts August 1 Approval Date');
+  expectValue(errors, scMeilani.scMeilaniIsOnOrAfterDateConfig_(new Date(2026, 8, 1), { year: 2026, month: 8, day: 1 }), true, 'SC-Meilani accepts Approval Date after August 2026');
   return errors;
 }
 
