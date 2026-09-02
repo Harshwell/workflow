@@ -2440,6 +2440,32 @@ function __shouldMirrorDeliveredStartToScSub06a_(sheetName, manualStatus) {
     && String(manualStatus || '').trim().toUpperCase() === 'DELIVERED';
 }
 
+function __applyMirroredFieldPolicySub06a_(rowVals, targetHeaders, omittedHeaders, forcedValues) {
+  const out = Array.isArray(rowVals) ? rowVals.slice() : [];
+  const omitted = new Set((omittedHeaders || []).map(function(header) {
+    return String(header || '').trim().toLowerCase();
+  }).filter(Boolean));
+  (targetHeaders || []).forEach(function(header, index) {
+    const key = String(header || '').trim().toLowerCase();
+    if (omitted.has(key) && index < out.length) out[index] = '';
+    Object.keys(forcedValues || {}).some(function(forcedHeader) {
+      if (String(forcedHeader || '').trim().toLowerCase() !== key) return false;
+      if (index < out.length) out[index] = forcedValues[forcedHeader];
+      return true;
+    });
+  });
+  return out;
+}
+
+function __getScDestinationFromPicSub06a_(pic, candidates) {
+  const key = String(pic || '').trim().toLowerCase().replace(/^sc\s*-\s*/, '');
+  if (!key) return null;
+  const matches = (candidates || []).filter(function(name) {
+    return String(name || '').trim().toLowerCase().replace(/^sc\s*-\s*/, '') === key;
+  });
+  return matches.length ? matches[0] : null;
+}
+
 function __isScSheetNameSub06a_(sheetName, scPolicy) {
   const name = String(sheetName || '').trim();
   if (!name) return false;
@@ -2643,7 +2669,10 @@ function __relocateOperationalRowsByLastStatusSub06a_(ss, sheetNames) {
 
     const idxClaim = idxOfAny(norm, ['claim number', 'claim_number', 'claim no', 'claim_no']);
     const idxStatus = idxOfAny(norm, ['last status', 'claim_last_status_name', 'last_status']);
+    const idxManualStatus = idxOfAny(norm, ['status']);
     const idxSc = idxOfAny(norm, ['service center', 'repairer_location_store_name', 'sc_name', 'service_center']);
+    const idxBranch = idxOfAny(norm, ['branch']);
+    const idxScPic = idxOfAny(norm, ['service center pic']);
     const idxDeviceBrand = idxOfAny(norm, ['device brand', 'device_brand']);
     const idxLsd = idxOfAny(norm, ['last status date', 'claim_last_updated_datetime', 'claim last updated datetime', 'last update datetime', 'last_update_datetime']);
     const idxLsa = idxOfAny(norm, ['last status aging', 'days_aging_from_last_activity', 'last_status_aging', 'lsa']);
@@ -2718,7 +2747,7 @@ function __relocateOperationalRowsByLastStatusSub06a_(ss, sheetNames) {
       if (scPolicy.sharedStatusSet.has(status) && !__shouldMirrorStartAndScSub06a_(status)) {
         candidates = scPolicy.scSheets.filter(function (n) { return !!ss.getSheetByName(n); });
       }
-      const mirrorDeliveredStart = __shouldMirrorDeliveredStartToScSub06a_(sheetName, idxStatus >= 0 ? row[idxStatus] : '');
+      const mirrorDeliveredStart = __shouldMirrorDeliveredStartToScSub06a_(sheetName, idxManualStatus >= 0 ? row[idxManualStatus] : '');
       const mirrorStartAndSc = (__shouldMirrorStartAndScSub06a_(status) || mirrorDeliveredStart) && !!ss.getSheetByName('Start');
       const keepScAndCloneFinish = __shouldKeepScRowAndCloneFinishSub06a_(status) && !!ss.getSheetByName('Finish');
       if (__isScSheetNameSub06a_(sheetName, scPolicy) && startClaims.has(claim)
@@ -2726,14 +2755,19 @@ function __relocateOperationalRowsByLastStatusSub06a_(ss, sheetNames) {
       if ((!candidates || !candidates.length) && !mirrorStartAndSc) continue;
 
       const scName = (idxSc >= 0) ? row[idxSc] : '';
+      const branch = (idxBranch >= 0) ? row[idxBranch] : '';
+      const scPic = (idxScPic >= 0) ? row[idxScPic] : '';
       const deviceBrand = (idxDeviceBrand >= 0) ? row[idxDeviceBrand] : '';
       if (mirrorStartAndSc) {
         const startDest = 'Start';
         const scSheets = scPolicy.scSheets.filter(function (n) { return !!ss.getSheetByName(n); });
-        const scDest = pickDest(status, scName, deviceBrand, scSheets);
+        const preferredScName = mirrorDeliveredStart && String(branch || '').trim() ? branch : scName;
+        const scDest = mirrorDeliveredStart
+          ? (__getScDestinationFromPicSub06a_(scPic, scSheets) || pickDest(status, preferredScName, deviceBrand, scSheets))
+          : pickDest(status, scName, deviceBrand, scSheets);
         if (scDest && scDest !== sheetName && !(exclusiveTokenClaim && scDest === scFallbackSheet)) {
           movesBySource[sheetName] = movesBySource[sheetName] || [];
-          movesBySource[sheetName].push({ row1Based: r + 1, claim, dest: scDest, status: status, rowVals: row.slice(), srcHdr: d.hdr, copyOnly: sheetName === startDest, preserveManualFields: true });
+          movesBySource[sheetName].push({ row1Based: r + 1, claim, dest: scDest, status: status, rowVals: row.slice(), srcHdr: d.hdr, copyOnly: sheetName === startDest, preserveManualFields: true, omittedHeaders: mirrorDeliveredStart ? ['AWB', 'Timestamp AWB', 'Branch', 'Claim Type', 'Service Center PIC'] : [], forcedValues: mirrorDeliveredStart ? { Type: 'Start' } : {} });
         }
         if (sheetName !== startDest) {
           movesBySource[sheetName] = movesBySource[sheetName] || [];
@@ -2926,7 +2960,7 @@ function __relocateOperationalRowsByLastStatusSub06a_(ss, sheetNames) {
   }
 
 
-  function applyRichTextLinksToTarget(srcSheetName, srcRow1Based, srcHdr, tgtSheet, tgtHdr, tgtRow1Based, tgtColCount) {
+  function applyRichTextLinksToTarget(srcSheetName, srcRow1Based, srcHdr, tgtSheet, tgtHdr, tgtRow1Based, tgtColCount, omittedHeaders) {
     try {
       const srcData = data[srcSheetName];
       if (!srcData) return;
@@ -2939,7 +2973,9 @@ function __relocateOperationalRowsByLastStatusSub06a_(ss, sheetNames) {
         : false;
 
       const srcNorm = sameSchema ? null : (srcHdr || []).map(h => String(h || '').trim().toLowerCase());
+      const omitted = new Set((omittedHeaders || []).map(h => String(h || '').trim().toLowerCase()));
       for (let i = 0; i < tgtColCount && i < (tgtHdr || []).length; i++) {
+        if (omitted.has(String(tgtHdr[i] || '').trim().toLowerCase())) continue;
         const j = sameSchema ? i : srcNorm.indexOf(String(tgtHdr[i] || '').trim().toLowerCase());
         if (j < 0 || j >= srcRt.length) continue;
         const rt = srcRt[j];
@@ -2974,6 +3010,24 @@ function __relocateOperationalRowsByLastStatusSub06a_(ss, sheetNames) {
     }
   }
 
+  function ensureForcedTypeDropdown(tgt, targetRow, forcedValues) {
+    if (!tgt || !tgt.sh || !forcedValues || String(forcedValues.Type || '').trim() !== 'Start') return;
+    const typeIdx = tgt.norm.indexOf('type');
+    if (typeIdx < 0) return;
+    try {
+      let rule = tgt.sh.getRange(2, typeIdx + 1).getDataValidation();
+      if (!rule) {
+        const options = (typeof getScTypeDropdownOptions_ === 'function')
+          ? getScTypeDropdownOptions_()
+          : ['SC - Rcvd', 'Start', 'SC - Est', 'Insurance', 'OR', 'Finish', 'SC - Wait Rep', 'SC - On Rep'];
+        rule = SpreadsheetApp.newDataValidation().requireValueInList(options, true).setAllowInvalid(true).build();
+      }
+      tgt.sh.getRange(targetRow, typeIdx + 1).setDataValidation(rule);
+    } catch (eTypeDv) {
+      try { logLine_('SUB_WARN', 'Delivered mirror Type dropdown failed', tgt.sh.getName() + ' row=' + targetRow, String(eTypeDv), 'WARN'); } catch (eTypeDvLog) {}
+    }
+  }
+
 
   // Execute moves: append to target then delete from source (descending row order per source).
   Object.keys(movesBySource).forEach(srcName => {
@@ -2994,7 +3048,7 @@ function __relocateOperationalRowsByLastStatusSub06a_(ss, sheetNames) {
         continue;
       }
 
-      const aligned = alignRowToTarget(mv.srcHdr, mv.rowVals, tgt.hdr, tgt.lc);
+      const aligned = __applyMirroredFieldPolicySub06a_(alignRowToTarget(mv.srcHdr, mv.rowVals, tgt.hdr, tgt.lc), tgt.hdr, mv.omittedHeaders, mv.forcedValues);
       const resetIdx = getResetColumnIndexesByHeader(tgt.hdr);
       const stageAgingForMove = __resolveMovedStageAgingSub06a_(mv.claim, mv.dest, (mv.status || ''), mainRawForStageAging, routingIdx, scPolicy);
       const alignedTypeIsFinish = resetIdx.type != null && resetIdx.type >= 0 && resetIdx.type < aligned.length && String(aligned[resetIdx.type] || '').trim().toLowerCase() === 'finish';
@@ -3015,7 +3069,8 @@ function __relocateOperationalRowsByLastStatusSub06a_(ss, sheetNames) {
           // Preserve manual workflow columns for Finish targets; reset them for other cross-sheet movements.
           const mergedAfterReset = resetMovedRowFieldsByHeader(merged, resetIdx, stageAgingForMove, preserveManualFields);
           tgt.sh.getRange(keepRow, 1, 1, tgt.lc).setValues([mergedAfterReset]);
-          applyRichTextLinksToTarget(srcName, mv.row1Based, mv.srcHdr, tgt.sh, tgt.hdr, keepRow, tgt.lc);
+          ensureForcedTypeDropdown(tgt, keepRow, mv.forcedValues);
+          applyRichTextLinksToTarget(srcName, mv.row1Based, mv.srcHdr, tgt.sh, tgt.hdr, keepRow, tgt.lc, mv.omittedHeaders);
           preserveClaimHighlightToTarget(srcName, mv.row1Based, mv.srcHdr, tgt.sh, tgt.hdr, keepRow, mv.claim);
         }
 
@@ -3033,7 +3088,7 @@ function __relocateOperationalRowsByLastStatusSub06a_(ss, sheetNames) {
         if (!isDryRun_()) {
           // Preserve richtext/hyperlinks + formatting when schemas match.
           const srcSh = (data[srcName] && data[srcName].sh) ? data[srcName].sh : null;
-          const sameSchema = (mv.srcHdr && tgt.hdr && mv.srcHdr.length === tgt.hdr.length)
+          const sameSchema = (!mv.omittedHeaders || !mv.omittedHeaders.length) && (mv.srcHdr && tgt.hdr && mv.srcHdr.length === tgt.hdr.length)
             ? mv.srcHdr.every((h, ii) => String(h || '').trim() === String(tgt.hdr[ii] || '').trim())
             : false;
 
@@ -3044,8 +3099,9 @@ function __relocateOperationalRowsByLastStatusSub06a_(ss, sheetNames) {
             tgt.sh.getRange(appendRow, 1, 1, tgt.lc).setValues([resetRow]);
           } else {
             tgt.sh.getRange(appendRow, 1, 1, tgt.lc).setValues([alignedAfterReset]);
-            applyRichTextLinksToTarget(srcName, mv.row1Based, mv.srcHdr, tgt.sh, tgt.hdr, appendRow, tgt.lc);
+            applyRichTextLinksToTarget(srcName, mv.row1Based, mv.srcHdr, tgt.sh, tgt.hdr, appendRow, tgt.lc, mv.omittedHeaders);
           }
+          ensureForcedTypeDropdown(tgt, appendRow, mv.forcedValues);
           preserveClaimHighlightToTarget(srcName, mv.row1Based, mv.srcHdr, tgt.sh, tgt.hdr, appendRow, mv.claim);
         }
         tgt.map.set(mv.claim, [appendRow]);

@@ -94,7 +94,18 @@ export function validateCriticalMappings(sources) {
   expectPattern(errors, sources.routing, /isEzCare\s*&&\s*isApple[\s\S]*scFarhanName/, 'root EzCare Apple split');
   expectPattern(errors, sources.routing, /other EzCare claims remain Meindar/, 'root EzCare non-Apple contract');
   expectPattern(errors, sources.entryPoints, /ez\\s\*care[\s\S]*deviceBrand[\s\S]*SC - Farhan/, 'SUB EzCare Apple split');
+  expectPattern(errors, sources.entryPoints, /idxManualStatus\s*=\s*idxOfAny\(norm,\s*\['status'\]\)[\s\S]*__shouldMirrorDeliveredStartToScSub06a_\(sheetName,\s*idxManualStatus\s*>=\s*0\s*\?\s*row\[idxManualStatus\]/, 'SUB Start Delivered reads manual Status column');
   expectPattern(errors, sources.postProcess, /backedStatus[\s\S]*currentStatus/, 'blank-safe manual Status restore');
+
+  const subDeliveredMirror = loadFunctions(sources.entryPoints, ['__shouldMirrorDeliveredStartToScSub06a_', '__applyMirroredFieldPolicySub06a_', '__getScDestinationFromPicSub06a_']);
+  expectValue(errors, subDeliveredMirror.__shouldMirrorDeliveredStartToScSub06a_('Start', 'Delivered'), true, 'SUB mirrors Start manual Delivered');
+  expectValue(errors, subDeliveredMirror.__shouldMirrorDeliveredStartToScSub06a_('Start', 'Pending TO'), false, 'SUB ignores other Start manual statuses');
+  expectValue(errors, subDeliveredMirror.__shouldMirrorDeliveredStartToScSub06a_('Finish', 'Delivered'), false, 'SUB limits manual Delivered mirror to Start');
+  expectValue(errors, subDeliveredMirror.__applyMirroredFieldPolicySub06a_(['C-1', 'Delivered', 'AWB-1', '2026-09-02', 'Mitracare', 'Pickup', 'Farhan', ''], ['Claim Number', 'Status', 'AWB', 'Timestamp AWB', 'Branch', 'Claim Type', 'Service Center PIC', 'Type'], ['AWB', 'Timestamp AWB', 'Branch', 'Claim Type', 'Service Center PIC'], { Type: 'Start' }), ['C-1', 'Delivered', '', '', '', '', '', 'Start'], 'SUB omits Start-only fields and sets SC Type');
+  expectValue(errors, subDeliveredMirror.__getScDestinationFromPicSub06a_('Farhan', ['SC - Farhan', 'SC - Meilani']), 'SC - Farhan', 'SUB Delivered uses Service Center PIC first');
+  expectValue(errors, subDeliveredMirror.__getScDestinationFromPicSub06a_('', ['SC - Farhan', 'SC - Meilani']), null, 'SUB Delivered blank PIC allows mapping fallback');
+  expectPattern(errors, sources.entryPoints, /omittedHeaders:\s*mirrorDeliveredStart\s*\?\s*\['AWB',\s*'Timestamp AWB',\s*'Branch',\s*'Claim Type',\s*'Service Center PIC'\][\s\S]*forcedValues:\s*mirrorDeliveredStart\s*\?\s*\{\s*Type:\s*'Start'\s*\}/, 'SUB limits Start field policy to Delivered SC mirror');
+  expectPattern(errors, sources.entryPoints, /ensureForcedTypeDropdown\(tgt,\s*(?:keepRow|appendRow),\s*mv\.forcedValues\)/, 'SUB applies Type dropdown to Delivered SC mirror');
 
   const scMeilani = loadFunctions(sources.scMeilani, [
     'scMeilaniResolveMissingRepairClaimMarker_',
