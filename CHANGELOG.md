@@ -4,6 +4,8 @@ Perubahan material repository dicatat di sini berdasarkan outcome, flow/project 
 
 ## Unreleased
 
+- Samsung Claim Sync sekarang membuka source dan target langsung dari Spreadsheet ID yang ditetapkan di konfigurasi, sehingga initial setup tidak lagi salah menafsirkan source ID sebagai nama Script Property.
+- Menambahkan standalone Samsung Claim Sync hasil duplikasi flow Apple dengan filter exact-normalized `device_brand = Samsung`, cutoff `claim_submitted_datetime >= 1 Juni 2026`, target workbook Samsung khusus, serta trigger manual/daily dan OnEdit `REQ FU` yang terisolasi dari project Apple.
 - DB Link SC-Meilani Salvage Repair sekarang memakai formula `HYPERLINK` sederhana menuju partner portal, sehingga tidak lagi menghasilkan `#ERROR!` dari formula `LET`/`REGEXMATCH` atau mengarah ke host internal.
 - Dropdown manual `Status` tidak lagi bergantung pada template cell `Finish.Status` atau `Raw Data.Status`; backup MAIN, restore, dan seluruh operational consumer memasang satu validation general langsung dari `STATUS_DROPDOWN_OPTIONS` sambil mempertahankan nilai legacy.
 - SC-Meilani Salvage sekarang meng-upsert claim ber-Remarks `Unit belum ada` tanpa full clear, mempertahankan target-only claim, dan hanya menghapus target claim yang masih ada di source tetapi Remarks-nya berubah; Salvage Repair mengecualikan Approval Date sebelum 1 Agustus 2026 dan tetap menerima tanggal setelah cutoff.
