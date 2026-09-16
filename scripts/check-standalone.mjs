@@ -12,6 +12,8 @@ const files = [
   'optional-project/SC-iBox.js',
   'optional-project/Project Apple/Apple-Claim-Sync.js',
   'optional-project/Project Apple/Apple-Claim-OnEdit.js',
+  'optional-project/Project Samsung/Samsung-Claim-Sync.js',
+  'optional-project/Project Samsung/Samsung-Claim-OnEdit.js',
   'optional-project/Service Center Extractor.js'
 ];
 
