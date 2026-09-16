@@ -12,7 +12,7 @@
  */
 
 const SAMSUNG_CLAIM_SYNC_CONFIG = {
-  SOURCE_SPREADSHEET_PROPERTY: 'SAMSUNG_CLAIM_SOURCE_SPREADSHEET_ID',
+  SOURCE_SPREADSHEET_ID: '1zRlYrSRssv9LVcPKEq90CmmvTRsZoN_TqfIg2pNufbc',
   SOURCE_SHEET_NAME: 'Raw Data',
   TARGET_SHEET_NAME: 'General',
 
@@ -120,9 +120,7 @@ function syncSamsungClaims_(mode) {
     writeSamsungClaimRunStatus_(startedAt, 'ON PROGRESS');
 
     const sourceSS = SpreadsheetApp.openById(
-      getRequiredSamsungClaimSpreadsheetId_(
-        SAMSUNG_CLAIM_SYNC_CONFIG.SOURCE_SPREADSHEET_PROPERTY
-      )
+      SAMSUNG_CLAIM_SYNC_CONFIG.SOURCE_SPREADSHEET_ID
     );
     const sourceSheet = sourceSS.getSheetByName(
       SAMSUNG_CLAIM_SYNC_CONFIG.SOURCE_SHEET_NAME
@@ -339,25 +337,6 @@ function deleteTriggersByHandler_(handlerName) {
     });
 
   return deleted;
-}
-
-function getRequiredSamsungClaimSpreadsheetId_(propertyName) {
-  const value = String(
-    PropertiesService.getScriptProperties().getProperty(propertyName) || ''
-  ).trim();
-  if (!value) {
-    throw new Error(
-      `Script Property "${propertyName}" wajib diisi dengan Spreadsheet ID.`
-    );
-  }
-  const urlMatch = value.match(/\/spreadsheets\/d\/([A-Za-z0-9_-]+)/);
-  const spreadsheetId = urlMatch ? urlMatch[1] : value;
-  if (!/^[A-Za-z0-9_-]{20,}$/.test(spreadsheetId)) {
-    throw new Error(
-      `Script Property "${propertyName}" harus berisi Spreadsheet ID atau URL Google Sheets yang valid.`
-    );
-  }
-  return spreadsheetId;
 }
 
 function normalizeSourceHeader_(value) {

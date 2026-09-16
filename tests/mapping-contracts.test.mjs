@@ -29,8 +29,10 @@ test('critical mapping, status, header, and manual-field contracts remain aligne
 test('Samsung Claim Sync keeps its strict brand, cutoff, and target contracts', () => {
   const { samsungClaim } = loadSources();
 
+  assert.match(samsungClaim, /SOURCE_SPREADSHEET_ID:\s*'1zRlYrSRssv9LVcPKEq90CmmvTRsZoN_TqfIg2pNufbc'/);
   assert.match(samsungClaim, /TARGET_SPREADSHEET_ID:\s*'1eXrN6pFXHr1-Qj208tzsMa5ysXgEv84LG-XiV6HhcJI'/);
   assert.match(samsungClaim, /MIN_SUBMITTED_DATE:\s*new Date\(2026, 5, 1\)/);
   assert.match(samsungClaim, /if \(deviceBrand !== 'samsung'\) continue;/);
   assert.doesNotMatch(samsungClaim, /deviceBrand\.includes\('samsung'\)/);
+  assert.doesNotMatch(samsungClaim, /SOURCE_SPREADSHEET_PROPERTY|PropertiesService/);
 });
