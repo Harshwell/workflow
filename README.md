@@ -64,46 +64,7 @@ Expected contract dan observed implementation bukan hal yang sama. Implementasi 
 ## System Context and Architecture
 
 ```mermaid
-architecture-beta
-  group inputs(cloud)[Inputs]
-  service main(database)[Gmail MAIN queue] in inputs
-  service sub(database)[Gmail SUB queue] in inputs
-  service form(disk)[Form or manual Drive upload] in inputs
-  group root(cloud)[Root Apps Script pipeline]
-  service entry(server)[06a entrypoints] in root
-  service parse(server)[04 parser and aging] in root
-  service raw(database)[Raw Data and Raw OLD NEW] in root
-  service mutate(server)[05a backup and raw mutation] in root
-  service route(server)[05b operational routing] in root
-  service optional(server)[05c optional sheets] in root
-  service enrich(server)[06b enrichment and continuation] in root
-  service report(server)[06c reporting recovery and self check] in root
-  service sheets(database)[Operational and report sheets] in root
-  service standalone(server)[Standalone Apps Script projects]
-  service policy(server)[00 policy and config]
-  service utils(server)[01 shared utilities]
-  service logs(database)[02 structured logs]
-  service schema(server)[03 schema and validation]
-  main:R --> L:entry
-  sub:R --> L:entry
-  form:R --> L:entry
-  entry:R --> L:parse
-  parse:R --> L:raw
-  raw:R --> L:mutate
-  mutate:R --> L:route
-  route:R --> L:optional
-  optional:R --> L:enrich
-  enrich:R --> L:report
-  report:R --> L:sheets
-  sheets:R --> L:standalone
-  policy:R --> L:entry
-  policy:R --> L:route
-  policy:R --> L:optional
-  utils:R --> L:parse
-  utils:R --> L:route
-  schema:R --> L:route
-  logs:R --> L:entry
-  logs:R --> L:enrich
+architecture-beta group inputs(cloud)[Input Sources] service gmail_main(database)[Gmail MAIN Queue] in inputs service gmail_sub(database)[Gmail SUB Queue] in inputs service manual_upload(disk)[Form / Manual Drive Upload] in inputs group pipeline(cloud)[Root Apps Script Pipeline] service entry(server)[06a Entry Points] in pipeline service parser(server)[04 Parser & Aging] in pipeline service raw(database)[Raw Data / Raw OLD / Raw NEW] in pipeline service mutation(server)[05a Backup & Raw Mutation] in pipeline service routing(server)[05b Operational Routing] in pipeline service optional(server)[05c Optional Sheets] in pipeline service enrichment(server)[06b Enrichment & Continuation] in pipeline service reporting(server)[06c Reporting / Recovery / Self Check] in pipeline service output(database)[Operational & Report Sheets] in pipeline group shared(cloud)[Shared Modules] service policy(server)[00 Policy & Config] in shared service utils(server)[01 Shared Utilities] in shared service logs(database)[02 Structured Logs] in shared service schema(server)[03 Schema & Validation] in shared service standalone(server)[Standalone Apps Script Projects] gmail_main:R --> L:entry gmail_sub:R --> L:entry manual_upload:R --> L:entry entry:R --> L:parser parser:R --> L:raw raw:R --> L:mutation mutation:R --> L:routing routing:R --> L:optional optional:R --> L:enrichment enrichment:R --> L:reporting reporting:R --> L:output output:R --> L:standalone policy:R --> L:entry policy:R --> L:routing policy:R --> L:optional utils:R --> L:parser utils:R --> L:routing schema:R --> L:routing logs:R --> L:entry logs:R --> L:enrichment
 ```
 
 Policy dan config berada terutama di `00_Config.gs`; generic utility di `01_Utils.gs`; log lifecycle di `02_LogAndDetails.gs`; schema/layout di `03_SheetsAndValidation.gs`; parsing di `04_ParseAndAging.gs`; dan processing di `05*` serta `06*`. Standalone scripts tidak berbagi load order maupun global root.
