@@ -132,6 +132,343 @@ Policy dan config berada terutama di `00_Config.gs`; generic utility di `01_Util
 | `static_smoke_check.js` | Legacy root static harness yang dipanggil tooling Node. | Root symbol/load-order assertion berubah. |
 | `scripts/`, `tests/` | Local validators dan regression contracts. | Developer interface atau guard berubah. |
 
+## Panduan Operasional: MAIN, SUB, dan Outstanding
+
+Bagian ini adalah pintu masuk untuk operator baru. Anggap tiga flow ini sebagai tiga pekerjaan berbeda:
+
+| Flow | Analogi sederhana | Kapan dipakai |
+| --- | --- | --- |
+| **MAIN** | Membangun ulang papan kerja dari snapshot utama terbaru. | Saat file claim utama masuk, normalnya melalui antrean email MAIN. |
+| **SUB** | Memperbarui claim yang sudah ada dan memindahkannya ke tahap terbaru. | Saat file monitoring OLD/NEW masuk, normalnya setiap jam. |
+| **Outstanding** | Membuat dashboard ringkas lintas region dari hasil operasional. | Otomatis setiap jam pada project standalone Outstanding. |
+
+### Peta besar data
+
+```text
+File MAIN (Gmail / Form / manual)
+        |
+        v
+     Raw Data ------------------------------+
+        |                                    |
+        v                                    v
+Operational sheets                    Optional sheets
+(Submission, Ask Detail, OR,          (B2B, EV-Bike, Doss,
+ Start, SC, Finish, PO, dll.)          Special Case)
+        |
+        +--------------------+---------------+
+                             |
+File SUB OLD/NEW ------------+  memperbarui dan merelokasi claim
+                             |
+                             v
+                    Daily/Weekly Report Base
+                             |
+                             v
+              Standalone Outstanding membaca
+                  sebagian operational sheets
+                             |
+                             v
+             Digi / Region / Unmapped dashboard
+```
+
+MAIN dan SUB bekerja pada **master workflow workbook** yang sama. Outstanding adalah project terpisah: ia membaca output operational dari workbook tersebut, lalu menulis snapshot ke workbook Claim Outstanding.
+
+### Flow MAIN — membangun snapshot operasional
+
+#### Tujuan
+
+MAIN adalah refresh utama. Ia mengambil file export claim terbaru, menjadikannya `Raw Data`, lalu membangun ulang seluruh sheet kerja berdasarkan status, Service Center, dan aturan routing saat ini. Karena sheet operasional dibangun ulang, MAIN lebih berat daripada SUB.
+
+#### Source dan target
+
+| Jenis | Source/target | Penjelasan operator |
+| --- | --- | --- |
+| Input utama | Email berlabel `QUEUED_MAIN`, Form, atau `runManual()` | Email normalnya diproses satu thread valid per run; Form/manual memakai pipeline inti yang sama. |
+| Input file | File utama, dengan aging/standardization bila tersedia | File utama wajib ditemukan; file tambahan memperkaya aging. |
+| Landing source | `Raw Data` | Snapshot mentah/canonical dan tempat backup durable field manual. |
+| Target operasional | `Submission`, `Ask Detail`, `OR - OLD`, `Start`, `Finish`, `Expired Claim`, `Reject Claim`, `SC - Farhan`, `SC - Meilani`, `SC - Meindar`, `SC - Unmapped`, `PO`, `Exclusion` | Claim masuk ke sheet sesuai `Last Status`; claim SC juga dipisahkan menurut Service Center. |
+| Target opsional | `B2B`, `EV-Bike`, `Doss`, `Special Case` | Dibentuk dari aturan eligibility masing-masing, bukan diedit sebagai source utama. |
+| Target laporan | `Daily Report Base`, `Weekly Report Base` | Snapshot untuk kebutuhan reporting setelah routing/enrichment. |
+| Observability | `Overview`, `Log - Main`, details/progress terkait | Tempat operator melihat flow, progress, durasi, hasil, dan error. |
+
+#### Flowchart MAIN
+
+```text
+Ambil satu input MAIN
+        |
+        v
+Validasi konfigurasi + file
+        |
+        v
+Parse file dan samakan header ke schema Raw
+        |
+        v
+Backup field manual lama berdasarkan Claim Number
+        |
+        v
+Tulis snapshot terbaru ke Raw Data
+        |
+        v
+Ada minimal satu row yang bisa diroute?
+   | tidak                         | ya
+   v                               v
+STOP AMAN: jangan hapus ops     Simpan snapshot/continuation
+                                   |
+                                   v
+                          Clear operational sheets
+                                   |
+                                   v
+                       Route Raw Data berdasarkan status
+                                   |
+                                   v
+                     Restore field manual + formatting
+                                   |
+                                   v
+                Enrichment + optional sheets + reports + sort
+                                   |
+                                   v
+                       Success boundary terverifikasi
+                                   |
+                                   v
+                         Cleanup email/temp input
+```
+
+#### Kolom yang perlu dipahami
+
+Raw input menggunakan header teknis seperti `claim_number`, `claim_submitted_datetime`, `claim_last_status_name`, `repairer_location_store_name`, `days_aging_from_last_activity`, dan `device_imei`. Output operasional memakai nama yang ramah pengguna. Kelompok kolom utamanya:
+
+| Kelompok | Kolom penting | Dipakai untuk |
+| --- | --- | --- |
+| Identitas | `Claim Number`, `DB Link` | Kunci deduplikasi, update, restore, dan navigasi dashboard. |
+| Customer/partner | `Partner Name`, `Buss. Category`, `PM Name`, `APM Name`, `Insurance` | Konteks bisnis dan routing tertentu. |
+| Device | `Device Type`, `Product`, `Device Brand`, `IMEI/SN` | Identitas perangkat; IMEI/SN wajib tetap text. |
+| Workflow | `Last Status`, `Last Status Date`, `Service Center` | Menentukan sheet tujuan, PIC/SC, dan posisi claim. |
+| Aging | `Last Status Aging`, `Activity Log Aging`, `TAT`, `Stage Aging` | Prioritas dan pemantauan SLA. |
+| Finance/policy | `Sum Insured Amount`, `Claim Amount`, `Claim Own Risk Amount`, `Nett Claim Amount`, `% Approval`, `Start Date`, `End Date` | Analisis nilai claim dan policy. |
+| Manual | `Update Status`, `Timestamp`, `Status`, `Remarks`, `AWB`, `Timestamp AWB` | Input manusia yang dibackup sebelum rebuild dan direstore berdasarkan `Claim Number`. |
+
+Tidak semua sheet memiliki seluruh kolom. Sheet SC menambahkan `Type` dan `Branch`; `PO` menambahkan `OR` serta `Service Center PIC`; workflow sheet yang lebih sederhana memakai subset kolom sesuai template canonical.
+
+#### Periode dan cara menjalankan
+
+- Jalur normal: `runEmailIngest()` membaca antrean `QUEUED_MAIN`.
+- Jalur alternatif: Form dan `runManual()` tetap masuk ke core MAIN yang sama.
+- MAIN dapat dibagi menjadi dua execution. Stage 1 menulis `Raw Data` dan backup durable; one-shot continuation menjalankan clear, route, restore, enrichment, dan finalization dengan RunID yang sama.
+- Jangan menganggap email selesai hanya karena sudah terbaca. Cleanup email/temp baru boleh terjadi setelah success boundary; pada failure, input dipertahankan agar bisa dicoba ulang.
+
+#### Checklist operator MAIN
+
+1. Pastikan input yang benar berada di queue MAIN.
+2. Pantau `Overview` dan `Log - Main` sampai stage 2/finalization selesai.
+3. Periksa jumlah row `Raw Data` dan beberapa sampel `Claim Number` di destination.
+4. Periksa field manual lama tidak hilang setelah refresh.
+5. Bila log menyebut `0 routable rows`, jangan melakukan clear manual; safety gate sengaja mempertahankan output lama.
+
+### Flow SUB — update cepat dari snapshot OLD/NEW
+
+#### Tujuan
+
+SUB tidak membangun ulang semuanya. Ia membaca snapshot monitoring OLD dan/atau NEW, mencari claim berdasarkan `Claim Number`, memperbarui field status penting, kemudian memindahkan row ke sheet yang cocok dengan status terbaru. Ini membuat dashboard operasional tetap segar di antara refresh MAIN.
+
+#### Source dan target
+
+| Jenis | Source/target | Penjelasan operator |
+| --- | --- | --- |
+| Input normal | Email label `QUEUED_SUB` dengan subject monitoring yang dikonfigurasi | Consumer mengambil satu thread deterministik per run. |
+| Attachment OLD | Nama mengandung `List of Claims with Aging` | Disalin penuh ke `Raw OLD`. |
+| Attachment NEW | Nama mengandung `(Standardization)` | Disalin penuh ke `Raw NEW`. |
+| Landing source | `Raw OLD`, `Raw NEW` | Snapshot sementara/canonical untuk update SUB. |
+| Target update/relocation | `Submission`, `Ask Detail`, `OR - OLD`, `SC - Farhan`, `SC - Meilani`, `SC - Meindar`, `SC - Unmapped`, `Start`, `Finish`, `PO`, `Exclusion`, `Expired Claim`, `Reject Claim` | Row existing di-update dan dapat berpindah sheet. |
+| Target opsional | `EV-Bike`, `Doss` | Managed fields direfresh tanpa menimpa field manual. |
+| Target laporan | Report Base | Direfresh setelah update dan relocation. |
+| Observability | `Overview`, `Log - Sub` | Menampilkan start, progress, relocation, result, dan error. |
+
+#### Flowchart SUB
+
+```text
+Trigger SUB tiap jam (kecuali jam 08:00)
+        |
+        v
+Cari satu email QUEUED_SUB
+        |
+        v
+Kenali attachment OLD dan/atau NEW
+        |
+        v
+Copy full data ke Raw OLD / Raw NEW
+        |
+        v
+Deduplikasi snapshot berdasarkan Claim Number
+        |
+        v
+Update kolom status pada row operasional existing
+        |
+        +--> OLD + status SUBMITTED: append ke Submission bila belum ada
+        +--> NEW + status CLAIM_INITIATE: append ke Submission bila belum ada
+        |
+        v
+Relokasi full row sesuai Last Status terbaru
+        |
+        v
+Refresh EV-Bike/Doss + sort + Report Base
+        |
+        v
+Jam 09:00? Restore handoff manual dari MAIN
+        |
+        v
+Jika semua sukses: bersihkan email; jika gagal: biarkan queued
+```
+
+#### Kolom source dan kolom yang di-update
+
+| Raw OLD/NEW | Kolom operasional | Fungsi |
+| --- | --- | --- |
+| `claim_number` | `Claim Number` | Kunci pencarian wajib. |
+| `claim_submitted_datetime` | `Submission Date` | Tanggal submit dan data row baru Submission. |
+| `dashboard_link` | `DB Link` | Link claim. |
+| `partner_name` | `Partner Name` | Konteks partner. |
+| `insurance_partner_code` / `insurance_code` | `Insurance` | OLD dan NEW dapat memakai nama raw berbeda. |
+| `device_type` | `Device Type` | Informasi perangkat. |
+| `device_imei` | `IMEI/SN` | Identifier perangkat, dipertahankan sebagai text. |
+| `claim_last_status_name` | `Last Status` | Menentukan update dan perpindahan sheet. |
+| `days_aging_from_last_activity` | `Last Status Aging` | Aging status terbaru. |
+| `activity_log_aging` | `Activity Log Aging` | Aging aktivitas. |
+| `repairer_location_store_name` | `Service Center` | Update SC dan routing SC. |
+| `days_aging_from_submission` | `TAT` | Umur claim sejak submission. |
+
+SUB juga mengisi `Activity Log` dari `activity_log` dengan fallback sesuai kontrak. Field manual pada row yang dipindahkan harus tetap dipertahankan; SUB tidak boleh mengganti business logic MAIN atau melakukan full clear.
+
+#### Periode, lock, dan retry
+
+- Installer memasang `runSubEmailIngest()` setiap jam di sekitar menit 20.
+- Eksekusi jam **08:00** dilewati agar tidak bertabrakan dengan MAIN.
+- Jika MAIN sedang memegang lock, SUB menulis pending handoff; MAIN mencoba menjalankannya setelah selesai.
+- Handoff backup manual MAIN hanya direstore pada window **09:00**; SUB di jam lain tidak memakai backup tersebut.
+- Kontrak operasional mewajibkan pasangan OLD dan NEW yang valid. Implementasi saat ini masih menoleransi OLD-only atau NEW-only dengan warning; anggap ini compatibility behavior yang perlu direkonsiliasi, bukan prosedur normal yang boleh diandalkan.
+
+#### Checklist operator SUB
+
+1. Pastikan marker nama attachment OLD/NEW benar.
+2. Cek `Raw OLD` dan `Raw NEW` setelah proses.
+3. Cek beberapa claim yang berubah status sudah pindah ke sheet baru dan tidak tersisa ganda.
+4. Cek field manual pada row yang dipindahkan.
+5. Jika gagal, jangan menghapus label/email queue; failure path sengaja membuat input tetap retryable.
+
+### Flow Outstanding — dashboard snapshot per region
+
+#### Tujuan
+
+Outstanding membaca hasil operasional, menyaring claim yang masih relevan, lalu membuat workbook dashboard yang dibagi menurut region. Flow ini **tidak mengubah workbook utama**; ia hanya membaca Overview Claim dan menulis workbook Claim Outstanding.
+
+#### Source, referensi, dan target
+
+| Jenis | Sheet | Peran |
+| --- | --- | --- |
+| Source operational | `Submission`, `Ask Detail`, `OR - OLD`, `Start`, `SC - Farhan`, `SC - Meilani`, `SC - Ivan`, `Finish`, `PO` | Sembilan sheet yang dibaca oleh standalone Outstanding saat ini. |
+| Referensi routing | `Store Region` pada workbook referensi | Row 1 berisi region, row 2 berisi subheader `Partner Name`, row 3+ berisi daftar partner. Mapping di-cache 10 menit. |
+| Target khusus | `Digi` | Untuk partner `Digimap` dan `Digiplus`. |
+| Target region | Nama region dari `Store Region` | Contoh canonical: `Sumatra`, `Jabalnusra`, `Special Project`, `B2B`, `National Retailer`, `Sulawesi`, `Kalimantan`. |
+| Target fallback | `Unmapped` | Partner kosong atau tidak ditemukan tidak dibuang. |
+| Internal | `_Runs`, `_Queue`, `_Staging`, `_Audit` | Sheet tersembunyi untuk status run, task, hasil sementara, dan audit. |
+
+> Catatan: source Outstanding masih menyebut legacy `SC - Ivan`, sedangkan master workflow memakai canonical `SC - Meindar`. Ini adalah technical debt yang harus direkonsiliasi sebagai perubahan behavior terpisah, bukan diganti diam-diam saat menjalankan flow.
+
+#### Flowchart Outstanding
+
+```text
+Trigger enqueue setiap 1 jam
+        |
+        v
+Buat run unik untuk jam tersebut
+        |
+        v
+Pecah 9 source sheet menjadi task @ maksimum 600 row
+        |
+        v
+Worker setiap 5 menit mengambil maksimum 6 task
+        |
+        v
+Untuk setiap row:
+  wajib ada Claim Number
+  -> terjemahkan Last Status
+  -> keluarkan Claim Expired
+  -> hitung PIC
+  -> route Partner ke Digi / Region / Unmapped
+        |
+        v
+Simpan ke _Staging
+        |
+        v
+Queue habis? Deduplikasi per destination + Claim Number
+        |
+        v
+Backup Update Status + Timestamp Status
+        |
+        v
+Clear data lama pada managed destination sheets
+        |
+        v
+Tulis snapshot baru + restore dua field manual
+        |
+        v
+Run = COMPLETED atau PARTIAL; event masuk _Audit
+```
+
+#### Kolom output Outstanding
+
+| Urutan | Kolom | Catatan |
+| ---: | --- | --- |
+| 1 | `Submission Date` | Tanggal submission. |
+| 2 | `Claim Number` | Kunci deduplikasi dan restore manual. |
+| 3 | `Partner Name` | Dasar routing region. |
+| 4 | `Insurance` | Insurer. |
+| 5 | `Last Status` | Kode raw diterjemahkan menjadi label ramah pengguna; kode tak dikenal tetap ditulis apa adanya. |
+| 6 | `Last Status Date` | Menentukan record terbaru ketika claim duplikat. |
+| 7 | `Service Center` | Membantu penentuan PIC pada status middle/SC. |
+| 8 | `Last Status Aging` | Aging status. |
+| 9 | `Activity Log` | Aktivitas terakhir. |
+| 10 | `Timestamp` | Timestamp source occurrence pertama. |
+| 11 | `TAT` | Dinormalisasi menjadi angka jika memungkinkan. |
+| 12 | `Update Status` | Field manual yang dipertahankan lintas refresh/region. |
+| 13 | `Timestamp Status` | Field manual yang dipertahankan; fallback source dapat memakai occurrence kedua `Timestamp`. |
+| 14 | `PIC` | `Adi & Adit`, `Suci & Yudha`, PIC SC, atau `Unknown`, berdasarkan raw status dan Service Center. |
+
+#### Filter, deduplikasi, dan refresh
+
+- Row tanpa `Claim Number` dilewati.
+- Status yang diterjemahkan menjadi `Claim Expired` dilewati; tidak ada filter tanggal atau minimum aging tambahan.
+- Deduplikasi memakai kombinasi **destination sheet + Claim Number**. Row dengan `Update Status` diprioritaskan; bila setara, `Last Status Date` terbaru menang.
+- Finalization adalah **full snapshot refresh**, bukan append-only. Data lama pada managed sheet dibersihkan setelah nilai manual ditangkap.
+- Hanya `Update Status` dan `Timestamp Status` yang secara eksplisit dipertahankan oleh standalone ini.
+
+#### Periode, kapasitas, dan recovery
+
+- `install()` memasang enqueue setiap **1 jam** dan worker setiap **5 menit**.
+- Satu task maksimum **600 row**; satu worker maksimum **6 task**.
+- Task gagal dicoba sampai **5 attempt** dengan exponential backoff, lalu menjadi `DEAD`.
+- Task `IN_PROGRESS` lebih dari **20 menit** direcovery; run aktif lebih dari **90 menit** dibatalkan sebagai stale.
+- Lima failure beruntun membuka circuit breaker selama **30 menit**.
+- `runNow()` cocok untuk test/manual refresh; `runNowFresh()` mereset state internal lebih agresif dan tidak boleh menjadi pilihan rutin tanpa diagnosis.
+
+#### Checklist operator Outstanding
+
+1. Jalankan `install()` sekali pada deployment dan `runNow()` untuk smoke test.
+2. Pantau `_Runs`: hasil normal `COMPLETED`; `PARTIAL` berarti ada task `DEAD`/`CANCELED`.
+3. Pantau `_Audit` untuk source hilang, header hilang, partner unmapped, retry, atau finalization failure.
+4. Periksa `Unmapped`; isinya biasanya berarti mapping `Store Region` perlu diperbaiki, bukan claim harus dihapus.
+5. Setelah mengubah `Store Region`, beri waktu cache maksimal sekitar 10 menit atau lakukan force reload/debug terkontrol.
+6. Uji bahwa `Update Status` dan `Timestamp Status` tetap ada setelah claim berpindah region.
+
+### Pilih flow yang benar
+
+| Situasi | Jalankan/cek |
+| --- | --- |
+| Ada export claim utama terbaru dan seluruh dashboard perlu dibangun ulang | **MAIN** |
+| Hanya ada update monitoring status OLD/NEW dan dashboard harus disegarkan | **SUB** |
+| Workbook utama sudah benar, tetapi dashboard per-region belum terbaru | **Outstanding** |
+| Field manual hilang setelah refresh utama | Cek backup/restore dan `Log - Main`; jangan mencoba memperbaiki lewat Outstanding. |
+| Claim tidak muncul di Outstanding tetapi ada di operational | Cek `Claim Number`, status `Claim Expired`, routing `Store Region`, lalu `_Audit`. |
+| Claim ada di sheet operational yang salah setelah update status | Cek SUB relocation dan canonical status routing, bukan mapping region Outstanding. |
+
 ## Flow Registry
 
 ### MAIN

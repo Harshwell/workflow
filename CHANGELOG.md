@@ -4,6 +4,7 @@ Perubahan material repository dicatat di sini berdasarkan outcome, flow/project 
 
 ## Unreleased
 
+- README sekarang mempunyai panduan operator berbahasa sederhana untuk MAIN, SUB, dan Outstanding, termasuk peta data, flowchart teks, source/target sheet, kontrak kolom, jadwal, recovery, checklist, dan panduan memilih flow tanpa membuat knowledge file baru.
 - Samsung Claim Sync sekarang membuka source dan target langsung dari Spreadsheet ID yang ditetapkan di konfigurasi, sehingga initial setup tidak lagi salah menafsirkan source ID sebagai nama Script Property.
 - Menambahkan standalone Samsung Claim Sync hasil duplikasi flow Apple dengan filter exact-normalized `device_brand = Samsung`, cutoff `claim_submitted_datetime >= 1 Juni 2026`, target workbook Samsung khusus, serta trigger manual/daily dan OnEdit `REQ FU` yang terisolasi dari project Apple.
 - DB Link SC-Meilani Salvage Repair sekarang memakai formula `HYPERLINK` sederhana menuju partner portal, sehingga tidak lagi menghasilkan `#ERROR!` dari formula `LET`/`REGEXMATCH` atau mengarah ke host internal.
