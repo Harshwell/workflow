@@ -1365,14 +1365,15 @@ function isClaimRowInAnomalyScope_(row, targetColumnMap) {
 }
 
 function shouldPreserveManualTargetValue_(targetHeader, sourceValue, existingValue) {
-  const preserveHeaders = {
-    'Branch': true,
-    'Service Center': true,
-  };
-  if (!preserveHeaders[targetHeader]) return false;
+  const hasExistingValue = normalizeKey_(existingValue) !== '';
+  if (targetHeader === 'Service Center') {
+    // Service Center is manually correctable in the target. Source data may
+    // only fill an empty target cell; it must never replace an existing value.
+    return hasExistingValue;
+  }
+  if (targetHeader !== 'Branch') return false;
 
   const isSourceBlank = normalizeKey_(sourceValue) === '';
-  const hasExistingValue = normalizeKey_(existingValue) !== '';
   return isSourceBlank && hasExistingValue;
 }
 
@@ -1486,6 +1487,10 @@ function resolveBranchByServiceCenter_(serviceCenterValue, fallbackBranchValue) 
     appleauthorizedserviceproviderbymecarephinisipointmall: 'mE Care',
     samsungauthorizedservicecentrebyunicommakassarservicecenter: 'Samsung Exclusive',
     cvkayuawetsejahterastore: 'KAS',
+    ptdeltasindosagitamandirisorongpapuabarat: 'Deltafone',
+    cvberkahathallahbranchstore: 'CV Berkah',
+    ghstorepontianak: 'GH Store',
+    skylensindoservicecenter: 'Skylensindo',
   };
 
   if (branchByServiceCenter[scKey]) {
@@ -1499,9 +1504,26 @@ function normalizeServiceCenterKey_(value) {
   return normalizeKey_(value).replace(/[^a-z0-9]/g, '');
 }
 
+function resolveKnownPicByServiceCenter_(serviceCenterValue) {
+  const scKey = normalizeServiceCenterKey_(serviceCenterValue);
+  if (!scKey) return '';
+  if (scKey.indexOf('cvberkahathallahbranchstore') >= 0) return 'Farhan';
+  if (
+    scKey.indexOf('jbroscomputerservicecenterpadang') >= 0
+    || scKey.indexOf('bstoreservicecentrejakarta') >= 0
+    || scKey.indexOf('bstoreservicecenterjakarta') >= 0
+    || scKey.indexOf('ptdeltasindosagitamandirisorongpapuabarat') >= 0
+    || scKey.indexOf('ghstorepontianak') >= 0
+  ) return 'Meindar';
+  return '';
+}
+
 function resolvePicByBranch_(branchValue, serviceCenterValue, deviceBrandValue, deviceTypeValue, submissionDateValue) {
   var scKey = normalizeServiceCenterKey_(serviceCenterValue);
+  var knownServiceCenterPic = resolveKnownPicByServiceCenter_(serviceCenterValue);
+  if (knownServiceCenterPic) return knownServiceCenterPic;
   if (scKey.indexOf('cvberkah') >= 0 || scKey.indexOf('rejekiseluler') >= 0 || scKey.indexOf('rejekiseluller') >= 0) return 'Farhan';
+  if (scKey.indexOf('platinumcareservicecentre') >= 0 || scKey.indexOf('platinumcareservicecenter') >= 0) return 'Meindar';
   var isApple = /apple/i.test(String(deviceBrandValue || ''));
   if (scKey.indexOf('ezcare') >= 0 && isApple) return 'Farhan';
   const branchKey = normalizeKey_(branchValue);
@@ -1532,6 +1554,8 @@ function resolvePicByBranch_(branchValue, serviceCenterValue, deviceBrandValue, 
     mmb: 'Meindar',
     mdp: 'Meindar',
     multikom: 'Meindar',
+    platinumcareservicecentre: 'Meindar',
+    platinumcareservicecenter: 'Meindar',
   };
 
   return picByBranch[branchKey] || 'Unknown';
@@ -1625,7 +1649,10 @@ function syncTargetSheet_(sourceSnapshot, precheckedTargetSnapshot) {
 
     if (targetColumnMap['PIC'] && targetColumnMap['Branch']) {
       const branchValue = values[rowIndex][targetColumnMap['Branch'] - 1];
-      values[rowIndex][targetColumnMap['PIC'] - 1] = resolvePicByBranch_(branchValue, record['Service Center'], record['Device Brand'], record['Device Type'], record['Submission Date']);
+      const serviceCenterValue = targetColumnMap['Service Center']
+        ? values[rowIndex][targetColumnMap['Service Center'] - 1]
+        : record['Service Center'];
+      values[rowIndex][targetColumnMap['PIC'] - 1] = resolvePicByBranch_(branchValue, serviceCenterValue, record['Device Brand'], record['Device Type'], record['Submission Date']);
     }
 
     if (isInsert && remarksCol) {
@@ -1653,6 +1680,15 @@ function syncTargetSheet_(sourceSnapshot, precheckedTargetSnapshot) {
       if (targetColumnMap['PIC']) {
         row[targetColumnMap['PIC'] - 1] = resolvePicByBranch_(resolvedBranch, row[targetColumnMap['Service Center'] - 1], row[targetColumnMap['Device Brand'] ? targetColumnMap['Device Brand'] - 1 : -1], row[targetColumnMap['Device Type'] ? targetColumnMap['Device Type'] - 1 : -1], row[targetColumnMap['Submission Date'] ? targetColumnMap['Submission Date'] - 1 : -1]);
       }
+    });
+  }
+
+  if (targetColumnMap['Service Center'] && targetColumnMap['PIC']) {
+    values.forEach(function(row) {
+      const picCol = targetColumnMap['PIC'];
+      if (normalizeKey_(row[picCol - 1]) !== 'unknown') return;
+      const knownPic = resolveKnownPicByServiceCenter_(row[targetColumnMap['Service Center'] - 1]);
+      if (knownPic) row[picCol - 1] = knownPic;
     });
   }
 

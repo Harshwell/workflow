@@ -7,6 +7,7 @@ export function validateCriticalMappings(sources) {
   const errors = [];
   const finishOnlyReplacementStatuses = evaluateInitializer(sources.config, 'FINISH_ONLY_REPLACEMENT_STATUSES');
   const rootPolicy = evaluateInitializer(sources.config, 'OPS_ROUTING_POLICY', { FINISH_ONLY_REPLACEMENT_STATUSES: finishOnlyReplacementStatuses });
+  const branchKeywords = evaluateInitializer(sources.config, 'BRANCH_KEYWORDS');
   const statusTypes = evaluateInitializer(sources.config, 'STATUS_TYPE_BY_LAST_STATUS');
   const positions = evaluateInitializer(sources.config, 'POSITION_BY_LAST_STATUS');
   const rawTail = evaluateInitializer(sources.config, 'RAW_DATA_CUSTOM_TAIL_HEADERS');
@@ -20,6 +21,8 @@ export function validateCriticalMappings(sources) {
   expectIncludes(errors, rootPolicy.SC_NAME_KEYWORDS['SC - Farhan'], 'Rejeki Seluller', 'root Rejeki Seluller -> Farhan');
   expectIncludes(errors, rootPolicy.SC_NAME_KEYWORDS['SC - Farhan'], 'CV Berkah', 'root CV Berkah -> Farhan');
   expectIncludes(errors, rootPolicy.SC_NAME_KEYWORDS['SC - Meindar'], 'Deltasindo', 'root Deltasindo -> Meindar');
+  expectIncludes(errors, rootPolicy.SC_NAME_KEYWORDS['SC - Meindar'], 'Platinum Care Service Centre', 'root Platinum Care -> Meindar');
+  expectIncludes(errors, branchKeywords['Platinum Care Service Centre'], 'platinum care service centre', 'root Platinum Care branch');
   expectIncludes(errors, rootPolicy.SC_NAME_KEYWORDS['SC - Meindar'], 'EzCare', 'root EzCare default -> Meindar');
   expectIncludes(errors, rootPolicy.SC_NAME_KEYWORDS['SC - Meilani'], 'Samsung Exclusive', 'root Samsung Exclusive -> Meilani');
   expectIncludes(errors, rootPolicy.SC_NAME_KEYWORDS['SC - Meilani'], 'Samsung Authorized Service Centre by Unicom', 'root Samsung Unicom variant -> Meilani');
@@ -57,6 +60,7 @@ export function validateCriticalMappings(sources) {
   );
   expectObject(errors, extractorSpecial._resolveSpecialDestination_('gsi'), { sheetName: 'GSI', pic: 'MEILANI' }, 'Extractor GSI');
   expectObject(errors, extractorSpecial._resolveSpecialDestination_('ptdeltasindosagitamandiri'), { sheetName: 'Deltafone', pic: 'MEINDAR' }, 'Extractor Deltasindo');
+  expectObject(errors, extractorSpecial._resolveSpecialDestination_('platinumcareservicecentre'), { sheetName: 'Platinum Care Service Centre', pic: 'MEINDAR' }, 'Extractor Platinum Care');
   expectObject(errors, extractorSpecial._resolveSpecialDestination_('cvberkahathallah'), { sheetName: 'CV Berkah Athallah', pic: 'FARHAN' }, 'Extractor CV Berkah');
   expectObject(errors, extractorSpecial._resolveSpecialDestination_('rejekiseluller'), { sheetName: 'Rejeki Seluler', pic: 'FARHAN' }, 'Extractor Rejeki Seluller');
   expectValue(errors, extractorSpecial._resolvePicOverride_({ serviceCenterName: 'EzCare', deviceBrand: 'Apple' }, 'MEINDAR'), 'FARHAN', 'Extractor EzCare Apple');
@@ -76,14 +80,32 @@ export function validateCriticalMappings(sources) {
   const salvage = loadFunctions(sources.salvage, [
     'normalizeKey_',
     'normalizeServiceCenterKey_',
-    'resolvePicByBranch_'
+    'resolvePicByBranch_',
+    'resolveKnownPicByServiceCenter_',
+    'resolveBranchByServiceCenter_',
+    'shouldPreserveManualTargetValue_'
   ]);
   expectValue(errors, salvage.resolvePicByBranch_('GSI', '', '', '', ''), 'Meilani', 'Salvage GSI');
   expectValue(errors, salvage.resolvePicByBranch_('Deltafone', 'Deltasindo', '', '', ''), 'Meindar', 'Salvage Deltasindo');
+  expectValue(errors, salvage.resolvePicByBranch_('', 'Platinum Care Service Centre', '', '', ''), 'Meindar', 'Salvage Platinum Care from Service Center');
+  expectValue(errors, salvage.resolvePicByBranch_('Platinum Care Service Centre', '', '', '', ''), 'Meindar', 'Salvage Platinum Care from Branch');
   expectValue(errors, salvage.resolvePicByBranch_('', 'CV Berkah', '', '', ''), 'Farhan', 'Salvage CV Berkah');
   expectValue(errors, salvage.resolvePicByBranch_('', 'Rejeki Seluller', '', '', ''), 'Farhan', 'Salvage Rejeki Seluller');
   expectValue(errors, salvage.resolvePicByBranch_('EzCare', 'EzCare', 'Apple', '', '2026-01-01'), 'Farhan', 'Salvage EzCare Apple without date gate');
   expectValue(errors, salvage.resolvePicByBranch_('EzCare', 'EzCare', 'Samsung', '', '2026-07-15'), 'Meindar', 'Salvage EzCare non-Apple');
+  expectValue(errors, salvage.shouldPreserveManualTargetValue_('Service Center', 'Source SC', 'Manual SC'), true, 'Salvage preserves manually filled Service Center');
+  expectValue(errors, salvage.shouldPreserveManualTargetValue_('Service Center', '', 'Manual SC'), true, 'Salvage preserves manual Service Center when source is blank');
+  expectValue(errors, salvage.shouldPreserveManualTargetValue_('Service Center', 'Source SC', ''), false, 'Salvage fills blank Service Center');
+  expectValue(errors, salvage.resolvePicByBranch_('', 'J-Bros Computer Service Center Padang', '', '', ''), 'Meindar', 'Salvage J-Bros PIC fallback');
+  expectValue(errors, salvage.resolvePicByBranch_('', 'B-Store Service Centre Jakarta', '', '', ''), 'Meindar', 'Salvage B-Store PIC fallback');
+  expectValue(errors, salvage.resolvePicByBranch_('', 'PT DELTASINDO SAGITA MANDIRI - Sorong Papua Barat', '', '', ''), 'Meindar', 'Salvage Deltasindo PIC fallback');
+  expectValue(errors, salvage.resolvePicByBranch_('', 'GH Store - Pontianak', '', '', ''), 'Meindar', 'Salvage GH Store PIC fallback');
+  expectValue(errors, salvage.resolvePicByBranch_('', 'CV Berkah Athallah Branch Store', '', '', ''), 'Farhan', 'Salvage CV Berkah PIC fallback');
+  expectValue(errors, salvage.resolveBranchByServiceCenter_('PT DELTASINDO SAGITA MANDIRI - Sorong Papua Barat', ''), 'Deltafone', 'Salvage Deltasindo branch override');
+  expectValue(errors, salvage.resolveBranchByServiceCenter_('CV Berkah Athallah Branch Store', ''), 'CV Berkah', 'Salvage CV Berkah branch override');
+  expectValue(errors, salvage.resolveBranchByServiceCenter_('GH Store - Pontianak', ''), 'GH Store', 'Salvage GH Store branch override');
+  expectValue(errors, salvage.resolveBranchByServiceCenter_('Skylensindo Service Center', ''), 'Skylensindo', 'Salvage Skylensindo branch override');
+  expectPattern(errors, sources.salvage, /normalizeKey_\(row\[picCol - 1\]\) !== 'unknown'[\s\S]{0,250}resolveKnownPicByServiceCenter_/, 'Salvage reconciles Unknown PIC from Service Center');
 
   const utils = loadFunctions(sources.utils, ['normalizeImeiSnText_'], {
     Utilities: { formatString: (_format, value) => String(Math.trunc(value)) }
@@ -96,6 +118,9 @@ export function validateCriticalMappings(sources) {
   expectPattern(errors, sources.entryPoints, /ez\\s\*care[\s\S]*deviceBrand[\s\S]*SC - Farhan/, 'SUB EzCare Apple split');
   expectPattern(errors, sources.entryPoints, /idxManualStatus\s*=\s*idxOfAny\(norm,\s*\['status'\]\)[\s\S]*__shouldMirrorDeliveredStartToScSub06a_\(sheetName,\s*idxManualStatus\s*>=\s*0\s*\?\s*row\[idxManualStatus\]/, 'SUB Start Delivered reads manual Status column');
   expectPattern(errors, sources.postProcess, /backedStatus[\s\S]*currentStatus/, 'blank-safe manual Status restore');
+  expectPattern(errors, sources.postProcess, /Platinum Care Service Centre[\s\S]{0,200}platinum care service centre/, 'Report Base Platinum Care branch mapping');
+  expectPattern(errors, sources.postProcess, /Meindar[\s\S]{0,200}platinum care service centre/, 'Report Base Platinum Care PIC mapping');
+  expectPattern(errors, sources.outstanding, /Ivan:[\s\S]{0,400}platinum care service centre/, 'Outstanding Platinum Care middle mapping');
 
   const subDeliveredMirror = loadFunctions(sources.entryPoints, ['__shouldMirrorDeliveredStartToScSub06a_', '__applyMirroredFieldPolicySub06a_', '__getScDestinationFromPicSub06a_']);
   expectValue(errors, subDeliveredMirror.__shouldMirrorDeliveredStartToScSub06a_('Start', 'Delivered'), true, 'SUB mirrors Start manual Delivered');
