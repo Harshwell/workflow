@@ -1502,6 +1502,7 @@ function normalizeServiceCenterKey_(value) {
 function resolvePicByBranch_(branchValue, serviceCenterValue, deviceBrandValue, deviceTypeValue, submissionDateValue) {
   var scKey = normalizeServiceCenterKey_(serviceCenterValue);
   if (scKey.indexOf('cvberkah') >= 0 || scKey.indexOf('rejekiseluler') >= 0 || scKey.indexOf('rejekiseluller') >= 0) return 'Farhan';
+  if (scKey.indexOf('platinumcareservicecentre') >= 0 || scKey.indexOf('platinumcareservicecenter') >= 0) return 'Meindar';
   var isApple = /apple/i.test(String(deviceBrandValue || ''));
   if (scKey.indexOf('ezcare') >= 0 && isApple) return 'Farhan';
   const branchKey = normalizeKey_(branchValue);
@@ -1532,6 +1533,8 @@ function resolvePicByBranch_(branchValue, serviceCenterValue, deviceBrandValue, 
     mmb: 'Meindar',
     mdp: 'Meindar',
     multikom: 'Meindar',
+    platinumcareservicecentre: 'Meindar',
+    platinumcareservicecenter: 'Meindar',
   };
 
   return picByBranch[branchKey] || 'Unknown';

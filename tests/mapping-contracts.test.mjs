@@ -15,6 +15,7 @@ export function loadSources() {
     extractor: fs.readFileSync('optional-project/Service Center Extractor.js', 'utf8'),
     scMeilani: fs.readFileSync('optional-project/SC-Meilani.js', 'utf8'),
     salvage: fs.readFileSync('optional-project/salvage', 'utf8'),
+    outstanding: fs.readFileSync('optional-project/Outstanding', 'utf8'),
     samsungClaim: fs.readFileSync(
       'optional-project/Project Samsung/Samsung-Claim-Sync.js',
       'utf8'

@@ -552,7 +552,7 @@ Unknown status/SC harus terlihat sebagai unmapped/error evidence, bukan disamark
 | GSI | Meilani | `GSI` | Extractor, Salvage. |
 | Andalas, Unicom, Xiaomi Authorized, Samsung Exclusive, Carlcare | Meilani | Nama canonical | Extractor, SC-Meilani, Salvage. |
 | Samsung Authorized by Unicom variants | Meilani | `Samsung Exclusive` untuk variant/override yang dikontrak | Extractor, SC-Meilani, Salvage. |
-| Klikcare, J-Bros, Makmur Era Abadi, Manado Mitra Bersama, Kayu Awet Sejahtera, MDP, B-Store, Multikom, GH Store | Meindar | Nama canonical | Extractor, Salvage, Outstanding. |
+| Klikcare, Platinum Care Service Centre, J-Bros, Makmur Era Abadi, Manado Mitra Bersama, Kayu Awet Sejahtera, MDP, B-Store, Multikom, GH Store | Meindar | Nama canonical | Root MAIN/SUB, Extractor, Salvage, Outstanding, dan Report Base. |
 | PT Deltasindo / Deltasindo | Meindar | `Deltafone` | Extractor, Salvage, Outstanding. |
 | EzCare / Ez Care | Default root: Meindar | `Device Brand` yang mengandung Apple selalu diarahkan Farhan tanpa date gate; non-Apple tetap Meindar. | Root routing, Extractor, Salvage. |
 | Tidak match | Tidak ada owner | `SC - Unmapped` / `Unmapped` | Masing-masing project wajib fail-closed. |

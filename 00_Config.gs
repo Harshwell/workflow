@@ -155,6 +155,7 @@ const BRANCH_KEYWORDS = Object.freeze({
   'Rejeki Seluler': ['rejeki seluler', 'rejeki seluller'],
   'Andalas': ['andalas'],
   'Klikcare': ['klikcare'],
+  'Platinum Care Service Centre': ['platinum care service centre', 'platinum care service center'],
   'J-Bros': ['j-bros', 'jbros'],
   'Makmur Era Abadi': ['makmur era abadi'],
   'Manado Mitra Bersama': ['manado mitra bersama'],
@@ -1558,6 +1559,8 @@ const OPS_ROUTING_POLICY = Object.freeze({
     ]),
     'SC - Meindar': Object.freeze([
       'Klikcare',
+      'Platinum Care Service Centre',
+      'Platinum Care Service Center',
       'J-Bros',
       'Makmur Era Abadi',
       'Manado Mitra Bersama',
