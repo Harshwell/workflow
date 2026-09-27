@@ -84,10 +84,10 @@ const CONFIG = {
 
   DEST_SHEETS_TO_CLEAR: [
     "iBox", "Mitracare", "Sitcomtara", "CV Berkah Athallah", "Rejeki Seluler", "EzCare", "GSI", "Andalas", "Carlcare", "Samsung Exclusive",
-    "Unicom", "Xiaomi Authorized", "B-Store", "CV Kayu Awet Sejahtera", "Deltafone", "GH Store", "J-Bros", "Klikcare", "Makmur Era Abadi", "Manado Mitra Bersama", "MDP", "Multikom", "Unmapped"
+    "Unicom", "Xiaomi Authorized", "B-Store", "CV Kayu Awet Sejahtera", "Deltafone", "GH Store", "J-Bros", "Klikcare", "Makmur Era Abadi", "Manado Mitra Bersama", "MDP", "Multikom", "Platinum Care Service Centre", "Unmapped"
   ],
   VALID_PICS: new Set(["FARHAN", "MEILANI", "MEINDAR"]),
-  AUTO_MANAGED_DEST_SHEETS: new Set(["CV Berkah Athallah", "Rejeki Seluler", "EzCare", "GSI", "Deltafone"]),
+  AUTO_MANAGED_DEST_SHEETS: new Set(["CV Berkah Athallah", "Rejeki Seluler", "EzCare", "GSI", "Deltafone", "Platinum Care Service Centre"]),
   SERVICE_CENTER_MAPPING: Object.freeze([
     Object.freeze({ name: "iBox", pic: "FARHAN" }),
     Object.freeze({ name: "Mitracare", pic: "FARHAN" }),
@@ -108,6 +108,7 @@ const CONFIG = {
     Object.freeze({ name: "GH Store", pic: "MEINDAR" }),
     Object.freeze({ name: "J-Bros", pic: "MEINDAR" }),
     Object.freeze({ name: "Klikcare", pic: "MEINDAR" }),
+    Object.freeze({ name: "Platinum Care Service Centre", pic: "MEINDAR" }),
     Object.freeze({ name: "Makmur Era Abadi", pic: "MEINDAR" }),
     Object.freeze({ name: "Manado Mitra Bersama", pic: "MEINDAR" }),
     Object.freeze({ name: "MDP", pic: "MEINDAR" }),
@@ -222,6 +223,7 @@ const CONFIG = {
     { sheet: "Multikom", tokens: ["multikom"] },
     { sheet: "Andalas", tokens: ["andalas"] },
     { sheet: "Klikcare", tokens: ["klikcare"] },
+    { sheet: "Platinum Care Service Centre", tokens: ["platinum care service centre", "platinum care service center"] },
     { sheet: "J-Bros", tokens: ["j bros", "jbros", "j-bros"] },
     { sheet: "Makmur Era Abadi", tokens: ["makmur era abadi"], regex: /\bmea\b/ },
     { sheet: "Manado Mitra Bersama", tokens: ["manado mitra bersama"], regex: /\bmmb\b/ },
@@ -2280,6 +2282,7 @@ function _resolveSpecialDestination_(compactSc) {
   var sc = String(compactSc || "");
   if (sc.indexOf("gsi") >= 0) return { sheetName: "GSI", pic: "MEILANI" };
   if (sc.indexOf("deltasindo") >= 0 || sc.indexOf("deltafone") >= 0) return { sheetName: "Deltafone", pic: "MEINDAR" };
+  if (sc.indexOf("platinumcareservicecentre") >= 0 || sc.indexOf("platinumcareservicecenter") >= 0) return { sheetName: "Platinum Care Service Centre", pic: "MEINDAR" };
   if (sc.indexOf("cvberkah") >= 0) return { sheetName: "CV Berkah Athallah", pic: "FARHAN" };
   if (sc.indexOf("rejekiseluler") >= 0 || sc.indexOf("rejekiseluller") >= 0) return { sheetName: "Rejeki Seluler", pic: "FARHAN" };
   return null;
