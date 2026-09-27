@@ -80,7 +80,10 @@ export function validateCriticalMappings(sources) {
   const salvage = loadFunctions(sources.salvage, [
     'normalizeKey_',
     'normalizeServiceCenterKey_',
-    'resolvePicByBranch_'
+    'resolvePicByBranch_',
+    'resolveKnownPicByServiceCenter_',
+    'resolveBranchByServiceCenter_',
+    'shouldPreserveManualTargetValue_'
   ]);
   expectValue(errors, salvage.resolvePicByBranch_('GSI', '', '', '', ''), 'Meilani', 'Salvage GSI');
   expectValue(errors, salvage.resolvePicByBranch_('Deltafone', 'Deltasindo', '', '', ''), 'Meindar', 'Salvage Deltasindo');
@@ -90,6 +93,19 @@ export function validateCriticalMappings(sources) {
   expectValue(errors, salvage.resolvePicByBranch_('', 'Rejeki Seluller', '', '', ''), 'Farhan', 'Salvage Rejeki Seluller');
   expectValue(errors, salvage.resolvePicByBranch_('EzCare', 'EzCare', 'Apple', '', '2026-01-01'), 'Farhan', 'Salvage EzCare Apple without date gate');
   expectValue(errors, salvage.resolvePicByBranch_('EzCare', 'EzCare', 'Samsung', '', '2026-07-15'), 'Meindar', 'Salvage EzCare non-Apple');
+  expectValue(errors, salvage.shouldPreserveManualTargetValue_('Service Center', 'Source SC', 'Manual SC'), true, 'Salvage preserves manually filled Service Center');
+  expectValue(errors, salvage.shouldPreserveManualTargetValue_('Service Center', '', 'Manual SC'), true, 'Salvage preserves manual Service Center when source is blank');
+  expectValue(errors, salvage.shouldPreserveManualTargetValue_('Service Center', 'Source SC', ''), false, 'Salvage fills blank Service Center');
+  expectValue(errors, salvage.resolvePicByBranch_('', 'J-Bros Computer Service Center Padang', '', '', ''), 'Meindar', 'Salvage J-Bros PIC fallback');
+  expectValue(errors, salvage.resolvePicByBranch_('', 'B-Store Service Centre Jakarta', '', '', ''), 'Meindar', 'Salvage B-Store PIC fallback');
+  expectValue(errors, salvage.resolvePicByBranch_('', 'PT DELTASINDO SAGITA MANDIRI - Sorong Papua Barat', '', '', ''), 'Meindar', 'Salvage Deltasindo PIC fallback');
+  expectValue(errors, salvage.resolvePicByBranch_('', 'GH Store - Pontianak', '', '', ''), 'Meindar', 'Salvage GH Store PIC fallback');
+  expectValue(errors, salvage.resolvePicByBranch_('', 'CV Berkah Athallah Branch Store', '', '', ''), 'Farhan', 'Salvage CV Berkah PIC fallback');
+  expectValue(errors, salvage.resolveBranchByServiceCenter_('PT DELTASINDO SAGITA MANDIRI - Sorong Papua Barat', ''), 'Deltafone', 'Salvage Deltasindo branch override');
+  expectValue(errors, salvage.resolveBranchByServiceCenter_('CV Berkah Athallah Branch Store', ''), 'CV Berkah', 'Salvage CV Berkah branch override');
+  expectValue(errors, salvage.resolveBranchByServiceCenter_('GH Store - Pontianak', ''), 'GH Store', 'Salvage GH Store branch override');
+  expectValue(errors, salvage.resolveBranchByServiceCenter_('Skylensindo Service Center', ''), 'Skylensindo', 'Salvage Skylensindo branch override');
+  expectPattern(errors, sources.salvage, /normalizeKey_\(row\[picCol - 1\]\) !== 'unknown'[\s\S]{0,250}resolveKnownPicByServiceCenter_/, 'Salvage reconciles Unknown PIC from Service Center');
 
   const utils = loadFunctions(sources.utils, ['normalizeImeiSnText_'], {
     Utilities: { formatString: (_format, value) => String(Math.trunc(value)) }

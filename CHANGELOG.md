@@ -4,6 +4,8 @@ Perubahan material repository dicatat di sini berdasarkan outcome, flow/project 
 
 ## Unreleased
 
+- Salvage sekarang mempertahankan `Service Center` target yang sudah terisi manual dan hanya mengisi cell kosong; rekonsiliasi PIC `Unknown` memakai Service Center untuk J-Bros/B-Store/Deltasindo/GH Store sebagai Meindar dan CV Berkah sebagai Farhan, sekaligus menormalisasi Branch Deltasindo, CV Berkah, GH Store, dan Skylensindo.
+
 - Menambahkan `Platinum Care Service Centre` (termasuk ejaan `Center`) ke owner Meindar secara konsisten pada routing MAIN/SUB, branch/PIC enrichment dan Report Base, Service Center Extractor, Salvage, serta Outstanding legacy.
 
 - README sekarang mempunyai panduan operator berbahasa sederhana untuk MAIN, SUB, dan Outstanding, termasuk peta data, flowchart teks, source/target sheet, kontrak kolom, jadwal, recovery, checklist, dan panduan memilih flow tanpa membuat knowledge file baru.
