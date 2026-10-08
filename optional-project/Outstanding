@@ -110,10 +110,10 @@ var CFG = {
   MIDDLE_SC_KEYWORDS: {
     Farhan: ['mitracare', 'sitcomtara', 'ibox', 'gsi', 'rejeki seluler', 'rejeki seluller', 'cv berkah athallah', 'cv berkah'],
     Meilani: ['unicom', 'xiaomi authorized', 'samsung exclusive', 'carlcare', 'andalas'],
+    Meindar: ['agung cellular', 'platinum care'],
     Ivan: [
       'andalas', 'klikcare', 'j-bros', 'makmur era abadi',
       'manado mitra bersama', 'ezcare', 'b-store', 'deltafone', 'mdp', 'multikom',
-      'platinum care service centre', 'platinum care service center',
     ]
   },
 
@@ -177,6 +177,7 @@ var COMPILED_CFG = (function(cfg) {
     MIDDLE_SC_KEYWORDS_LOWER: {
       Farhan: toLowerList_(cfg.MIDDLE_SC_KEYWORDS.Farhan || []),
       Meilani: toLowerList_(cfg.MIDDLE_SC_KEYWORDS.Meilani || []),
+      Meindar: toLowerList_(cfg.MIDDLE_SC_KEYWORDS.Meindar || []),
       Ivan: toLowerList_(cfg.MIDDLE_SC_KEYWORDS.Ivan || [])
     },
     EXCLUDED_STATUS_LOOKUP: excludedStatusLookup
@@ -1085,6 +1086,7 @@ var PicResolver = {
 
     if (containsAny_(sc, COMPILED_CFG.MIDDLE_SC_KEYWORDS_LOWER.Farhan)) return 'Farhan';
     if (containsAny_(sc, COMPILED_CFG.MIDDLE_SC_KEYWORDS_LOWER.Meilani)) return 'Meilani';
+    if (containsAny_(sc, COMPILED_CFG.MIDDLE_SC_KEYWORDS_LOWER.Meindar)) return 'Meindar';
     if (containsAny_(sc, COMPILED_CFG.MIDDLE_SC_KEYWORDS_LOWER.Ivan)) return 'Ivan';
 
     return 'Unknown';

@@ -4,6 +4,8 @@ Perubahan material repository dicatat di sini berdasarkan outcome, flow/project 
 
 ## Unreleased
 
+- Agung Cellular dan Platinum Care dipetakan ke Meindar melalui keyword pendek termasuk ejaan Center/Centre dan suffix lokasi pada operational MAIN/SUB, branch/PIC enrichment, Report Base, Extractor, dan Salvage; Outstanding menghasilkan PIC `Meindar` untuk keduanya tanpa mengubah owner legacy Service Center lain.
+
 - Menambahkan `Platinum Care Service Centre` (termasuk ejaan `Center`) ke owner Meindar secara konsisten pada routing MAIN/SUB, branch/PIC enrichment dan Report Base, Service Center Extractor, Salvage, serta Outstanding legacy.
 
 - README sekarang mempunyai panduan operator berbahasa sederhana untuk MAIN, SUB, dan Outstanding, termasuk peta data, flowchart teks, source/target sheet, kontrak kolom, jadwal, recovery, checklist, dan panduan memilih flow tanpa membuat knowledge file baru.

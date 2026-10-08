@@ -1482,6 +1482,8 @@ function buildSyncDiffPreview_(sourceSnapshot, precheckedTargetSnapshot) {
 
 function resolveBranchByServiceCenter_(serviceCenterValue, fallbackBranchValue) {
   const scKey = normalizeServiceCenterKey_(serviceCenterValue);
+  if (scKey.indexOf('agungcellular') >= 0) return 'Agung Cellular Service Center';
+  if (scKey.indexOf('platinumcare') >= 0) return 'Platinum Care Service Centre';
   const branchByServiceCenter = {
     appleauthorizedserviceproviderbymecarephinisipointmall: 'mE Care',
     samsungauthorizedservicecentrebyunicommakassarservicecenter: 'Samsung Exclusive',
@@ -1502,9 +1504,11 @@ function normalizeServiceCenterKey_(value) {
 function resolvePicByBranch_(branchValue, serviceCenterValue, deviceBrandValue, deviceTypeValue, submissionDateValue) {
   var scKey = normalizeServiceCenterKey_(serviceCenterValue);
   if (scKey.indexOf('cvberkah') >= 0 || scKey.indexOf('rejekiseluler') >= 0 || scKey.indexOf('rejekiseluller') >= 0) return 'Farhan';
-  if (scKey.indexOf('platinumcareservicecentre') >= 0 || scKey.indexOf('platinumcareservicecenter') >= 0) return 'Meindar';
+  if (scKey.indexOf('agungcellular') >= 0 || scKey.indexOf('platinumcare') >= 0) return 'Meindar';
   var isApple = /apple/i.test(String(deviceBrandValue || ''));
   if (scKey.indexOf('ezcare') >= 0 && isApple) return 'Farhan';
+  var compactBranch = normalizeServiceCenterKey_(branchValue);
+  if (compactBranch.indexOf('agungcellular') >= 0 || compactBranch.indexOf('platinumcare') >= 0) return 'Meindar';
   const branchKey = normalizeKey_(branchValue);
   if (!branchKey) return '';
 

@@ -22,7 +22,9 @@ export function validateCriticalMappings(sources) {
   expectIncludes(errors, rootPolicy.SC_NAME_KEYWORDS['SC - Farhan'], 'CV Berkah', 'root CV Berkah -> Farhan');
   expectIncludes(errors, rootPolicy.SC_NAME_KEYWORDS['SC - Meindar'], 'Deltasindo', 'root Deltasindo -> Meindar');
   expectIncludes(errors, rootPolicy.SC_NAME_KEYWORDS['SC - Meindar'], 'Platinum Care Service Centre', 'root Platinum Care -> Meindar');
-  expectIncludes(errors, branchKeywords['Platinum Care Service Centre'], 'platinum care service centre', 'root Platinum Care branch');
+  expectIncludes(errors, branchKeywords['Platinum Care Service Centre'], 'platinum care', 'root Platinum Care branch');
+  expectIncludes(errors, rootPolicy.SC_NAME_KEYWORDS['SC - Meindar'], 'Agung Cellular', 'root Agung Cellular -> Meindar');
+  expectIncludes(errors, branchKeywords['Agung Cellular Service Center'], 'agung cellular', 'root Agung Cellular branch');
   expectIncludes(errors, rootPolicy.SC_NAME_KEYWORDS['SC - Meindar'], 'EzCare', 'root EzCare default -> Meindar');
   expectIncludes(errors, rootPolicy.SC_NAME_KEYWORDS['SC - Meilani'], 'Samsung Exclusive', 'root Samsung Exclusive -> Meilani');
   expectIncludes(errors, rootPolicy.SC_NAME_KEYWORDS['SC - Meilani'], 'Samsung Authorized Service Centre by Unicom', 'root Samsung Unicom variant -> Meilani');
@@ -102,9 +104,9 @@ export function validateCriticalMappings(sources) {
   expectPattern(errors, sources.entryPoints, /ez\\s\*care[\s\S]*deviceBrand[\s\S]*SC - Farhan/, 'SUB EzCare Apple split');
   expectPattern(errors, sources.entryPoints, /idxManualStatus\s*=\s*idxOfAny\(norm,\s*\['status'\]\)[\s\S]*__shouldMirrorDeliveredStartToScSub06a_\(sheetName,\s*idxManualStatus\s*>=\s*0\s*\?\s*row\[idxManualStatus\]/, 'SUB Start Delivered reads manual Status column');
   expectPattern(errors, sources.postProcess, /backedStatus[\s\S]*currentStatus/, 'blank-safe manual Status restore');
-  expectPattern(errors, sources.postProcess, /Platinum Care Service Centre[\s\S]{0,200}platinum care service centre/, 'Report Base Platinum Care branch mapping');
-  expectPattern(errors, sources.postProcess, /Meindar[\s\S]{0,200}platinum care service centre/, 'Report Base Platinum Care PIC mapping');
-  expectPattern(errors, sources.outstanding, /Ivan:[\s\S]{0,400}platinum care service centre/, 'Outstanding Platinum Care middle mapping');
+  expectPattern(errors, sources.postProcess, /Platinum Care Service Centre[\s\S]{0,200}platinum care/, 'Report Base Platinum Care branch mapping');
+  expectPattern(errors, sources.postProcess, /Meindar[\s\S]{0,200}platinum care/, 'Report Base Platinum Care PIC mapping');
+  expectPattern(errors, sources.outstanding, /Meindar:[\s\S]{0,200}platinum care/, 'Outstanding Platinum Care middle mapping');
 
   const subDeliveredMirror = loadFunctions(sources.entryPoints, ['__shouldMirrorDeliveredStartToScSub06a_', '__applyMirroredFieldPolicySub06a_', '__getScDestinationFromPicSub06a_']);
   expectValue(errors, subDeliveredMirror.__shouldMirrorDeliveredStartToScSub06a_('Start', 'Delivered'), true, 'SUB mirrors Start manual Delivered');

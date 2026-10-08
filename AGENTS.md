@@ -91,6 +91,8 @@ Audit minimal:
 - seluruh root/standalone consumer mapping terkait;
 - mapping contract tests, README registry, dan changelog.
 
+Regression mapping Service Center harus menguji owner dan branch/output lintas root serta standalone dengan nama pendek, ejaan Center/Centre, case berbeda, dan suffix lokasi; uji juga override prioritas yang sudah ada.
+
 ### Header, column, atau schema
 
 Audit minimal:

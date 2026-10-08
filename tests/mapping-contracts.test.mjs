@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import test from 'node:test';
 import { validateCriticalMappings } from '../scripts/lib/mapping-contracts.mjs';
+import { evaluateInitializer, loadFunctions } from '../scripts/lib/source-contracts.mjs';
 
 export function loadSources() {
   return {
@@ -25,6 +26,64 @@ export function loadSources() {
 
 test('critical mapping, status, header, and manual-field contracts remain aligned', () => {
   assert.deepEqual(validateCriticalMappings(loadSources()), []);
+});
+
+test('Agung Cellular and Platinum Care resolve to Meindar across all mapping consumers', () => {
+  const sources = loadSources();
+  const FINISH_ONLY_REPLACEMENT_STATUSES = evaluateInitializer(sources.config, 'FINISH_ONLY_REPLACEMENT_STATUSES');
+  const policy = evaluateInitializer(sources.config, 'OPS_ROUTING_POLICY', { FINISH_ONLY_REPLACEMENT_STATUSES });
+  const branches = evaluateInitializer(sources.config, 'BRANCH_KEYWORDS');
+  const extractorConfig = evaluateInitializer(sources.extractor, 'CONFIG');
+  const routing = loadFunctions(sources.routing, ['filterScTargets05b_', 'normalizeScKeywordText05b_', 'scoreKeywords05b_']);
+  const sub = loadFunctions(sources.entryPoints, ['__deriveServiceCenterPicSub06a_'], { OPS_ROUTING_POLICY: policy });
+  const report = loadFunctions(sources.postProcess, [
+    '__getBranchFromServiceCenter06_', '__getMiddlePicFromServiceCenter06_',
+    '__normalizeHeaderText06_', '__normalizeScKeywordText06c_'
+  ]);
+  const extractor = loadFunctions(sources.extractor, ['_resolveSpecialDestination_']);
+  const salvage = loadFunctions(sources.salvage, [
+    'normalizeKey_', 'normalizeServiceCenterKey_', 'resolvePicByBranch_', 'resolveBranchByServiceCenter_'
+  ]);
+  const cfg = evaluateInitializer(sources.outstanding, 'CFG');
+  const compiled = evaluateInitializer(sources.outstanding, 'COMPILED_CFG', { CFG: cfg });
+  const outstandingHelpers = loadFunctions(sources.outstanding, ['containsAny_']);
+  const outstanding = evaluateInitializer(sources.outstanding, 'PicResolver', {
+    COMPILED_CFG: compiled, containsAny_: outstandingHelpers.containsAny_
+  });
+  const candidates = ['SC - Farhan', 'SC - Meilani', 'SC - Meindar', 'SC - Unmapped'];
+
+  for (const [keyword, canonical] of [
+    ['Agung Cellular', 'Agung Cellular Service Center'],
+    ['Platinum Care', 'Platinum Care Service Centre']
+  ]) {
+    assert.ok(extractorConfig.DEST_SHEETS_TO_CLEAR.includes(canonical));
+    assert.ok(extractorConfig.AUTO_MANAGED_DEST_SHEETS.has(canonical));
+    assert.ok(extractorConfig.SERVICE_CENTER_MAPPING.some(row => row.name === canonical && row.pic === 'MEINDAR'));
+    for (const name of [keyword, `${keyword} Service Center`, `${keyword} Service Centre`, `${keyword.toUpperCase()} Service Centre Jakarta`]) {
+      const matchingBranches = Object.entries(branches).filter(([, tokens]) => tokens.some(token => name.toLowerCase().includes(token)));
+      assert.deepEqual(matchingBranches.map(([branch]) => branch), [canonical], name);
+      const targets = routing.filterScTargets05b_(candidates.slice(0, 3), name, ...candidates.slice(0, 3),
+        ...candidates.slice(0, 3).map(sheet => policy.SC_NAME_KEYWORDS[sheet]), candidates[3]);
+      assert.deepEqual(Array.from(targets), ['SC - Meindar'], name);
+      assert.equal(sub.__deriveServiceCenterPicSub06a_(name), 'Meindar', name);
+      assert.equal(report.__getBranchFromServiceCenter06_(name), canonical, name);
+      assert.equal(report.__getMiddlePicFromServiceCenter06_(name), 'Meindar', name);
+      const destination = extractor._resolveSpecialDestination_(name.toLowerCase().replace(/[^a-z0-9]/g, ''));
+      assert.equal(destination.sheetName, canonical, name);
+      assert.equal(destination.pic, 'MEINDAR', name);
+      assert.ok(extractorConfig.ROUTE_RULES.find(rule => rule.sheet === canonical).tokens.some(token => name.toLowerCase().includes(token)));
+      assert.equal(salvage.resolveBranchByServiceCenter_(name, ''), canonical, name);
+      assert.equal(salvage.resolvePicByBranch_('', name, '', '', ''), 'Meindar', name);
+      assert.equal(salvage.resolvePicByBranch_(name, '', '', '', ''), 'Meindar', name);
+      assert.equal(outstanding.resolveMiddle_(name), 'Meindar', name);
+    }
+  }
+  assert.equal(outstanding.resolveMiddle_('Klikcare'), 'Ivan');
+  assert.equal(outstanding.resolveMiddle_('Unknown Service Center'), 'Unknown');
+  assert.equal(report.__getMiddlePicFromServiceCenter06_('Unknown Service Center'), 'Unknown');
+  assert.equal(extractor._resolveSpecialDestination_('unknownservicecenter'), null);
+  assert.equal(salvage.resolveBranchByServiceCenter_('Unknown Service Center', 'Manual Branch'), 'Manual Branch');
+  assert.equal(salvage.resolvePicByBranch_('Agung Cellular', 'EzCare', 'Apple', '', ''), 'Farhan');
 });
 
 test('Samsung Claim Sync keeps its strict brand, cutoff, and target contracts', () => {

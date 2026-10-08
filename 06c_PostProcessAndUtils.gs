@@ -1533,8 +1533,8 @@ function __getBranchFromServiceCenter06_(serviceCenter) {
     ['Rejeki Seluler', 'rejeki seluller'],
     ['Andalas', 'andalas'],
     ['Klikcare', 'klikcare'],
-    ['Platinum Care Service Centre', 'platinum care service centre'],
-    ['Platinum Care Service Centre', 'platinum care service center'],
+    ['Agung Cellular Service Center', 'agung cellular'],
+    ['Platinum Care Service Centre', 'platinum care'],
     ['J-Bros', 'j-bros'],
     ['Makmur Era Abadi', 'makmur era abadi'],
     ['Manado Mitra Bersama', 'manado mitra bersama'],
@@ -1565,7 +1565,7 @@ function __getMiddlePicFromServiceCenter06_(serviceCenter) {
   const map = [
     ['Farhan', ['mitracare', 'sitcomtara', 'ibox', 'rejeki seluler', 'rejeki seluller']],
     ['Meilani', ['unicom', 'xiaomi authorized', 'samsung exclusive', 'carlcare', 'andalas', 'gsi']],
-    ['Meindar', ['platinum care service centre', 'platinum care service center', 'klikcare', 'j-bros', 'makmur era abadi', 'manado mitra bersama', 'cv kayu awet sejahtera', 'gh store', 'mdp', 'deltasindo', 'ezcare', 'ez care', 'b-store']],
+    ['Meindar', ['agung cellular', 'platinum care', 'klikcare', 'j-bros', 'makmur era abadi', 'manado mitra bersama', 'cv kayu awet sejahtera', 'gh store', 'mdp', 'deltasindo', 'ezcare', 'ez care', 'b-store']],
   ];
 
   for (let i = 0; i < map.length; i++) {
