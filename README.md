@@ -478,10 +478,10 @@ Run = COMPLETED atau PARTIAL; event masuk _Audit
 | Trigger/input | `runEmailIngest()` membaca maksimal satu thread dari label `QUEUED_MAIN`, unread, ber-attachment; `runManual()` dan FORM MAIN memakai core yang sama. |
 | Lock/idempotency | Script lock dengan timeout 30 detik; queue query deterministic; transaction/idempotency guard aktif secara default. |
 | Processing | XLSX dikonversi, ditulis ke `Raw Data`, manual state dibackup, lalu route, restore, enrich, optional processors, Daily Report Base, sort, dan finalization. |
-| Continuation | MAIN dapat berhenti setelah stage 1, menyimpan `MAIN_PIPELINE_STAGE2`, lalu one-shot trigger menjalankan stage 2 dengan RunID yang sama. Progress bersifat kumulatif. |
+| Continuation | MAIN menyimpan `MAIN_PIPELINE_STAGE2`; stage 2 memakai checkpoint per step, budget 210 detik per execution, dan watchdog sebelum work. Saat budget habis, one-shot trigger melanjutkan step berikutnya dengan RunID yang sama, tanpa clear/route ulang. Flagging diproses per 500 row dengan cursor sheet/row. |
 | Success boundary | Cleanup Gmail/temp hanya sesudah route/finalization sukses. Jika gagal, queued email dipertahankan untuk retry. |
 | Cleanup | Success: mark read, remove queue label, trash thread/temp sesuai policy. Failure: input tidak dikonsumsi. |
-| Recovery | Stage 2 membaca snapshot durable stage 1. `_OPS_MAIN_SUB_TEMP` dipertahankan untuk handoff SUB pukul 09:00. |
+| Recovery | Stage 2 membaca snapshot durable stage 1. Kegagalan step wajib mempertahankan checkpoint dan menunda cleanup; maksimal tiga attempt per step/preflight. Setelah memperbaiki penyebab di `Log - Main`, jalankan `retryMainPipelineStage2_()` untuk melanjutkan checkpoint. `_OPS_MAIN_SUB_TEMP` dipertahankan untuk handoff SUB pukul 09:00. MAIN baru dan SUB menunggu continuation pending selesai. |
 | UAT minimum | Satu email valid, satu invalid attachment, rerun yang sama, manual-field/formula restore, stage-2 continuation, report refresh, dan cleanup success/failure. |
 
 ### SUB
@@ -565,8 +565,8 @@ Source dan consumer utama: `OPS_ROUTING_POLICY.SC_NAME_KEYWORDS`, `BRANCH_KEYWOR
 | Sheet | Eligibility | Writer/consumer contract |
 | --- | --- | --- |
 | `B2B` | MAIN: `id_business_partner_category_name = B2B Partnership`; closed/expired exclusions berlaku. | `processB2B_`; tidak memakai partner-pattern/claim-token fallback. SUB tidak rebuild/append, hanya update claim existing. |
-| `EV-Bike` | Claim token `VVMAR`, plus Submission overlay; configured policy-number exclusions berlaku. | `processEVBike_`; upsert by Claim Number, manual `Status` protected, deprecated Start/End/Details removed. |
-| `Doss` | Claim token `DOSS`. | Memakai EV-Bike writer shape; manual `Status` protected. |
+| `EV-Bike` | Claim token `VVMAR` atau partner EV terdaftar, plus Submission overlay pada MAIN. | `processEVBike_`; SUB menambah claim baru dan hanya menulis `Last Status`/`Last Status Aging` pada claim existing, tanpa rewrite kolom lain. Source blank tidak menghapus nilai existing. |
+| `Doss` | Claim token `DOSS`, tanpa partner fallback; MAIN juga membaca Submission. | Memakai EV-Bike writer; SUB mempunyai kontrak dua kolom yang sama. Formula, rich text/link, dan field manual existing dipertahankan. |
 | `Special Case` | MAIN-only flags: Flex, `month_policy_aging > 12`, first-month policy, atau policy remaining under 30 days. | Fixed schema, upsert, all flagged claims retained; `Reason`, Start/End/Details remain active. |
 
 ## Data-Contract Registry

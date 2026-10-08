@@ -68,6 +68,8 @@ Standalone projects tidak menerima root globals secara otomatis. Perubahan polic
 ## Durable runtime invariants
 
 - MAIN dapat memakai continuation dua tahap; RunID, progress, retryability, snapshot, dan cleanup boundary harus tetap konsisten.
+- Continuation MAIN menyimpan checkpoint setelah step/batch sukses, memasang watchdog sebelum work, dan mempertahankan snapshot saat gagal. Flagging wajib selesai sebelum completion/cleanup; MAIN/SUB baru tidak boleh mengubah data selama continuation pending.
+- SUB EV-Bike/Doss menambah claim baru dan hanya menulis Last Status/Last Status Aging pada claim existing; generic enrichment dan full-row rewrite tidak boleh mengubah formula, rich text/link, atau field lain.
 - SUB membutuhkan OLD/NEW input valid, meng-update claim existing, dan merelokasi row sesuai routing. Jika MAIN memegang lock, gunakan pending/handoff yang sudah ada.
 - FORM/MANUAL harus memakai shared MAIN/SUB core, bukan fork business logic baru.
 - Rerun tidak boleh membuat duplicate claim atau menghapus field manual valid.

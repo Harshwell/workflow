@@ -438,6 +438,7 @@ function buildOperationalClaimHighlightSetsFromRaw_(rawValues, headerIndexRaw) {
   const h = CONFIG.headers;
   if (typeof applyRawHeaderAliases_ === 'function') headerIndexRaw = applyRawHeaderAliases_(headerIndexRaw);
   const ixClaim = headerIndexRaw[h.claimNumber];
+  if (ixClaim == null) throw new Error('Flagging requires Claim Number in Raw Data.');
   const ixPartner = headerIndexRaw[h.businessPartner];
   const ixProduct = headerIndexRaw[h.productName];
   const ixDaysToEnd = headerIndexRaw[h.daysToEndPolicy];
@@ -755,7 +756,9 @@ function __loadClaimedActivePolicyMap05b_(ss) {
       });
       out.set(key, arr);
     }
-  } catch (e) {}
+  } catch (e) {
+    throw new Error('Claimed Active Policies lookup failed; preserving existing flags: ' + String(e));
+  }
   return out;
 }
 
@@ -992,10 +995,18 @@ function __toFiniteNumber05b_(v) {
 
 
 /** Apply highlight + note on Claim Number cells for OPERATIONAL sheets only. */
-function applyOperationalClaimHighlightsByRaw_(ss, rawValues, headerIndexRaw, pic) {
+function applyOperationalClaimHighlightsByRaw_(ss, rawValues, headerIndexRaw, pic, opts) {
   if (__isDryRun05b__()) return;
   const flow = String((typeof RUNTIME !== 'undefined' && RUNTIME && RUNTIME.flowName) || '').trim().toLowerCase();
   if (flow && flow !== 'main') return;
+  opts = opts || {};
+  const cursor = opts.cursor || { sheet: 0, row: 2 };
+  const result = { complete: false, cursor: cursor, rows: 0, failures: [] };
+  const batchSize = Math.max(1, Math.min(Number(opts.batchSize) || 500, 1000));
+  const checkpoint = function(sheet, row) {
+    result.cursor = { sheet: sheet, row: row };
+    if (typeof opts.onCheckpoint === 'function') opts.onCheckpoint(result.cursor);
+  };
 
   // Notes are written based on RAW flags (as before). Background fill is derived from the final note,
   // so only rows that actually have EXPIRED/FLEX/B2B notes get colored. This also cleans up any
@@ -1034,7 +1045,7 @@ function applyOperationalClaimHighlightsByRaw_(ss, rawValues, headerIndexRaw, pi
     const strip = s => String(s || '').trim().replace(/[.:]+$/g, '');
     const nn = strip(n);
     const ll = strip(l);
-    return nn === ll || nn.indexOf(ll + '\n') === 0;
+    return nn === ll || strip(n.split('\n')[0]) === ll;
   };
 
   const markerFromNote_ = (note) => {
@@ -1043,11 +1054,11 @@ function applyOperationalClaimHighlightsByRaw_(ss, rawValues, headerIndexRaw, pi
     if (n.indexOf(dupPrefix) === 0) return 'duplicate';
     if (__matchNoteLabel05b_(n, migrationNote) || __matchNoteLabel05b_(n, 'WARNING: Migration Policy') || __matchNoteLabel05b_(n, 'Migration Policy')) return 'migrationPolicy';
     if (__matchNoteLabel05b_(n, expiredNote) || __matchNoteLabel05b_(n, 'Policy already expired')) return 'expired';
-    if (n === b2bNote) return 'b2b';
+    if (__matchNoteLabel05b_(n, b2bNote)) return 'b2b';
     if (__matchNoteLabel05b_(n, secondYearNote) || __matchNoteLabel05b_(n, 'Second-Year (Market Value)')) return 'secondYear';
     if (__matchNoteLabel05b_(n, firstMonthPolicyNote) || __matchNoteLabel05b_(n, 'First-Month Policy')) return 'firstMonthPolicy';
     if (__matchNoteLabel05b_(n, remaining1MonthNote) || __matchNoteLabel05b_(n, 'Policy Remaining <= 1 Month')) return 'remaining1Month';
-    if (flexNoteAlt.has(n)) return 'flex';
+    if (flexNoteAlt.has(n) || __matchNoteLabel05b_(n, flexNote)) return 'flex';
     return null;
   };
 
@@ -1069,6 +1080,7 @@ function applyOperationalClaimHighlightsByRaw_(ss, rawValues, headerIndexRaw, pi
   };
 
   const claimedPolicies = __loadClaimedActivePolicyMap05b_(ss);
+  const migrationNotes = new Map();
 
   
 const __setBgs05b__ = (range, matrix, sheetName) => {
@@ -1092,13 +1104,15 @@ const __setNotes05b__ = (range, matrix, sheetName) => {
 };
 
 // Priority is defined by the ordered desiredMarker assignments below.
-  sheets.forEach(name => {
+  for (let sheetIndex = Number(cursor.sheet) || 0; sheetIndex < sheets.length; sheetIndex++) {
+    const name = sheets[sheetIndex];
+    if (opts.deadline && Date.now() >= opts.deadline) return result;
     try {
       const sh = ss.getSheetByName(name);
-      if (!sh) return;
+      if (!sh) { checkpoint(sheetIndex + 1, 2); continue; }
 
       const lastRow = sh.getLastRow();
-      if (lastRow < 2) return;
+      if (lastRow < 2) { checkpoint(sheetIndex + 1, 2); continue; }
 
       const lastCol = Math.max(sh.getLastColumn(), 1);
       const header = sh.getRange(1, 1, 1, lastCol)
@@ -1106,111 +1120,123 @@ const __setNotes05b__ = (range, matrix, sheetName) => {
         .map(v => String(v || '').trim());
 
       const idxClaim = resolveHeaderIndexByAliases_(header, getClaimNumberHeaderAliases_());
-      if (idxClaim == null) return;
+      if (idxClaim == null) throw new Error('Missing Claim Number header: ' + name);
 
-      const n = lastRow - 1;
-      const rng = sh.getRange(2, idxClaim + 1, n, 1);
+      const firstRow = sheetIndex === Number(cursor.sheet || 0) ? Math.max(2, Number(cursor.row) || 2) : 2;
+      for (let startRow = firstRow; startRow <= lastRow; startRow += batchSize) {
+        if (opts.deadline && Date.now() >= opts.deadline) return result;
+        const n = Math.min(batchSize, lastRow - startRow + 1);
+        const rng = sh.getRange(startRow, idxClaim + 1, n, 1);
 
-      const vals = rng.getValues();
-      const bgs = rng.getBackgrounds();
-      const notes = rng.getNotes();
+        const vals = rng.getValues();
+        const bgs = rng.getBackgrounds();
+        const notes = rng.getNotes();
 
-      let bgChanged = false;
-      let noteChanged = false;
-      const bgWriteContext = [];
+        let bgChanged = false;
+        let noteChanged = false;
 
-      for (let i = 0; i < n; i++) {
-      const claim = String((vals[i] && vals[i][0]) || '').trim();
-      const claimKey = claim ? claim.toUpperCase() : '';
+        for (let i = 0; i < n; i++) {
+          const claim = String((vals[i] && vals[i][0]) || '').trim();
+          const claimKey = claim ? claim.toUpperCase() : '';
 
-      // 1) Compute desired note from RAW and policy-history sheet.
-      let desiredNote = null;
-      let desiredMarker = null;
-      if (claimKey) {
-        const noteParts = [];
-        const activeMarkers = new Set();
-        const policyNo = (sets.policyByClaim && typeof sets.policyByClaim.get === 'function') ? sets.policyByClaim.get(claimKey) : '';
-        const policyRows = policyNo ? claimedPolicies.get(String(policyNo).toUpperCase()) : null;
-        if (policyNo && policyRows && policyRows.length) {
-          noteParts.push(__buildMigrationPolicyNote05b_(policyNo, policyRows));
-          activeMarkers.add('migrationPolicy');
-        }
-
-        const dupNote = (sets.duplicate && typeof sets.duplicate.get === 'function') ? sets.duplicate.get(claimKey) : null;
-        if (dupNote) { noteParts.push(dupNote); activeMarkers.add('duplicate'); }
-        if (sets.expired.has(claimKey)) { noteParts.push((sets.expiredDetail && sets.expiredDetail.get(claimKey)) || expiredNote); activeMarkers.add('expired'); }
-        if (sets.flex.has(claimKey)) { noteParts.push(flexNote); activeMarkers.add('flex'); }
-        if (sets.b2b.has(claimKey)) { noteParts.push(b2bNote); activeMarkers.add('b2b'); }
-        if (sets.secondYear && sets.secondYear.has(claimKey)) { noteParts.push((sets.secondYearDetail && sets.secondYearDetail.get(claimKey)) || secondYearNote); activeMarkers.add('secondYear'); }
-        if (sets.firstMonthPolicy && sets.firstMonthPolicy.has(claimKey)) { noteParts.push((sets.firstMonthPolicyDetail && sets.firstMonthPolicyDetail.get(claimKey)) || firstMonthPolicyNote); activeMarkers.add('firstMonthPolicy'); }
-        if (sets.remaining1Month && sets.remaining1Month.has(claimKey)) { noteParts.push((sets.remaining1MonthDetail && sets.remaining1MonthDetail.get(claimKey)) || remaining1MonthNote); activeMarkers.add('remaining1Month'); }
-        for (let pIdx = 0; pIdx < policy.priority.length; pIdx++) {
-          if (activeMarkers.has(policy.priority[pIdx])) { desiredMarker = policy.priority[pIdx]; break; }
-        }
-        desiredNote = noteParts.length ? noteParts.join('\n\n') : null;
-      }
-
-      // Apply/clear our marker note only.
-      if (desiredNote != null) {
-        if (notes[i][0] !== desiredNote) { notes[i][0] = desiredNote; noteChanged = true; }
-      } else {
-        const curMarker = markerFromNote_(notes[i][0]);
-        if (curMarker && String(pic || '').trim().toUpperCase() !== 'SUB') {
-          if (notes[i][0] !== '') { notes[i][0] = ''; noteChanged = true; }
-        }
-      }
-
-      // 2) Background is derived from the final note state (robust + cleanup).
-      const effNote = (desiredNote != null) ? desiredNote : String(notes[i][0] || '');
-      const marker = desiredMarker || markerFromNote_(effNote);
-      const desiredBg = desiredBgFromMarker_(marker);
-
-      if (desiredBg) {
-        const safeBg = __sanitizeSheetFillColor05b_(desiredBg);
-        if (normalizeColor_(bgs[i][0]) !== normalizeColor_(safeBg)) {
-          bgs[i][0] = safeBg;
-          bgChanged = true;
-          bgWriteContext.push({ row: i + 2, claim: claim, flag: marker || 'unknown', color: safeBg });
-        }
-      } else {
-        // Clear only our marker colors to avoid wiping user formatting.
-        if (isMarkerBg_(bgs[i][0])) { bgs[i][0] = null; bgChanged = true; }
-      }
-    }
-
-      // Notes and fills are independent outputs: a fill failure must not suppress notes.
-      if (noteChanged) __setNotes05b__(rng, notes, name);
-      if (bgChanged) {
-        try {
-          __setBgs05b__(rng, bgs, name);
-        } catch (batchErr) {
-          // Isolate failures per flagged cell so one malformed write cannot block the sheet.
-          bgWriteContext.forEach(function(ctx) {
-            const cell = sh.getRange(ctx.row, idxClaim + 1, 1, 1);
-            try {
-              cell.setBackground(ctx.color);
-            } catch (cellErr) {
-              const rangeA1 = (cell && cell.getA1Notation) ? cell.getA1Notation() : ('R' + ctx.row + 'C' + (idxClaim + 1));
-              try {
-                if (typeof logLine_ === 'function') logLine_(
-                  'WARN',
-                  'FLAG_FILL_WRITE_FAILED',
-                  'sheet=' + name + ' | range=' + rangeA1 + ' | flag=' + ctx.flag + ' | claim=' + ctx.claim + ' | color=' + ctx.color,
-                  String(cellErr && cellErr.message ? cellErr.message : cellErr),
-                  'WARN'
-                );
-              } catch (eLogCell) {}
+          // 1) Compute desired note from RAW and policy-history sheet.
+          let desiredNote = null;
+          let desiredMarker = null;
+          if (claimKey) {
+            const noteParts = [];
+            const activeMarkers = new Set();
+            const policyNo = (sets.policyByClaim && typeof sets.policyByClaim.get === 'function') ? sets.policyByClaim.get(claimKey) : '';
+            const policyRows = policyNo ? claimedPolicies.get(String(policyNo).toUpperCase()) : null;
+            if (policyNo && policyRows && policyRows.length) {
+              if (!migrationNotes.has(policyNo)) migrationNotes.set(policyNo, __buildMigrationPolicyNote05b_(policyNo, policyRows));
+              noteParts.push(migrationNotes.get(policyNo));
+              activeMarkers.add('migrationPolicy');
             }
-          });
-          if (!bgWriteContext.length) throw batchErr;
+
+            const dupNote = (sets.duplicate && typeof sets.duplicate.get === 'function') ? sets.duplicate.get(claimKey) : null;
+            if (dupNote) { noteParts.push(dupNote); activeMarkers.add('duplicate'); }
+            if (sets.expired.has(claimKey)) { noteParts.push((sets.expiredDetail && sets.expiredDetail.get(claimKey)) || expiredNote); activeMarkers.add('expired'); }
+            if (sets.flex.has(claimKey)) { noteParts.push(flexNote); activeMarkers.add('flex'); }
+            if (sets.b2b.has(claimKey)) { noteParts.push(b2bNote); activeMarkers.add('b2b'); }
+            if (sets.secondYear && sets.secondYear.has(claimKey)) { noteParts.push((sets.secondYearDetail && sets.secondYearDetail.get(claimKey)) || secondYearNote); activeMarkers.add('secondYear'); }
+            if (sets.firstMonthPolicy && sets.firstMonthPolicy.has(claimKey)) { noteParts.push((sets.firstMonthPolicyDetail && sets.firstMonthPolicyDetail.get(claimKey)) || firstMonthPolicyNote); activeMarkers.add('firstMonthPolicy'); }
+            if (sets.remaining1Month && sets.remaining1Month.has(claimKey)) { noteParts.push((sets.remaining1MonthDetail && sets.remaining1MonthDetail.get(claimKey)) || remaining1MonthNote); activeMarkers.add('remaining1Month'); }
+            for (let pIdx = 0; pIdx < policy.priority.length; pIdx++) {
+              if (activeMarkers.has(policy.priority[pIdx])) { desiredMarker = policy.priority[pIdx]; break; }
+            }
+            desiredNote = noteParts.length ? noteParts.join('\n\n') : null;
+          }
+
+          // Apply/clear our marker note only.
+          if (desiredNote != null) {
+            if (notes[i][0] !== desiredNote) { notes[i][0] = desiredNote; noteChanged = true; }
+          } else {
+            const curMarker = markerFromNote_(notes[i][0]);
+            if (curMarker && String(pic || '').trim().toUpperCase() !== 'SUB') {
+              if (notes[i][0] !== '') { notes[i][0] = ''; noteChanged = true; }
+            }
+          }
+
+          // 2) Background is derived from the final note state (robust + cleanup).
+          const effNote = (desiredNote != null) ? desiredNote : String(notes[i][0] || '');
+          const marker = desiredMarker || markerFromNote_(effNote);
+          const desiredBg = desiredBgFromMarker_(marker);
+
+          if (desiredBg) {
+            const safeBg = __sanitizeSheetFillColor05b_(desiredBg);
+            if (normalizeColor_(bgs[i][0]) !== normalizeColor_(safeBg)) {
+              bgs[i][0] = safeBg;
+              bgChanged = true;
+            }
+          } else {
+            // Clear only our marker colors to avoid wiping user formatting.
+            if (isMarkerBg_(bgs[i][0])) { bgs[i][0] = null; bgChanged = true; }
+          }
         }
+
+        // Notes and fills are independent outputs: a fill failure must not suppress notes.
+        const writeErrors = [];
+        if (noteChanged) {
+          try { __writeFlagMatrixBatched05b_(sh, startRow, idxClaim + 1, notes, function(range, matrix) { __setNotes05b__(range, matrix, name); }); }
+          catch (noteErr) { writeErrors.push(String(noteErr)); }
+        }
+        if (bgChanged) {
+          try {
+            __writeFlagMatrixBatched05b_(sh, startRow, idxClaim + 1, bgs, function(range, matrix) { __setBgs05b__(range, matrix, name); });
+          } catch (batchErr) {
+            writeErrors.push(String(batchErr));
+          }
+        }
+        if (writeErrors.length) throw new Error('Flag batch ' + name + ' rows ' + startRow + '-' + (startRow + n - 1) + ': ' + writeErrors.join('; '));
+        result.rows += n;
+        checkpoint(sheetIndex, startRow + n);
       }
+      checkpoint(sheetIndex + 1, 2);
     } catch (sheetErr) {
+      result.failures.push({ sheet: name, error: String(sheetErr) });
       try { if (typeof logLine_ === 'function') logLine_('WARN', 'HIGHLIGHT_SKIP', String(name || ''), String(sheetErr), 'WARN'); } catch (eLog) {}
+      if (opts.strict) throw sheetErr;
     }
-  });
+  }
+  result.complete = result.failures.length === 0;
+  if (!result.complete) throw new Error('Operational flagging failed on ' + result.failures.length + ' sheet(s).');
+  return result;
 }
 
+function __writeFlagMatrixBatched05b_(sheet, row, column, matrix, write) {
+  let attempts = 0;
+  function apply(start, values) {
+    if (++attempts > 8) throw new Error('Flag batch retry limit reached at row ' + start);
+    try { write(sheet.getRange(start, column, values.length, 1), values); }
+    catch (err) {
+      if (values.length <= 1) throw err;
+      const middle = Math.floor(values.length / 2);
+      apply(start, values.slice(0, middle));
+      apply(start + middle, values.slice(middle));
+    }
+  }
+  apply(row, matrix);
+}
 
 /** Build per-sheet writer (fast, typed) */
 function buildSheetWriters_(ss, routingMap, headerIndexRaw, pic) {

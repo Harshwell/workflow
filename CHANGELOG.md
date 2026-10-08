@@ -4,6 +4,9 @@ Perubahan material repository dicatat di sini berdasarkan outcome, flow/project 
 
 ## Unreleased
 
+- SUB EV-Bike/Doss menambah claim baru tetapi hanya menulis Last Status dan Last Status Aging pada claim existing, mempertahankan formula/rich text/manual fields, dan tidak lagi melewati generic operational enrichment atau refresh ganda; kegagalan refresh tidak disamarkan sebagai sukses dan token idempotency hanya dikonsumsi setelah refresh berhasil agar partial write bisa di-retry.
+- MAIN stage 2 memakai checkpoint per step, budget 210 detik, watchdog/retry terbatas, serta flagging per 500 row dengan cursor durable; note dan warna ditulis independen dengan batch fallback terbatas. Kegagalan flagging menahan completion/cleanup, dan MAIN/SUB baru menunggu continuation selesai. Recovery tersedia melalui `retryMainPipelineStage2_()`; note gabungan Flex/B2B dikenali saat cleanup marker lama.
+
 - Agung Cellular dan Platinum Care dipetakan ke Meindar melalui keyword pendek termasuk ejaan Center/Centre dan suffix lokasi pada operational MAIN/SUB, branch/PIC enrichment, Report Base, Extractor, dan Salvage; Outstanding menghasilkan PIC `Meindar` untuk keduanya tanpa mengubah owner legacy Service Center lain.
 
 - Menambahkan `Platinum Care Service Centre` (termasuk ejaan `Center`) ke owner Meindar secara konsisten pada routing MAIN/SUB, branch/PIC enrichment dan Report Base, Service Center Extractor, Salvage, serta Outstanding legacy.

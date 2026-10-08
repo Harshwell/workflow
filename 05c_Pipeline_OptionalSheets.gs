@@ -1284,6 +1284,7 @@ function updateTokenOptionalSheetFromSubRaw05c_(sh, rawValues, headerIndexRaw, o
     (headerIndexRaw['days_aging_from_last_activity'] != null) ? headerIndexRaw['days_aging_from_last_activity'] :
     (headerIndexRaw['last_status_aging'] != null) ? headerIndexRaw['last_status_aging'] :
     headerIndexRaw['LSA'];
+  if (idxLastStatus == null || idxLsa == null) throw new Error('SUB optional source requires Last Status and Last Status Aging.');
   const idxPartner = headerIndexRaw[h.businessPartner] != null ? headerIndexRaw[h.businessPartner] : headerIndexRaw['partner_name'];
   const idxOwner = headerIndexRaw['holder_name'] != null ? headerIndexRaw['holder_name'] : headerIndexRaw['customer_name'];
   const idxPolicy = headerIndexRaw['qoala_policy_number'] != null ? headerIndexRaw['qoala_policy_number'] : headerIndexRaw['policy_number'];
@@ -1324,7 +1325,9 @@ function updateTokenOptionalSheetFromSubRaw05c_(sh, rawValues, headerIndexRaw, o
   const header = __getHeaderRow05c_(sh);
   const idxH = buildHeaderIndex_(header);
   const claimCol = idxH['Claim Number'];
-  if (claimCol == null) return 0;
+  if (claimCol == null || idxH['Last Status'] == null || idxH['Last Status Aging'] == null) {
+    throw new Error('SUB optional sheet requires Claim Number, Last Status, and Last Status Aging: ' + sh.getName());
+  }
 
   const existing = sh.getLastRow() > 1 ? sh.getRange(2, 1, sh.getLastRow() - 1, header.length).getValues() : [];
   const byClaim = {};
@@ -1338,6 +1341,7 @@ function updateTokenOptionalSheetFromSubRaw05c_(sh, rawValues, headerIndexRaw, o
   const urlMap = {};
   const touchedRows = [];
   let changed = 0;
+  const updates = { 'Last Status': [], 'Last Status Aging': [] };
 
   function set(out, name, value) {
     const j = idxH[name];
@@ -1348,10 +1352,17 @@ function updateTokenOptionalSheetFromSubRaw05c_(sh, rawValues, headerIndexRaw, o
     let pos = byClaim[rec.key];
     if (pos != null) {
       const out = values[pos];
-      if (idxH['Last Status'] != null && rec.lastStatus !== '' && rec.lastStatus != null) set(out, 'Last Status', rec.lastStatus);
+      if (rec.lastStatus !== '' && rec.lastStatus != null && out[idxH['Last Status']] !== rec.lastStatus) {
+        set(out, 'Last Status', rec.lastStatus);
+        updates['Last Status'].push({ row: pos + 2, value: rec.lastStatus });
+      }
       if (idxH['Last Status Aging'] != null && rec.lastStatusAging !== '' && rec.lastStatusAging != null) {
         const lsa = (typeof normalizeInt_ === 'function') ? normalizeInt_(rec.lastStatusAging) : Number(rec.lastStatusAging);
-        set(out, 'Last Status Aging', (lsa != null && !isNaN(lsa)) ? lsa : rec.lastStatusAging);
+        const value = (lsa != null && !isNaN(lsa)) ? lsa : rec.lastStatusAging;
+        if (out[idxH['Last Status Aging']] !== value) {
+          set(out, 'Last Status Aging', value);
+          updates['Last Status Aging'].push({ row: pos + 2, value: value });
+        }
       }
       changed++;
       return;
@@ -1384,7 +1395,25 @@ function updateTokenOptionalSheetFromSubRaw05c_(sh, rawValues, headerIndexRaw, o
   });
 
   if (changed && !__isDryRun05c__()) {
-    safeSetValues_(sh.getRange(2, 1, values.length, header.length), values);
+    if (typeof sh.getMaxRows === 'function' && values.length + 1 > sh.getMaxRows()) {
+      sh.insertRowsAfter(sh.getMaxRows(), values.length + 1 - sh.getMaxRows());
+    }
+    Object.keys(updates).forEach(function(name) {
+      const cells = updates[name].sort(function(a, b) { return a.row - b.row; });
+      for (let start = 0; start < cells.length;) {
+        let end = start + 1;
+        while (end < cells.length && cells[end].row === cells[end - 1].row + 1) end++;
+        const range = sh.getRange(cells[start].row, idxH[name] + 1, end - start, 1);
+        if (name === 'Last Status') range.clearDataValidations();
+        safeSetValues_(range, cells.slice(start, end).map(function(cell) { return [cell.value]; }));
+        start = end;
+      }
+    });
+    const appended = values.slice(existing.length);
+    if (appended.length) {
+      sh.getRange(existing.length + 2, idxH['Last Status'] + 1, appended.length, 1).clearDataValidations();
+      safeSetValues_(sh.getRange(existing.length + 2, 1, appended.length, header.length), appended);
+    }
     if (dbLinkCol0 != null && touchedRows.length) __setDbLinkRichTextSegments_(sh, dbLinkCol0, touchedRows, urlMap);
   }
   __sortOptionalSheetBySubmissionDate05c_(sh);
@@ -1402,7 +1431,10 @@ function processEVBike_(ss, rawValues, headerIndexRaw, pic, opts) { // `pic` kep
   const targetClaimToken = String(opts.claimToken || 'VVMAR').trim().toUpperCase();
   const logLabel = targetSheetName === 'Doss' ? 'DOSS_METRICS' : 'EVBIKE_METRICS';
   const sh = ss.getSheetByName(targetSheetName);
-  if (!sh) return 0;
+  if (!sh) {
+    if (String(pic || '').trim().toUpperCase() === 'SUB') throw new Error('SUB optional sheet missing: ' + targetSheetName);
+    return 0;
+  }
 
   const flowName = String((typeof RUNTIME !== 'undefined' && RUNTIME && RUNTIME.flowName) ? RUNTIME.flowName : '').trim().toLowerCase();
   if (flowName === 'sub' || String(pic || '').trim().toUpperCase() === 'SUB') {
