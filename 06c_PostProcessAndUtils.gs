@@ -602,6 +602,7 @@ function restoreOpsManualFromMainTempForSub06c_(ss, pic, opts) {
         src.copyTo(dst, { contentsOnly: false });
       } catch (eCopy) {}
     }
+    if (outS) sv03_applyGeneralStatusValidationToRange_(sh.getRange(2, iS + 1, n, 1));
   }
 
   if (opts.deleteAfterRestore !== false) {
@@ -617,6 +618,7 @@ function restoreOpsManualFromMainTempForSub06c_(ss, pic, opts) {
  */
 function __restoreStatusValuesWithCanonicalValidation06c_(sh, startRow, col1, values, claims, sourceLabel) {
   if (!sh || !values || !values.length || col1 < 1) return { written: 0, failed: 0 };
+  const templateCell = sv03_getCanonicalStatusTemplateCell_(sh.getParent());
   const range = sh.getRange(startRow, col1, values.length, 1);
   const sheetName = sh.getName ? sh.getName() : '?';
   const rangeA1 = range.getA1Notation ? range.getA1Notation() : ('R' + startRow + 'C' + col1);
@@ -655,9 +657,8 @@ function __restoreStatusValuesWithCanonicalValidation06c_(sh, startRow, col1, va
   }
 
   try {
-    const ss = sh.getParent ? sh.getParent() : null;
     if (typeof sv03_applyGeneralStatusValidationToRange_ !== 'function') throw new Error('general Status validation helper unavailable');
-    sv03_applyGeneralStatusValidationToRange_(range);
+    sv03_applyGeneralStatusValidationToRange_(range, templateCell);
   } catch (eValidation) {
     throw new Error('Status restore canonical validation failed | source=' + sourceLabel + ' | sheet=' + sheetName + ' | range=' + rangeA1 + ' | written=' + written + ' | failed=' + failed + ' | error=' + (eValidation && eValidation.message ? eValidation.message : eValidation));
   }

@@ -910,18 +910,27 @@ function sv03_applyRuleCopyToColumn_(srcCell, dstSheet, dstCol1, rows, opt) {
   } catch (e) { if (opt.failLoud) throw e; }
 }
 
-/** Apply the repository-wide Status dropdown without depending on any sheet row. */
-function sv03_applyGeneralStatusValidationToRange_(dstRange) {
+function sv03_getCanonicalStatusTemplateCell_(ss) {
+  if (!ss) throw new Error('Status dropdown template requires a workbook.');
+  const source = STATUS_DROPDOWN_TEMPLATE;
+  const sh = ss.getSheetByName(source.SHEET_NAME);
+  const label = source.SHEET_NAME + '!' + source.CELL_A1;
+  if (!sh) throw new Error('Status dropdown template sheet missing: ' + label);
+  const cell = sh.getRange(source.CELL_A1);
+  const rule = cell.getDataValidation();
+  const type = rule ? String(rule.getCriteriaType()) : '';
+  if (type !== 'VALUE_IN_LIST' && type !== 'VALUE_IN_RANGE') {
+    throw new Error('Status dropdown template must contain a dropdown validation: ' + label);
+  }
+  return cell;
+}
+
+/** Copy native dropdown metadata; rebuilding the rule discards chip styling. */
+function sv03_applyGeneralStatusValidationToRange_(dstRange, templateCell) {
   if (!dstRange) throw new Error('General Status validation requires a destination range.');
-  const options = (typeof STATUS_DROPDOWN_OPTIONS !== 'undefined') ? Array.from(STATUS_DROPDOWN_OPTIONS) : [];
-  if (!options.length) throw new Error('General Status dropdown options are empty.');
-  const rule = SpreadsheetApp.newDataValidation()
-    .requireValueInList(options, true)
-    // Existing legacy/manual values must survive a rerun even when they are no
-    // longer part of the current selectable list.
-    .setAllowInvalid(true)
-    .build();
-  dstRange.setDataValidation(rule);
+  if (typeof DRY_RUN !== 'undefined' && DRY_RUN) return true;
+  const cell = templateCell || sv03_getCanonicalStatusTemplateCell_(dstRange.getSheet().getParent());
+  cell.copyTo(dstRange, SpreadsheetApp.CopyPasteType.PASTE_DATA_VALIDATION, false);
   return true;
 }
 /**
@@ -1030,6 +1039,24 @@ function sv03_syncDropdownForWorkbook_(ss, pic, headerName, fallbackSeed, opts) 
   const allSheets = ['Raw Data']
     .concat(spec.operational || [])
     .concat(profile !== 'ADMIN' ? (spec.optional || []) : []);
+
+  if (headerName === 'Status') {
+    const sourceCell = sv03_getCanonicalStatusTemplateCell_(ss);
+    const targets = opts.applyToSheets && opts.applyToSheets.length
+      ? opts.applyToSheets : ['Raw Data'].concat(spec.operational || [], spec.optional || []);
+    const seen = new Set();
+    targets.forEach(function(name) {
+      if (seen.has(name)) return;
+      seen.add(name);
+      const sh = ss.getSheetByName(name);
+      if (!sh) return;
+      const col1 = sv03_findHeaderCol1_(sh, 'Status');
+      if (col1 < 1) return;
+      const rows = Math.min(sh.getMaxRows() - 1, Math.max(1, Math.max(sh.getLastRow(), 2) - 1 + SV03_DROPDOWN_SYNC.BUFFER_ROWS));
+      if (rows > 0) sv03_applyGeneralStatusValidationToRange_(sh.getRange(2, col1, rows, 1), sourceCell);
+    });
+    return { ok: true, mode: 'overview_template_copy', changed: true, notes: STATUS_DROPDOWN_TEMPLATE.SHEET_NAME + '!' + STATUS_DROPDOWN_TEMPLATE.CELL_A1, mergedCount: 0 };
+  }
 
   // template priority order
   const templateSheets = (opts.templateSheets && opts.templateSheets.length) ? opts.templateSheets : allSheets;
@@ -1272,6 +1299,11 @@ function sv03_applyTemplateRowDvAndFormat_(sh, opt) {
     if (col1 < 1) continue;
 
     try {
+      if (headerName === 'Status') {
+        sv03_applyGeneralStatusValidationToRange_(sh.getRange(startRow, col1, rows, 1));
+        applied.push(headerName);
+        continue;
+      }
       const srcCell = sh.getRange(templateRow, col1, 1, 1);
       const dst = sh.getRange(startRow, col1, rows, 1);
 
@@ -1289,7 +1321,7 @@ function sv03_applyTemplateRowDvAndFormat_(sh, opt) {
       }
 
       applied.push(headerName);
-    } catch (e) {}
+    } catch (e) { if (headerName === 'Status') throw e; }
   }
 
   return { ok: true, applied: applied.length > 0, rows, cols: applied.length, appliedCols: applied, reason: 'applied' };
@@ -1399,37 +1431,7 @@ function enforceStandardLayoutForPic_(ss, pic) {
 
 
   // 4) Dropdown sync (key for chip + colors + consistency)
-  const seedStatus = (_SV03_VALIDATION_FALLBACK && _SV03_VALIDATION_FALLBACK.UPDATE_STATUS)
-    ? Array.from(_SV03_VALIDATION_FALLBACK.UPDATE_STATUS)
-    : [];
-
-  // STATUS dropdown policy:
-  // - Admin: DO NOT rebuild/sync rules (can flatten chip styling). Preserve via template-row copy.
-  // - PIC: allow workbook-level sync (preserve by copy, auto-heal).
-  const adminSkip = false; // canonical Status options must be enforced for every profile
-
-  let resStatus = null;
-
-  if (adminSkip) {
-    resStatus = { ok: true, mode: 'admin_template', changed: false, notes: 'skip_sync_preserve_template', mergedCount: 0 };
-
-    // Apply template row -> data region (DV only) for Admin operational sheets only.
-    (spec.operational || []).forEach(name => {
-      const sh = ss.getSheetByName(name);
-      if (!sh) return;
-      sv03_applyTemplateRowDvAndFormat_(sh, {
-        templateRow: SV03_DROPDOWN_SYNC.ADMIN_TEMPLATE_ROW,
-        startRow: SV03_DROPDOWN_SYNC.ADMIN_TEMPLATE_START_ROW,
-        columns: ['Status'],
-        copyFormat: false
-      });
-    });
-  } else {
-    // STATUS: default policy MODE
-    resStatus = sv03_syncDropdownForWorkbook_(ss, pic, 'Status', seedStatus, {
-      exactOptions: (typeof STATUS_DROPDOWN_OPTIONS !== 'undefined') ? STATUS_DROPDOWN_OPTIONS : seedStatus
-    });
-  }
+  const resStatus = sv03_syncDropdownForWorkbook_(ss, pic, 'Status', [], {});
 
   // DO NOT sync "Last Status Date" as a dropdown (it is a date field, not a dropdown).
 

@@ -1025,7 +1025,7 @@ function backupOpsToRawFull_(ss, rawSheet, rawValues, headerIndexRaw, pic) {
   if (formatSource) {
     try {
       // Status visuals may still follow the operational row format, but its
-      // validation above always comes from the general repository-owned list.
+      // validation above always comes from Overview's native Status template.
       if (idxRawStatus != null && formatSource.idxStatus !== -1) {
         const srcCell = formatSource.sh.getRange(2, formatSource.idxStatus + 1, 1, 1);
         const dstCol  = rawSheet.getRange(2, idxRawStatus + 1, workingRawValues.length, 1);

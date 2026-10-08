@@ -69,7 +69,7 @@ const CONFIG_SECTION_INDEX = Object.freeze({
   ingestion: Object.freeze(['EMAIL_INGEST_POLICY', 'SUB_EMAIL_INGEST_POLICY', 'SUB_FLOW_SPEC', 'FORM_INGEST_POLICY']),
   workbook: Object.freeze(['MASTER_SPREADSHEET_ID', 'MASTER_RAW_SHEET_NAME', 'WORKBOOK_PROFILES']),
   routing: Object.freeze(['OPS_ROUTING_POLICY', 'STATUS_TYPE_BY_LAST_STATUS', 'POSITION_BY_LAST_STATUS', 'FINISH_STATUSES']),
-  validationAndPresentation: Object.freeze(['VALIDATION_POLICY', 'VALIDATION_FALLBACKS', 'CHECKBOX_POLICY', 'LINK_POLICY', 'COLUMN_TYPES', 'COLUMN_ALIGNMENT']),
+  validationAndPresentation: Object.freeze(['VALIDATION_POLICY', 'VALIDATION_FALLBACKS', 'STATUS_DROPDOWN_TEMPLATE', 'CHECKBOX_POLICY', 'LINK_POLICY', 'COLUMN_TYPES', 'COLUMN_ALIGNMENT']),
   optionalSheets: Object.freeze(['SPECIAL_CASE_WRITER_POLICY', 'EVBIKE_POLICY', 'EXCLUSION_TAT_POLICY', 'OPTIONAL_SHEETS_FLAGS']),
   observability: Object.freeze(['LOG_POLICY', 'MAPPING_ERROR_LOG_POLICY', 'DETAILS_LOG_POLICY', 'UI_FLAGS'])
 });
@@ -796,6 +796,11 @@ const STATUS_DROPDOWN_OPTIONS = Object.freeze([
   'Pending SC (Estimation)', 'Delivering', 'Delivered', 'Waiting Courier',
   'Re-pickup'
 ]);
+
+const STATUS_DROPDOWN_TEMPLATE = Object.freeze({
+  SHEET_NAME: 'Overview',
+  CELL_A1: 'C945'
+});
 
 const VALIDATION_FALLBACKS = Object.freeze({
   ASSOCIATE: Object.freeze(['Meilani', 'Farhan', 'Suci', 'Adi']),

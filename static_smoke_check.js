@@ -376,10 +376,10 @@ function runSmoke() {
     const subFlagOwnershipOk = subSource.indexOf('applyOperationalClaimHighlightsByRaw_') === -1
       && subSource.indexOf('preserveClaimHighlightToTarget') !== -1
       && (routingSource.match(/applyOperationalClaimHighlightsByRaw_/g) || []).length === 1;
-    const generalStatusValidationOk = typeof STATUS_DROPDOWN_TEMPLATE === 'undefined'
+    const generalStatusValidationOk = STATUS_DROPDOWN_TEMPLATE.SHEET_NAME === 'Overview'
+      && STATUS_DROPDOWN_TEMPLATE.CELL_A1 === 'C945'
       && sheetsSource.indexOf('sv03_applyGeneralStatusValidationToRange_') !== -1
-      && sheetsSource.indexOf('requireValueInList(options, true)') !== -1
-      && sheetsSource.indexOf('.setAllowInvalid(true)') !== -1
+      && sheetsSource.indexOf('cell.copyTo(dstRange, SpreadsheetApp.CopyPasteType.PASTE_DATA_VALIDATION, false)') !== -1
       && postProcessSource.indexOf("['OR', 'Type']") !== -1
       && postProcessSource.indexOf('allowedDvCols') !== -1;
     const legacyStatusSheet = {
@@ -403,6 +403,8 @@ function runSmoke() {
       }
     };
     const originalGeneralStatusValidation = sv03_applyGeneralStatusValidationToRange_;
+    const originalStatusTemplate = sv03_getCanonicalStatusTemplateCell_;
+    sv03_getCanonicalStatusTemplateCell_ = function() { return {}; };
     sv03_applyGeneralStatusValidationToRange_ = function(range) {
       range.setDataValidation({ options: Array.from(STATUS_DROPDOWN_OPTIONS), generalRule: true });
       return true;
@@ -411,6 +413,7 @@ function runSmoke() {
       legacyStatusSheet, 4, 26, [['Pending Admin']], [['CLAIM-LEGACY']], 'SMOKE'
     );
     sv03_applyGeneralStatusValidationToRange_ = originalGeneralStatusValidation;
+    sv03_getCanonicalStatusTemplateCell_ = originalStatusTemplate;
     const legacyStatusRestoreOk = statusRestoreResult.written === 1
       && legacyStatusSheet.value === 'Pending Admin'
       && legacyStatusSheet.appliedRule

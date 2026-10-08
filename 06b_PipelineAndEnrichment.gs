@@ -39,6 +39,7 @@ function runPipeline_(pic, fileIds, opts) {
   const segOpen = startSegment_('OPEN', 'Open target workbook');
   const ssId = (CONFIG && CONFIG.spreadsheets && CONFIG.spreadsheets[key]) ? CONFIG.spreadsheets[key] : (CONFIG && CONFIG.masterSpreadsheetId);
   const ss = SpreadsheetApp.openById(ssId);
+  sv03_getCanonicalStatusTemplateCell_(ss);
   endSegment_(segOpen, 'ok', 'spreadsheet=' + profileName, 'INFO');
 
   // Ensure sheets + validation/formatting
@@ -1837,6 +1838,7 @@ function runMainPipelineStage2_() {
     RUNTIME.flowName = 'main';
     const profile = state.profile || 'Master';
     const ss = SpreadsheetApp.openById(CONFIG.spreadsheets[resolveSpreadsheetKey_(profile)]);
+    sv03_getCanonicalStatusTemplateCell_(ss);
     const rawSheet = ss.getSheetByName(CONFIG.masterRawSheetName || 'Raw Data');
     if (!rawSheet || rawSheet.getSheetId() !== state.rawSheetId) throw new Error('Raw Data changed before MAIN stage 2.');
     const lr = rawSheet.getLastRow(), lc = rawSheet.getLastColumn();
