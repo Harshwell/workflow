@@ -77,6 +77,7 @@ Standalone projects tidak menerima root globals secara otomatis. Perubahan polic
 - Internal routing bucket tidak boleh dibuat sebagai physical sheet.
 - Cleanup destructive hanya boleh berjalan setelah success boundary terverifikasi.
 - Required configuration/header harus fail visibly; jangan membuat silent fallback baru.
+- Dropdown Status memakai native template `Overview!C945`; salin data validation tanpa rebuild rule atau menyalin pilihan template. Missing/invalid template harus terlihat sebelum MAIN memutasi Raw/operational, dan backup/restore harus mempertahankan nilai Status terisi maupun blank.
 - Setiap flow harus mencatat start, step/progress, result, duration, dan error context yang actionable tanpa membocorkan data sensitif.
 
 Detail current mapping, field ownership, data contract, configuration, dan recovery procedure berada di README dan source code yang ditautkan di sana.

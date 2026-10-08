@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import test from 'node:test';
-import { loadFunctions } from '../scripts/lib/source-contracts.mjs';
+import { evaluateInitializer, loadFunctions } from '../scripts/lib/source-contracts.mjs';
 
 const optionalSource = fs.readFileSync('05c_Pipeline_OptionalSheets.gs', 'utf8');
 const routingSource = fs.readFileSync('05b_Pipeline_RoutingOperational.gs', 'utf8');
@@ -226,6 +226,7 @@ test('stage 2 resumes flagging and delays cleanup and SUB until complete', () =>
     ScriptApp: { getProjectTriggers: () => [], deleteTrigger() {}, newTrigger: () => ({ timeBased: () => ({ after: () => ({ create() {} }) }) }) },
     PIPELINE_FLAGS: { TRASH_UPLOADED_FILES: true },
     resolveSpreadsheetKey_: () => 'Master', resetRunState_() {}, setLogRunContext_() {}, logLine_() {}, setProgress_() {},
+    sv03_getCanonicalStatusTemplateCell_() {},
     getRawHeader_: () => ['claim_number'], buildHeaderIndex_: () => ({ claim_number: 0 }), preflightRoutableCount_: () => ({ total: 1 }),
     clearOperationalSheets_: () => calls.push('CLEAR'), routeRawToOperationalSheetsInMemory_: () => { calls.push('ROUTE'); return { total: 1 }; },
     shouldRunWeeklyReportBaseNow06b_: () => false, getOperationalSheetNames06b_: () => [],
@@ -249,4 +250,107 @@ test('stage 2 resumes flagging and delays cleanup and SUB until complete', () =>
   assert.equal(calls.filter(c => c === 'ROUTE').length, 1);
   assert.deepEqual(calls.slice(-2), ['TRASH', 'SUB']);
   assert.equal(payload, null);
+});
+
+function statusTemplateFixture() {
+  const source = fs.readFileSync('03_SheetsAndValidation.gs', 'utf8') + '\n' + fs.readFileSync('06c_PostProcessAndUtils.gs', 'utf8');
+  const templateConfig = evaluateInitializer(fs.readFileSync('00_Config.gs', 'utf8'), 'STATUS_DROPDOWN_TEMPLATE');
+  const metadata = { displayStyle: 'CHIP', optionColors: { Delivered: '#00ff00', DONE: '#123456' }, helpText: 'Status template' };
+  let rule = { getCriteriaType: () => 'VALUE_IN_LIST' };
+  let failCopy = false;
+  const range = {
+    values: [['Delivered'], [''], ['Legacy manual status']], metadata: { displayStyle: 'ARROW' },
+    getA1Notation: () => 'D2:D4', getSheet: () => sh,
+    clearDataValidations() { this.metadata = null; },
+    setValues(values) { this.values = values.map(r => Array.from(r)); }
+  };
+  const sh = { getName: () => 'Finish', getParent: () => ss, getRange: () => range };
+  const cell = { getDataValidation: () => rule, copyTo(dst, mode, transposed) {
+    assert.equal(mode, 'DATA_VALIDATION'); assert.equal(transposed, false);
+    if (failCopy) throw new Error('native copy failed');
+    dst.metadata = metadata;
+  }, getValue() { throw new Error('Template selection must not be read/copied'); } };
+  const ss = { getSheetByName: name => name === 'Overview' ? { getRange(address) { assert.equal(address, 'C945'); return cell; } } : sh };
+  const api = loadFunctions(source, ['sv03_getCanonicalStatusTemplateCell_', 'sv03_applyGeneralStatusValidationToRange_', '__restoreStatusValuesWithCanonicalValidation06c_', 'sv03_syncDropdownForWorkbook_', 'restoreOpsManualFromMainTempForSub06c_'], {
+    STATUS_DROPDOWN_TEMPLATE: templateConfig,
+    DRY_RUN: false, getOperationalSheetsForBackup_: () => ['Finish'],
+    __normalizeHeaderText06_: value => String(value).trim(), __claimKey06_: value => String(value).trim().toUpperCase(),
+    __findHeaderIndexFlexible06_: (header, name) => header.indexOf(name),
+    SpreadsheetApp: { CopyPasteType: { PASTE_DATA_VALIDATION: 'DATA_VALIDATION' } },
+    getWorkbookProfile_: () => 'PIC', sv03_getProfileSpec_: () => ({ operational: ['Finish'], optional: ['EV-Bike', 'Doss'] }),
+    sv03_findHeaderCol1_: () => 4, SV03_DROPDOWN_SYNC: { BUFFER_ROWS: 5 }
+  });
+  return { api, range, sh, ss, metadata, invalidate() { rule = null; }, fail() { failCopy = true; } };
+}
+
+test('Status restore uses Overview C945 native metadata and preserves filled, blank, and legacy values', () => {
+  const fixture = statusTemplateFixture();
+  const values = fixture.range.values.map(r => r.slice());
+  fixture.api.__restoreStatusValuesWithCanonicalValidation06c_(fixture.sh, 2, 4, values, [['C-1'], ['C-2'], ['C-3']], 'TEST');
+  assert.deepEqual(fixture.range.values, values);
+  assert.equal(fixture.range.metadata, fixture.metadata);
+  fixture.api.sv03_applyGeneralStatusValidationToRange_(fixture.range);
+  assert.deepEqual(fixture.range.values, values);
+});
+
+test('invalid Status template is rejected before restore mutates values or validation', () => {
+  const fixture = statusTemplateFixture();
+  fixture.invalidate();
+  const before = fixture.range.values.map(r => r.slice());
+  assert.throws(() => fixture.api.__restoreStatusValuesWithCanonicalValidation06c_(fixture.sh, 2, 4, [['DONE']], [['C-1']], 'TEST'), /Overview!C945/);
+  assert.deepEqual(fixture.range.values, before);
+  assert.deepEqual(fixture.range.metadata, { displayStyle: 'ARROW' });
+});
+
+test('native Status copy failure propagates without falling back to rebuilt dropdown', () => {
+  const fixture = statusTemplateFixture();
+  fixture.fail();
+  assert.throws(() => fixture.api.sv03_applyGeneralStatusValidationToRange_(fixture.range), /native copy failed/);
+  assert.deepEqual(fixture.range.metadata, { displayStyle: 'ARROW' });
+});
+
+test('workbook Status sync ignores row-2 templates and copies C945 to Raw, ops, and optional sheets', () => {
+  const fixture = statusTemplateFixture();
+  const targets = [];
+  const getSheet = fixture.ss.getSheetByName;
+  fixture.ss.getSheetByName = name => name === 'Overview' ? getSheet(name) : {
+    getMaxRows: () => 1000, getLastRow: () => 4,
+    getRange(row, col, count, width) {
+      assert.equal(row, 2); assert.equal(col, 4); assert.equal(width, 1); assert.equal(count, 8);
+      targets.push(name); return fixture.range;
+    }
+  };
+  fixture.api.sv03_syncDropdownForWorkbook_(fixture.ss, 'Master', 'Status', ['old fallback'], { exactOptions: ['old fallback'] });
+  assert.deepEqual(targets, ['Raw Data', 'Finish', 'EV-Bike', 'Doss']);
+  assert.equal(fixture.range.metadata, fixture.metadata);
+});
+
+test('MAIN temp restore cannot replace C945 dropdown with an old arrow rule', () => {
+  const fixture = statusTemplateFixture();
+  fixture.range.values = [['']];
+  fixture.range.getValues = () => fixture.range.values;
+  Object.assign(fixture.sh, {
+    getLastRow: () => 2, getLastColumn: () => 3,
+    getRange(row, col) {
+      if (row === 1) return { getValues: () => [['Claim Number', 'Service Center', 'Status']] };
+      if (col === 1) return { getValues: () => [['C-1']] };
+      if (col === 2) return { getValues: () => [['SC-1']] };
+      return fixture.range;
+    }
+  });
+  const backup = {
+    getLastRow: () => 2, getLastColumn: () => 9,
+    getRange(row) {
+      if (row === 1) return { getValues: () => [['Claim Number', 'Service Center', 'Sheet', 'Row', 'At', 'Update Status', 'Timestamp', 'Status', 'Remarks']] };
+      return {
+        getValues: () => [['C-1', 'SC-1', 'Finish', 2, '', '', '', 'DONE', '']],
+        copyTo(dst) { dst.values = [['DONE']]; dst.metadata = { displayStyle: 'ARROW' }; }
+      };
+    }
+  };
+  const getSheet = fixture.ss.getSheetByName;
+  fixture.ss.getSheetByName = name => name === '_OPS_MAIN_SUB_TEMP' ? backup : getSheet(name);
+  fixture.api.restoreOpsManualFromMainTempForSub06c_(fixture.ss, 'Master', { deleteAfterRestore: false });
+  assert.deepEqual(fixture.range.values, [['DONE']]);
+  assert.equal(fixture.range.metadata, fixture.metadata);
 });
