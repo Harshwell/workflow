@@ -1953,6 +1953,7 @@ function checkAndMarkTransaction_(token, ttlMs, opts) {
   if (prev && ttl > 0 && (now - prev) < ttl) {
     return { duplicate: true, token: t, lastTs: prev, nowTs: now };
   }
+  if (opts && opts.checkOnly === true) return { duplicate: false, token: t, nowTs: now };
 
   cache[t] = now;
 

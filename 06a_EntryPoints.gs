@@ -670,6 +670,7 @@ function runSubFromFormDrive06a_(req, runId) {
  * @param {Object} opt {rawOldName, rawNewName, opSheets, sortSpecs, doTrashFlush}
  */
 function __runSubCore06a_(masterSs, oldBlob, newBlob, opt) {
+  if (PropertiesService.getScriptProperties().getProperty('MAIN_PIPELINE_STAGE2')) throw new Error('FORM SUB must wait until MAIN continuation completes.');
   const o = opt || {};
   const rawOldName = String(o.rawOldName || 'Raw OLD').trim();
   const rawNewName = String(o.rawNewName || 'Raw NEW').trim();
@@ -709,9 +710,7 @@ function __runSubCore06a_(masterSs, oldBlob, newBlob, opt) {
 
   const relocateSheets = __getSubRelocationSheetNames06a_(opSheets);
   const relocateRes = __relocateOperationalRowsByLastStatusSub06a_(masterSs, relocateSheets);
-  try { __refreshTokenOptionalSheetsFromSubRaw06a_(masterSs, [rawOldName, rawNewName]); } catch (eHiMove) {
-    try { logLine_('SUB_OPTIONAL_WARN', 'Post-relocation optional refresh failed', String(eHiMove), '', 'WARN'); } catch (eHiLog) {}
-  }
+  __refreshTokenOptionalSheetsFromSubRaw06a_(masterSs, [rawOldName, rawNewName]);
   const sortRes = __sortOperationalSheetsSub06a_(masterSs, opSheets, sortSpecs);
 
 
@@ -971,6 +970,9 @@ function runEmailIngest(maxThreads) {
   let mainOkForPendingSub = false;
   try {
     const mainResult = withLock_(() => {
+    if (PropertiesService.getScriptProperties().getProperty('MAIN_PIPELINE_STAGE2')) {
+      return { severity: 'INFO', staged: true, message: 'MAIN continuation pending; queued email retained.' };
+    }
     resetRunState_();
     if (PIPELINE_FLAGS.CLEAR_LOG_BEFORE_RUN) clearLogSheet_();
 
@@ -1117,7 +1119,7 @@ function runEmailIngest(maxThreads) {
       try { __logOverviewDuration06_('Master', startedAt, ssTiming); } catch (e2) {}
     }
     });
-    mainOkForPendingSub = String((mainResult && mainResult.severity) ? mainResult.severity : 'INFO').toUpperCase() !== 'ERROR';
+    mainOkForPendingSub = !!mainResult && !mainResult.staged && String(mainResult.severity || 'INFO').toUpperCase() !== 'ERROR';
     return mainResult;
   } finally {
     if (mainOkForPendingSub) __drainPendingSubAfterMain06a_('EMAIL_MAIN');
@@ -1328,12 +1330,12 @@ function runSubEmailIngest(maxThreads, options) {
     const sortSpecs = (Array.isArray(subFlow.SORT_SPECS) && subFlow.SORT_SPECS.length) ? subFlow.SORT_SPECS : null;
     const queuedLabel = getOrCreateGmailLabel_(String(pMerged.QUEUED_LABEL || pMerged.QUEUE_LABEL || 'QUEUED_SUB').trim());
 
-    // Idempotency: prevent duplicate processing of the same queued SUB email.
+    const subToken = ['SUB', thread.getId(), msg.getId(), picked.oldAtt ? picked.oldAtt.getName() : '-', picked.oldAtt ? picked.oldAtt.getSize() : 0, picked.newAtt ? picked.newAtt.getName() : '-', picked.newAtt ? picked.newAtt.getSize() : 0].join('|');
+    // Only successful refreshes consume the token; partial writes remain retryable.
     try {
-      const tok = ['SUB', thread.getId(), msg.getId(), picked.oldAtt ? picked.oldAtt.getName() : '-', picked.oldAtt ? picked.oldAtt.getSize() : 0, picked.newAtt ? picked.newAtt.getName() : '-', picked.newAtt ? picked.newAtt.getSize() : 0].join('|');
-      const idem = (typeof checkAndMarkTransaction_ === 'function') ? checkAndMarkTransaction_(tok, 6 * 60 * 60 * 1000) : { duplicate: false };
+      const idem = (typeof checkAndMarkTransaction_ === 'function') ? checkAndMarkTransaction_(subToken, 6 * 60 * 60 * 1000, { checkOnly: true }) : { duplicate: false };
       if (idem && idem.duplicate) {
-        try { logLine_('IDEMPOTENT', 'Duplicate SUB token -> cleanup and skip', tok, '', 'INFO'); } catch (eI2) {}
+        try { logLine_('IDEMPOTENT', 'Duplicate successful SUB -> cleanup and skip', '', '', 'INFO'); } catch (eI2) {}
         try { msg.markRead(); } catch (eMR2) {}
         try { thread.removeLabel(queuedLabel); } catch (eRL2) {}
         try { thread.moveToTrash(); } catch (eTR2) {}
@@ -1380,20 +1382,11 @@ function runSubEmailIngest(maxThreads, options) {
       try { logLine_('SUB_WARN', 'NEW attachment missing; continue OLD-only run', '', '', 'WARN'); } catch (eW2) {}
     }
 
-    try {
-      const optRefresh = __refreshTokenOptionalSheetsFromSubRaw06a_(masterSs, [rawOldName, rawNewName]);
-      try { logLine_('SUB_OPTIONAL', 'Refreshed EV-Bike/Doss from SUB raw sheets', JSON.stringify(optRefresh || {}), '', 'INFO'); } catch (eOptLog) {}
-    } catch (eOpt) {
-      try { logLine_('SUB_OPTIONAL_WARN', 'EV-Bike/Doss SUB refresh failed', String(eOpt), '', 'WARN'); } catch (eOpt2) {}
-    }
-
     // Relocate rows by Last Status mapping (move FULL row, dedupe by Claim Number).
     try { setProgressForFlow_('SUB', 0.80, 'Relocate + sort...', { prefixFlowInStep: true }); } catch (eP9) {}
     const relocateSheets = __getSubRelocationSheetNames06a_(opSheets);
     const relocateRes = __relocateOperationalRowsByLastStatusSub06a_(masterSs, relocateSheets);
-    try { __refreshTokenOptionalSheetsFromSubRaw06a_(masterSs, [rawOldName, rawNewName]); } catch (eHiMove) {
-      try { logLine_('SUB_OPTIONAL_WARN', 'Post-relocation optional refresh failed', String(eHiMove), '', 'WARN'); } catch (eHiLog) {}
-    }
+    __refreshTokenOptionalSheetsFromSubRaw06a_(masterSs, [rawOldName, rawNewName]);
     try {
       if (typeof setLogEventContext_ === 'function') {
         const moved = (relocateRes && relocateRes.moved != null) ? relocateRes.moved : '';
@@ -1427,6 +1420,7 @@ function runSubEmailIngest(maxThreads, options) {
 
 
     // Cleanup email thread after both succeeded.
+    if (typeof checkAndMarkTransaction_ === 'function') checkAndMarkTransaction_(subToken, 6 * 60 * 60 * 1000);
     try {
       cleanupQueuedThreadSuccess_(thread, queuedLabel);
       logLine_('SUB_CLEAN', 'Cleaned SUB email thread', queuedLabel, '', 'INFO');
@@ -1482,9 +1476,16 @@ function __refreshTokenOptionalSheetsFromSubRaw06a_(ss, rawSheetNames) {
 
 /** Try-lock wrapper for SUB: mark pending when busy so MAIN can drain it after completion. */
 function __withTryLockSub06a_(fn) {
+  const guarded = function() {
+    if (PropertiesService.getScriptProperties().getProperty('MAIN_PIPELINE_STAGE2')) {
+      __markSubPendingAfterBusyLock06a_('main_continuation_pending');
+      return { severity: 'INFO', message: 'SUB pending until MAIN continuation completes', skipped: true, pending: true };
+    }
+    return (typeof fn === 'function') ? fn() : null;
+  };
   // Prefer shared utility if available (keeps behavior consistent across modules).
   if (typeof withTryScriptLock_ === 'function') {
-    const lr = withTryScriptLock_(750, fn);
+    const lr = withTryScriptLock_(750, guarded);
     if (!lr || !lr.acquired) {
       try {
         resetRunState_();
@@ -1508,7 +1509,7 @@ function __withTryLockSub06a_(fn) {
     return { severity: 'INFO', message: 'SUB pending after MAIN (lock busy)', processed: 0, failed: 0, skipped: true, pending: true };
   }
   try {
-    return (typeof fn === 'function') ? fn() : null;
+    return guarded();
   } finally {
     try { lock.releaseLock(); } catch (e2) {}
   }
@@ -2008,6 +2009,7 @@ function __updateOperationalSheetsFromRaw06a_(ss, sheetNames, rawMap, ctx) {
     const name = String(names[i] || '').trim();
     if (!name) continue;
 
+    if (name === 'EV-Bike' || name === 'Doss') continue;
     const sh = ss.getSheetByName(name);
     if (!sh) {
       try { logLine_('SUB_WARN', 'Operational sheet not found (skip)', name, '', 'WARN'); } catch (e1) {}
@@ -3363,6 +3365,9 @@ function runManual(picOrFileIdsCsv, fileIdsCsvMaybe) {
   let mainOkForPendingSub = false;
   try {
     const mainResult = withLock_(() => {
+    if (PropertiesService.getScriptProperties().getProperty('MAIN_PIPELINE_STAGE2')) {
+      return { severity: 'INFO', staged: true, message: 'MAIN continuation pending; manual input retained.' };
+    }
     resetRunState_();
     if (PIPELINE_FLAGS.CLEAR_LOG_BEFORE_RUN) clearLogSheet_();
 
@@ -3400,7 +3405,7 @@ function runManual(picOrFileIdsCsv, fileIdsCsvMaybe) {
       try { __logOverviewDuration06_(key, startedAt, ssTiming); } catch (e2) {}
     }
     });
-    mainOkForPendingSub = String((mainResult && mainResult.severity) ? mainResult.severity : 'INFO').toUpperCase() !== 'ERROR';
+    mainOkForPendingSub = !!mainResult && !mainResult.staged && String(mainResult.severity || 'INFO').toUpperCase() !== 'ERROR';
     return mainResult;
   } finally {
     if (mainOkForPendingSub) __drainPendingSubAfterMain06a_('MANUAL_MAIN');
