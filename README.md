@@ -562,6 +562,8 @@ Source dan consumer utama: `OPS_ROUTING_POLICY.SC_NAME_KEYWORDS`, `BRANCH_KEYWOR
 
 Pada Salvage, Service Center dengan keyword J-Bros, B-Store, Deltasindo, atau GH Store selalu menghasilkan PIC `Meindar`, termasuk nama panjang dan suffix lokasi, walau Branch kosong atau berisi owner lama. `CV Berkah Athallah Branch Store` menghasilkan `Farhan`. Nama panjang yang hanya tersedia di Branch juga dikenali setelah override Service Center; EzCare Apple tetap Farhan. Normalisasi mengabaikan case, spasi, dan tanda baca.
 
+Branch Salvage dinormalisasi dari Service Center: `CV Berkah Athallah Branch Store` menjadi `CV Berkah`, `GH Store - Pontianak` menjadi `GH Store`, `PT DELTASINDO SAGITA MANDIRI - Sorong Papua Barat` menjadi `Deltafone`, dan `Skylensindo Service Center` menjadi `Skylensindo`. Alias dikenali melalui keyword normalized, termasuk suffix lokasi. Mapping PIC Skylensindo belum ditentukan dan tetap memakai behavior resolver existing (`Unknown`); Service Center yang tidak dikenali mempertahankan fallback Branch.
+
 ### Optional-Sheet Routing
 
 | Sheet | Eligibility | Writer/consumer contract |

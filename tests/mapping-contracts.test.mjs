@@ -116,3 +116,21 @@ test('Salvage resolves full Service Center names independently of blank or stale
   assert.equal(salvage.resolvePicByBranch_('GH Store - Pontianak', 'EzCare', 'Apple', '', ''), 'Farhan');
   assert.equal(salvage.resolvePicByBranch_('Other Branch', 'Other Service Center', '', '', ''), 'Unknown');
 });
+
+test('Salvage canonicalizes requested Branch names without assigning a new Skylensindo PIC', () => {
+  const { salvage: source } = loadSources();
+  const salvage = loadFunctions(source, ['normalizeKey_', 'normalizeServiceCenterKey_', 'resolveBranchByServiceCenter_', 'resolvePicByBranch_']);
+  for (const [name, branch, pic] of [
+    ['CV Berkah Athallah Branch Store', 'CV Berkah', 'Farhan'],
+    ['GH Store - Pontianak', 'GH Store', 'Meindar'],
+    ['PT DELTASINDO SAGITA MANDIRI - Sorong Papua Barat', 'Deltafone', 'Meindar'],
+    ['Skylensindo Service Center', 'Skylensindo', 'Unknown']
+  ]) {
+    for (const fallback of ['', 'Old Branch', branch]) {
+      assert.equal(salvage.resolveBranchByServiceCenter_(name, fallback), branch, name);
+      assert.equal(salvage.resolveBranchByServiceCenter_(name.toLowerCase(), fallback), branch, name + ' lowercase');
+    }
+    assert.equal(salvage.resolvePicByBranch_(branch, name, '', '', ''), pic, name + ' PIC');
+  }
+  assert.equal(salvage.resolveBranchByServiceCenter_('Unlisted Service Center', 'Manual Branch'), 'Manual Branch');
+});
