@@ -1056,10 +1056,12 @@ function runEmailIngest(maxThreads) {
           });
         }
       } catch (eCtx1) {}
+      let mainTransactionToken = '';
       // Idempotency: prevent duplicate processing of the same queued email.
       try {
         const tok = ['MAIN', thread.getId(), msg.getId(), att.getName(), att.getSize()].join('|');
-        const idem = (typeof checkAndMarkTransaction_ === 'function') ? checkAndMarkTransaction_(tok, 12 * 60 * 60 * 1000) : { duplicate: false };
+        mainTransactionToken = tok;
+        const idem = (typeof checkAndMarkTransaction_ === 'function') ? checkAndMarkTransaction_(tok, 12 * 60 * 60 * 1000, { checkOnly: true }) : { duplicate: false };
         if (idem && idem.duplicate) {
           try { logLine_('IDEMPOTENT', 'Duplicate MAIN token -> cleanup and skip', tok, '', 'INFO'); } catch (eI) {}
           try { msg.markRead(); } catch (eMR) {}
@@ -1070,6 +1072,7 @@ function runEmailIngest(maxThreads) {
       } catch (eId) {}
 
       let tmpFileId = null;
+      let mainDeferred = false;
       try {
         // single conversion per run
         setProgress_(0.15, 'Converting XLSX...');
@@ -1095,6 +1098,16 @@ function runEmailIngest(maxThreads) {
           return { severity: 'ERROR', message: (res && res.message) ? res.message : 'Pipeline error.', processed: 0, failed: failed };
         }
 
+        if (res && res.staged) {
+          mainDeferred = true;
+          attachMainContinuationEmail06a_(res.stageToken, {
+            threadId: thread.getId(), messageId: msg.getId(), queueLabel: queuedLabelName,
+            transactionToken: mainTransactionToken, tempFileId: tmpFileId
+          });
+          logLine_('MAIL', 'MAIN stage 2 pending; email retained', '', 'cleanup=deferred', 'INFO');
+          return { severity: 'INFO', staged: true, stageToken: res.stageToken, message: 'MAIN continuation pending; email retained.', processed: 0, failed: 0 };
+        }
+        if (mainTransactionToken && typeof checkAndMarkTransaction_ === 'function') checkAndMarkTransaction_(mainTransactionToken, 12 * 60 * 60 * 1000);
         processed++;
 
         // Cleanup success (per spec)
@@ -1114,7 +1127,7 @@ function runEmailIngest(maxThreads) {
         logLine_('MAIL', 'MAIN ingest failed (leave queued)', msg.getSubject(), String(err), 'ERROR');
         return { severity: 'ERROR', message: String(err), processed: processed, failed: failed };
       } finally {
-        try { if (tmpFileId) trashDriveFileById_(tmpFileId); } catch (e) {}
+        try { if (tmpFileId && !mainDeferred) trashDriveFileById_(tmpFileId); } catch (e) {}
       }
 
     } finally {
@@ -3449,4 +3462,28 @@ function runWeeklyReportBaseManual(snapshotDateOverride, sourceFileNameOverride)
   const res = fillWeeklyReportBase(snapshotDate, sourceFileName, ss);
   try { logLine_('INFO', 'Manual Weekly Report Base refresh', sourceFileName, snapshotDate || 'today', 'INFO'); } catch (e1) {}
   return { ok: true, snapshotDate: snapshotDate || '', sourceFileName: sourceFileName, result: res || {} };
+}
+
+function attachMainContinuationEmail06a_(token, email) {
+  const props = PropertiesService.getScriptProperties();
+  const payload = props.getProperty('MAIN_PIPELINE_STAGE2');
+  if (!payload) throw new Error('MAIN continuation missing before email handoff.');
+  const state = JSON.parse(payload);
+  if (!token || state.token !== token) throw new Error('MAIN continuation token changed before email handoff.');
+  state.email = email;
+  state.updatedAt = Date.now();
+  props.setProperty('MAIN_PIPELINE_STAGE2', JSON.stringify(state));
+}
+
+function completeMainEmailCleanup06a_(email) {
+  const thread = GmailApp.getThreadById(email.threadId);
+  const msg = GmailApp.getMessageById(email.messageId);
+  if (!thread || !msg) throw new Error('MAIN cleanup email is unavailable; checkpoint retained.');
+  msg.markRead();
+  thread.markRead();
+  const label = GmailApp.getUserLabelByName(email.queueLabel);
+  if (label) thread.removeLabel(label);
+  thread.moveToTrash();
+  if (email.tempFileId) trashDriveFileById_(email.tempFileId);
+  if (email.transactionToken) checkAndMarkTransaction_(email.transactionToken, 12 * 60 * 60 * 1000);
 }

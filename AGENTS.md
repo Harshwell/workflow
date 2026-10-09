@@ -73,6 +73,7 @@ Standalone projects tidak menerima root globals secara otomatis. Perubahan polic
 - MAIN daily berjalan pada jam `FLOW_SCHEDULE_POLICY.MAIN_HOUR` (06:00); SUB hourly melewati jam MAIN dan handoff/manual restore serta Weekly Report Base SUB memakai MAIN + satu jam (07:00). Perubahan jadwal wajib menyelaraskan installer, skip, dan kedua gate tanpa mengubah force-after-MAIN/lock/pending.
 - SUB membutuhkan OLD/NEW input valid, meng-update claim existing, dan merelokasi row sesuai routing. Jika MAIN memegang lock, gunakan pending/handoff yang sudah ada.
 - FORM/MANUAL harus memakai shared MAIN/SUB core, bukan fork business logic baru.
+- Snapshot internal manual backup harus membersihkan stale validation sebelum matrix ditulis dan flush pada write boundary; error snapshot/restore harus mengidentifikasi sheet agar deferred error tidak salah diatribusikan ke step berikutnya. MAIN tidak boleh clear/routing ketika snapshot gagal, dan email/temp input MAIN hanya dibersihkan setelah semua checkpoint stage 2 termasuk cleanup sukses.
 - Rerun tidak boleh membuat duplicate claim atau menghapus field manual valid.
 - IMEI/SN harus dipertahankan sebagai text.
 - Internal routing bucket tidak boleh dibuat sebagai physical sheet.

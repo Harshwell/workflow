@@ -385,6 +385,22 @@ function auditOpsManualRestore06c_(ss, pic, snapshot) {
 }
 
 
+function __writeManualBackupSnapshot06c_(sh, rows, width) {
+  const name = sh.getName();
+  try {
+    const rowBound = Math.max(rows.length, sh.getLastRow(), 1);
+    if (rowBound > sh.getMaxRows()) sh.insertRowsAfter(sh.getMaxRows(), rowBound - sh.getMaxRows());
+    if (width > sh.getMaxColumns()) sh.insertColumnsAfter(sh.getMaxColumns(), width - sh.getMaxColumns());
+    // clearContents retains stale rules, including Status dropdowns on timestamp/claim columns.
+    sh.getRange(1, 1, rowBound, width).clearDataValidations();
+    sh.clearContents();
+    sh.getRange(1, 1, rows.length, width).setValues(rows);
+    SpreadsheetApp.flush();
+  } catch (e) {
+    throw new Error('Manual backup snapshot write failed | sheet=' + name + ' | range=R1C1:R' + rows.length + 'C' + width + ' | error=' + (e && e.message ? e.message : e));
+  }
+}
+
 function persistOpsManualBackupSheet06c_(ss, pic, snapshot) {
   if (!ss || !snapshot || !snapshot.map) return 0;
   const name = '_OPS_MANUAL_BACKUP';
@@ -407,8 +423,7 @@ function persistOpsManualBackupSheet06c_(ss, pic, snapshot) {
     rows.push([now, String(pic || ''), k, upd, ts, st, rem]);
   }
 
-  sh.clearContents();
-  sh.getRange(1,1,rows.length,header.length).setValues(rows);
+  __writeManualBackupSnapshot06c_(sh, rows, header.length);
   try { sh.getRange(1,1,1,header.length).setFontWeight('bold'); } catch (e1) {}
   return Math.max(0, rows.length - 1);
 }
@@ -482,8 +497,7 @@ function persistOpsManualTempForSub06c_(ss, pic) {
       idxUpd: idxUpd, idxTs: idxTs, idxSt: idxSt, idxRem: idxRem });
   }
 
-  sh.clearContents();
-  sh.getRange(1, 1, rows.length, header.length).setValues(rows);
+  __writeManualBackupSnapshot06c_(sh, rows, header.length);
   try { sh.getRange(1, 1, 1, header.length).setFontWeight('bold'); } catch (e1) {}
 
   // Preserve styles in bulk (rich text, colors, number format, wrap, DV).
@@ -700,6 +714,7 @@ function restoreOpsManualFromBackupSheet06c_(ss, pic) {
   for (let si=0; si<sheetNames.length; si++) {
     const sh = ss.getSheetByName(sheetNames[si]);
     if (!sh) continue;
+    try {
     const lr = sh.getLastRow(); const lc2 = sh.getLastColumn();
     if (lr < 2 || lc2 < 1) continue;
     const h = sh.getRange(1,1,1,lc2).getValues()[0].map(__normalizeHeaderText06_);
@@ -728,6 +743,9 @@ function restoreOpsManualFromBackupSheet06c_(ss, pic) {
     try { if (outT) sh.getRange(2,iT+1,n,1).setValues(outT); } catch(e){}
     if (outS) __restoreStatusValuesWithCanonicalValidation06c_(sh, 2, iS + 1, outS, claims, 'MANUAL_BACKUP');
     try { if (outR) sh.getRange(2,iR+1,n,1).setValues(outR); } catch(e){}
+    } catch (eRestore) {
+      throw new Error('Manual backup restore failed | source=_OPS_MANUAL_BACKUP | sheet=' + sheetNames[si] + ' | error=' + (eRestore && eRestore.message ? eRestore.message : eRestore));
+    }
   }
   return { restored: restored, rows: Object.keys(map).length };
 }

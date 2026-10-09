@@ -7,6 +7,63 @@ const optionalSource = fs.readFileSync('05c_Pipeline_OptionalSheets.gs', 'utf8')
 const routingSource = fs.readFileSync('05b_Pipeline_RoutingOperational.gs', 'utf8');
 const pipelineSource = fs.readFileSync('06b_PipelineAndEnrichment.gs', 'utf8');
 
+test('manual snapshot writers clear stale dropdowns before writing timestamps and claims', () => {
+  const source = fs.readFileSync('06c_PostProcessAndUtils.gs', 'utf8');
+  for (const name of ['_OPS_MANUAL_BACKUP', '_OPS_MAIN_SUB_TEMP']) {
+    const calls = [];
+    let cleared = false, rowsWritten;
+    const backup = {
+      getName: () => name, hideSheet() {}, getLastRow: () => 2946, getMaxRows: () => 3000, getMaxColumns: () => 9,
+      clearContents() { calls.push('contents'); },
+      getRange(row, col, count, width) {
+        return {
+          clearDataValidations() { assert.equal(row, 1); assert.equal(col, 1); assert.equal(count, 2946); assert.equal(width, name === '_OPS_MANUAL_BACKUP' ? 7 : 9); cleared = true; calls.push('validation'); },
+          setValues(values) { if (!cleared) throw new Error('A2946 violates Status validation'); rowsWritten = values; calls.push('write'); },
+          setFontWeight() {}
+        };
+      }
+    };
+    const api = loadFunctions(source, ['__writeManualBackupSnapshot06c_', 'persistOpsManualBackupSheet06c_', 'persistOpsManualTempForSub06c_'], {
+      SpreadsheetApp: { flush: () => calls.push('flush') }, getOperationalSheetsForBackup_: () => []
+    });
+    const ss = { getSheetByName: () => backup };
+    if (name === '_OPS_MANUAL_BACKUP') api.persistOpsManualBackupSheet06c_(ss, 'Master', { map: { 'C-1': { s: { v: 'Legacy status' } } } });
+    else api.persistOpsManualTempForSub06c_(ss, 'Master');
+    assert.deepEqual(calls, ['validation', 'contents', 'write', 'flush']);
+    assert.equal(rowsWritten[0][0], 'Backup Timestamp');
+    if (name === '_OPS_MANUAL_BACKUP') assert.equal(rowsWritten[1][5], 'Legacy status');
+  }
+});
+
+test('snapshot validation and deferred-write errors identify the backup sheet', () => {
+  const source = fs.readFileSync('06c_PostProcessAndUtils.gs', 'utf8');
+  let contentsCleared = false, failValidation = true;
+  const sh = { getName: () => '_OPS_MANUAL_BACKUP', getLastRow: () => 2, getMaxRows: () => 10, getMaxColumns: () => 7,
+    clearContents() { contentsCleared = true; }, getRange: () => ({ clearDataValidations() { if (failValidation) throw new Error('cleanup rejected'); }, setValues() {} }) };
+  const api = loadFunctions(source, ['__writeManualBackupSnapshot06c_'], {
+    SpreadsheetApp: { flush() { throw new Error('A2946 deferred write failed'); } }
+  });
+  assert.throws(() => api.__writeManualBackupSnapshot06c_(sh, [['timestamp']], 1), /sheet=_OPS_MANUAL_BACKUP.*cleanup rejected/);
+  assert.equal(contentsCleared, false);
+  failValidation = false;
+  assert.throws(() => api.__writeManualBackupSnapshot06c_(sh, [['timestamp']], 1), /sheet=_OPS_MANUAL_BACKUP.*A2946 deferred write failed/);
+});
+
+test('manual backup restore identifies the destination sheet on failure', () => {
+  const source = fs.readFileSync('06c_PostProcessAndUtils.gs', 'utf8');
+  const backup = { getLastRow: () => 2, getLastColumn: () => 3,
+    getRange: row => ({ getValues: () => row === 1 ? [['PIC', 'Claim Number', 'Status']] : [['Master', 'C-1', 'Legacy']] }) };
+  const target = { getLastRow: () => 2, getLastColumn: () => 2,
+    getRange: (row, col) => ({ getValues: () => row === 1 ? [['Claim Number', 'Status']] : col === 1 ? [['C-1']] : [['']] }) };
+  const api = loadFunctions(source, ['restoreOpsManualFromBackupSheet06c_'], {
+    DRY_RUN: false, getOperationalSheetsForBackup_: () => ['SC - Meindar'], __normalizeHeaderText06_: v => v,
+    __findHeaderIndexFlexible06_: (header, name) => header.indexOf(name), __claimKey06_: v => v,
+    __restoreStatusValuesWithCanonicalValidation06c_() { throw new Error('A2946 violates validation'); }
+  });
+  assert.throws(() => api.restoreOpsManualFromBackupSheet06c_({ getSheetByName: name => name === '_OPS_MANUAL_BACKUP' ? backup : target }, 'Master'),
+    /source=_OPS_MANUAL_BACKUP.*sheet=SC - Meindar.*A2946/);
+});
+
 test('MAIN installer replaces only MAIN triggers and uses the shared six AM schedule', () => {
   const source = fs.readFileSync('06a_EntryPoints.gs', 'utf8');
   const policy = evaluateInitializer(fs.readFileSync('00_Config.gs', 'utf8'), 'FLOW_SCHEDULE_POLICY');
@@ -282,7 +339,7 @@ function continuation(clock) {
   const props = { setProperty: (_key, value) => { stored = JSON.parse(value); }, deleteProperty: () => { deleted = true; } };
   const api = loadFunctions(pipelineSource, ['runMainStage2Steps06b_'], {
     Date: { now: () => clock.time }, armMainPipelineStage2Trigger06b_: delay => triggers.push(delay),
-    ScriptApp: { getProjectTriggers: () => [], deleteTrigger() {} }, setProgress_() {}, logLine_() {}
+    SpreadsheetApp: { flush() {} }, ScriptApp: { getProjectTriggers: () => [], deleteTrigger() {} }, setProgress_() {}, logLine_() {}
   });
   return { api, props, triggers, state: () => stored, deleted: () => deleted };
 }
@@ -363,7 +420,7 @@ test('stage 2 resumes flagging and delays cleanup and SUB until complete', () =>
   const context = {
     PropertiesService: { getScriptProperties: () => props }, withLock_: fn => fn(),
     RUNTIME: {}, CONFIG: { spreadsheets: { Master: 'test' } },
-    SpreadsheetApp: { openById: () => ({ getSheetByName: () => raw }) },
+    SpreadsheetApp: { openById: () => ({ getSheetByName: () => raw }), flush() {} },
     ScriptApp: { getProjectTriggers: () => [], deleteTrigger() {}, newTrigger: () => ({ timeBased: () => ({ after: () => ({ create() {} }) }) }) },
     PIPELINE_FLAGS: { TRASH_UPLOADED_FILES: true },
     resolveSpreadsheetKey_: () => 'Master', resetRunState_() {}, setLogRunContext_() {}, logLine_() {}, setProgress_() {},
