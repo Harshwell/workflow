@@ -3359,6 +3359,14 @@ function installEmailIngestTrigger() {
   ScriptApp.newTrigger('runEmailIngest').timeBased().everyDays(1).atHour(FLOW_SCHEDULE_POLICY.MAIN_HOUR).create();
 }
 
+/** Public Apps Script editor entry point for a failed MAIN stage-2 checkpoint. */
+function retryMainPipelineStage2() {
+  if (typeof retryMainPipelineStage2_ !== 'function') {
+    throw new Error('MAIN retry helper is unavailable; sync 06b_PipelineAndEnrichment.gs first.');
+  }
+  return retryMainPipelineStage2_();
+}
+
 
 /**
  * Manual runner:
