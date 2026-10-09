@@ -4,6 +4,8 @@ Perubahan material repository dicatat di sini berdasarkan outcome, flow/project 
 
 ## Unreleased
 
+- Branch Salvage menormalisasi CV Berkah Athallah menjadi `CV Berkah`, GH Store Pontianak menjadi `GH Store`, Deltasindo Sorong menjadi `Deltafone`, dan Skylensindo Service Center menjadi `Skylensindo`; PIC Farhan/Meindar existing tetap sesuai mapping, tanpa menambahkan owner baru untuk Skylensindo.
+
 - Salvage menentukan PIC Meindar langsung dari Service Center J-Bros, B-Store, Deltasindo, dan GH Store termasuk nama panjang/suffix lokasi, tanpa bergantung pada Branch kosong atau stale; CV Berkah Athallah tetap Farhan, dan nama panjang di Branch juga dikenali saat Service Center kosong. Override EzCare Apple tetap diprioritaskan.
 
 - Dropdown Status untuk backup/restore Raw dan operational memakai native template `Overview!C945` melalui copy data validation; nilai terisi/blank tetap dipertahankan tanpa menyalin pilihan template atau membangun ulang rule yang meratakan chip/warna. MAIN preflight memvalidasi template sebelum mutasi, dan template/copy failure tidak menggunakan fallback panah biasa.

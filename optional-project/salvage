@@ -1482,6 +1482,10 @@ function buildSyncDiffPreview_(sourceSnapshot, precheckedTargetSnapshot) {
 
 function resolveBranchByServiceCenter_(serviceCenterValue, fallbackBranchValue) {
   const scKey = normalizeServiceCenterKey_(serviceCenterValue);
+  if (scKey.indexOf('cvberkah') >= 0) return 'CV Berkah';
+  if (scKey.indexOf('ghstore') >= 0) return 'GH Store';
+  if (scKey.indexOf('deltasindo') >= 0) return 'Deltafone';
+  if (scKey.indexOf('skylensindo') >= 0) return 'Skylensindo';
   if (scKey.indexOf('agungcellular') >= 0) return 'Agung Cellular Service Center';
   if (scKey.indexOf('platinumcare') >= 0) return 'Platinum Care Service Centre';
   const branchByServiceCenter = {
