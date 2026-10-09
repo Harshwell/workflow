@@ -1276,7 +1276,10 @@ function updateTokenOptionalSheetFromSubRaw05c_(sh, rawValues, headerIndexRaw, o
   const token = String(opts.claimToken || '').trim().toUpperCase();
   const partnerPatterns = (opts.partnerPatterns || []).map(function (s) { return String(s || '').toLowerCase(); }).filter(Boolean);
   const idxClaim = headerIndexRaw[h.claimNumber] != null ? headerIndexRaw[h.claimNumber] : headerIndexRaw['claim_number'];
-  if (idxClaim == null) return 0;
+  if (idxClaim == null) {
+    if (opts.matchesRow) throw new Error('Verified optional source requires Claim Number.');
+    return 0;
+  }
 
   const idxLastStatus = headerIndexRaw[h.lastStatus] != null ? headerIndexRaw[h.lastStatus] : headerIndexRaw['claim_last_status_name'];
   const idxLsa =
@@ -1304,7 +1307,7 @@ function updateTokenOptionalSheetFromSubRaw05c_(sh, rawValues, headerIndexRaw, o
     const partner = String(idxPartner != null ? row[idxPartner] : '').toLowerCase();
     const matchClaim = token ? claimUp.indexOf(token) > -1 : false;
     const matchPartner = partnerPatterns.some(function (p) { return p && partner.indexOf(p) > -1; });
-    if (!matchClaim && !matchPartner) continue;
+    if (opts.matchesRow ? !opts.matchesRow(row, headerIndexRaw) : (!matchClaim && !matchPartner)) continue;
     seen.add(claimUp);
     recs.push({
       claim: claim,
@@ -1421,18 +1424,19 @@ function updateTokenOptionalSheetFromSubRaw05c_(sh, rawValues, headerIndexRaw, o
 }
 
 function processEVBike_(ss, rawValues, headerIndexRaw, pic, opts) { // `pic` kept for backward compatibility
+  if (opts && opts.matchesRow && typeof getWorkbookProfile_ === 'function' && getWorkbookProfile_(pic) === 'ADMIN') return 0;
   // Default ON. Only skip when explicitly disabled.
-  if (typeof RUNTIME !== 'undefined' && RUNTIME && RUNTIME.enableEvBike === false) return 0;
+  if (!(opts && opts.matchesRow) && typeof RUNTIME !== 'undefined' && RUNTIME && RUNTIME.enableEvBike === false) return 0;
   if (typeof applyRawHeaderAliases_ === 'function') headerIndexRaw = applyRawHeaderAliases_(headerIndexRaw);
 
   const h = CONFIG.headers;
   opts = opts || {};
   const targetSheetName = String(opts.sheetName || 'EV-Bike').trim();
   const targetClaimToken = String(opts.claimToken || 'VVMAR').trim().toUpperCase();
-  const logLabel = targetSheetName === 'Doss' ? 'DOSS_METRICS' : 'EVBIKE_METRICS';
+  const logLabel = opts.matchesRow ? targetSheetName.toUpperCase() + '_METRICS' : (targetSheetName === 'Doss' ? 'DOSS_METRICS' : 'EVBIKE_METRICS');
   const sh = ss.getSheetByName(targetSheetName);
   if (!sh) {
-    if (String(pic || '').trim().toUpperCase() === 'SUB') throw new Error('SUB optional sheet missing: ' + targetSheetName);
+    if (opts.matchesRow || String(pic || '').trim().toUpperCase() === 'SUB') throw new Error('Optional sheet missing: ' + targetSheetName);
     return 0;
   }
 
@@ -1443,12 +1447,16 @@ function processEVBike_(ss, rawValues, headerIndexRaw, pic, opts) { // `pic` kep
       : (CONFIG.patterns.evBikePartners || []).map(s => String(s || '').toLowerCase());
     return updateTokenOptionalSheetFromSubRaw05c_(sh, rawValues, headerIndexRaw, {
       claimToken: targetClaimToken,
-      partnerPatterns: patternsSub
+      partnerPatterns: patternsSub,
+      matchesRow: opts.matchesRow
     });
   }
 
   const idxClaim = headerIndexRaw[h.claimNumber];
-  if (idxClaim == null) return 0;
+  if (idxClaim == null) {
+    if (opts.matchesRow) throw new Error('Verified optional source requires Claim Number.');
+    return 0;
+  }
 
 
   const OPTIONAL_FLAGS = (typeof __OPTIONAL_FLAGS !== 'undefined' && __OPTIONAL_FLAGS) ? __OPTIONAL_FLAGS : {};
@@ -1471,6 +1479,10 @@ function processEVBike_(ss, rawValues, headerIndexRaw, pic, opts) { // `pic` kep
 
   let header = __getHeaderRow05c_(sh);
   let idxH = buildHeaderIndex_(header);
+
+  if (opts.matchesRow && ['Claim Number', 'Last Status', 'Last Status Aging'].some(function(name) { return idxH[name] == null; })) {
+    throw new Error('Verified optional sheet requires Claim Number, Last Status, and Last Status Aging: ' + targetSheetName);
+  }
 
   // Remove deprecated EV-Bike columns when still present.
   try {
@@ -1506,7 +1518,7 @@ function processEVBike_(ss, rawValues, headerIndexRaw, pic, opts) { // `pic` kep
   const submissionCandidates = {};
   try {
     const subSh = ss.getSheetByName('Submission');
-    if (subSh && subSh.getLastRow() > 1 && subSh.getLastColumn() > 1) {
+    if (!opts.matchesRow && subSh && subSh.getLastRow() > 1 && subSh.getLastColumn() > 1) {
       const subHeader = __getHeaderRow05c_(subSh);
       const subIdx = buildHeaderIndex_(subHeader);
       const subVals = subSh.getRange(2, 1, subSh.getLastRow() - 1, subHeader.length).getValues();
@@ -1586,7 +1598,7 @@ function processEVBike_(ss, rawValues, headerIndexRaw, pic, opts) { // `pic` kep
     const partner = String((idxBP != null) ? row[idxBP] : '' || '').toLowerCase();
     const matchPartner = patterns.some(p => p && partner.indexOf(p) > -1);
     const matchClaim = targetClaimToken ? claimUp.indexOf(targetClaimToken) > -1 : false;
-    if (!matchPartner && !matchClaim) continue;
+    if (opts.matchesRow ? !opts.matchesRow(row, headerIndexRaw) : (!matchPartner && !matchClaim)) continue;
     if (seenClaims.has(claimUp)) continue;
     seenClaims.add(claimUp);
     const lastStatus = String((idxLastStatus != null) ? row[idxLastStatus] : '' || '').trim();
@@ -1612,7 +1624,7 @@ function processEVBike_(ss, rawValues, headerIndexRaw, pic, opts) { // `pic` kep
     set('Insurance', mapInsuranceShort_((idxInsPartner != null) ? row[idxInsPartner] : ''));
     set('Owner Name', (idxOwner != null) ? row[idxOwner] : '');
     const polNum0 = String((idxPolicyNum != null) ? row[idxPolicyNum] : '').trim();
-    if (polNum0 && excludedPolicySet.has(polNum0)) continue;
+    if (!opts.matchesRow && polNum0 && excludedPolicySet.has(polNum0)) continue;
     set('Policy Number', polNum0);
 	    // Sum Insured
 	    set('Sum Insured', (idxSumInsured != null) ? row[idxSumInsured] : '');
@@ -1623,6 +1635,11 @@ function processEVBike_(ss, rawValues, headerIndexRaw, pic, opts) { // `pic` kep
 
     // Optional columns if present in EV-Bike sheet schema
     set('Last Status', lastStatus);
+    if (opts.matchesRow) {
+      const agingIndex = headerIndexRaw[h.lastStatusAging] != null ? headerIndexRaw[h.lastStatusAging] : headerIndexRaw['days_aging_from_last_activity'];
+      const aging = agingIndex != null ? row[agingIndex] : '';
+      set('Last Status Aging', aging === '' || aging == null ? '' : normalizeInt_(aging));
+    }
     evRawMatchedCount++;
   }
 
@@ -1684,6 +1701,9 @@ function processEVBike_(ss, rawValues, headerIndexRaw, pic, opts) { // `pic` kep
   } catch (e) {}
 
   if (!values.length) return 0;
+  if (opts.matchesRow && !__isDryRun05c__() && values.length + 1 > sh.getMaxRows()) {
+    sh.insertRowsAfter(sh.getMaxRows(), values.length + 1 - sh.getMaxRows());
+  }
   // EV-Bike Last Status is user-managed free text (no enforced dropdown).
   // Clear DV BEFORE write to prevent setValues rejection:
   // "violates data validation rules ... Please enter one of ..."
@@ -1737,5 +1757,31 @@ function processDoss_(ss, rawValues, headerIndexRaw, pic) {
   return processEVBike_(ss, rawValues, headerIndexRaw, pic, {
     sheetName: 'Doss',
     claimToken: 'DOSS'
+  });
+}
+
+function matchesVerifiedOptionalRow05c_(sheetName, row, headerIndexRaw) {
+  const rules = VERIFIED_OPTIONAL_SHEET_POLICY[sheetName];
+  if (!rules) throw new Error('Unknown verified optional sheet: ' + sheetName);
+  return rules.some(function(rule) {
+    return rule.headers.some(function(header) {
+      const index = headerIndexRaw[header];
+      if (index == null) return false;
+      const value = String(row[index] == null ? '' : row[index]).trim().toLowerCase();
+      return (rule.keywords || []).some(function(keyword) { return value.indexOf(keyword) >= 0; })
+        || (rule.exact || []).some(function(code) { return value === code.toLowerCase(); });
+    });
+  });
+}
+
+function processTPL_(ss, rawValues, headerIndexRaw, pic) {
+  return processEVBike_(ss, rawValues, headerIndexRaw, pic, {
+    sheetName: 'TPL', matchesRow: function(row, index) { return matchesVerifiedOptionalRow05c_('TPL', row, index); }
+  });
+}
+
+function processDrone_(ss, rawValues, headerIndexRaw, pic) {
+  return processEVBike_(ss, rawValues, headerIndexRaw, pic, {
+    sheetName: 'Drone', matchesRow: function(row, index) { return matchesVerifiedOptionalRow05c_('Drone', row, index); }
   });
 }

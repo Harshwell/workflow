@@ -473,8 +473,11 @@ function runPipeline_(pic, fileIds, opts) {
     }
   }
 
+  const tplCount = processTPL_(ss, rawValues, headerIndexRaw, profileName) || 0;
+  const droneCount = processDrone_(ss, rawValues, headerIndexRaw, profileName) || 0;
+
   // Re-apply strict Submission Date/Month after optional sheet processors that are safe for generic sync.
-  try { applyStrictSubmissionDateAndMonth06b_(ss, rawValues, headerIndexRaw, { sheets: ['EV-Bike', 'Doss', 'Special Case'] }); } catch (eSubFix2) { try { logLine_('WARN', 'Submission date/month strict re-sync failed', '', String(eSubFix2), 'WARN'); } catch (e2) {} }
+  try { applyStrictSubmissionDateAndMonth06b_(ss, rawValues, headerIndexRaw, { sheets: ['EV-Bike', 'Doss', 'TPL', 'Drone', 'Special Case'] }); } catch (eSubFix2) { try { logLine_('WARN', 'Submission date/month strict re-sync failed', '', String(eSubFix2), 'WARN'); } catch (e2) {} }
 
   // Defensive sanitizer for known validation regressions:
   // - Submission Date turning into checkbox
@@ -524,7 +527,7 @@ function runPipeline_(pic, fileIds, opts) {
   } catch (eWrb) { try { logLine_('WARN', 'Weekly Report Base refresh failed', '', String(eWrb), 'WARN'); } catch (e2) {} }
   try {
     const ops = (typeof getOperationalSheetNames06b_ === 'function') ? getOperationalSheetNames06b_(profileName) : [];
-    const optional = ['B2B', 'EV-Bike', 'Doss', 'Special Case', 'Daily Report Base', 'Weekly Report Base'];
+    const optional = ['B2B', 'EV-Bike', 'Doss', 'TPL', 'Drone', 'Special Case', 'Daily Report Base', 'Weekly Report Base'];
     const seen = Object.create(null);
     ops.concat(optional).forEach(function(name) {
       const n = String(name || '').trim();
@@ -554,6 +557,8 @@ function runPipeline_(pic, fileIds, opts) {
     b2bCount: b2bCount,
     specialCaseCount: scCount,
     evBikeCount: evCount,
+    tplCount: tplCount,
+    droneCount: droneCount,
     exclusionTatCount: exTatCount,
     unknownFiles: buckets.unknown || []
   };
@@ -1166,7 +1171,7 @@ function getOperationalSheetNames06b_(pic) {
     sheets = ['Submission','Ask Detail','OR - OLD','Start','Finish','SC - Farhan','SC - Meilani','SC - Meindar','PO','Exclusion'];
   }
   // Only core operational sheets (exclude optional modules)
-  return sheets.filter(n => n && n !== 'B2B' && n !== 'EV-Bike' && n !== 'Special Case' && n !== 'Raw Data');
+  return sheets.filter(n => n && n !== 'B2B' && n !== 'EV-Bike' && n !== 'Doss' && n !== 'TPL' && n !== 'Drone' && n !== 'Special Case' && n !== 'Raw Data');
 }
 
 
@@ -1228,9 +1233,12 @@ function applyStrictSubmissionDateAndMonth06b_(ss, rawValues, headerIndexRaw, op
   let targetSheets = (opts && Array.isArray(opts.sheets) && opts.sheets.length) ? opts.sheets.slice() : [
     'Submission', 'Ask Detail', 'OR - OLD', 'Start', 'Finish', 'Expired Claim', 'Reject Claim',
     'SC - Farhan', 'SC - Meilani', 'SC - Meindar', 'SC - Unmapped', 'PO',
-    'Exclusion', 'EV-Bike', 'Doss'
+    'Exclusion', 'EV-Bike', 'Doss', 'TPL', 'Drone'
   ];
   if (flowName === 'main' && targetSheets.indexOf('Special Case') === -1 && !(opts && Array.isArray(opts.sheets))) targetSheets.push('Special Case');
+  if (flowName === 'sub') targetSheets = targetSheets.filter(function(name) {
+    return ['EV-Bike', 'Doss', 'TPL', 'Drone'].indexOf(name) < 0;
+  });
   targetSheets.forEach(function(name) {
     const sh = ss.getSheetByName(name);
     if (!sh) return;
@@ -1872,7 +1880,9 @@ function runMainPipelineStage2_() {
       { name: 'SPECIAL_CASE', run: function() { processSpecialCase_(ss, rows, index, profile); } },
       { name: 'EV_BIKE', run: function() { processEVBike_(ss, rows, index, profile); } },
       { name: 'DOSS', run: function() { processDoss_(ss, rows, index, profile); } },
-      { name: 'OPTIONAL_SUBMISSION_SYNC', run: function() { applyStrictSubmissionDateAndMonth06b_(ss, rows, index, { sheets: ['EV-Bike', 'Doss', 'Special Case'] }); } },
+      { name: 'TPL', run: function() { processTPL_(ss, rows, index, profile); } },
+      { name: 'DRONE', run: function() { processDrone_(ss, rows, index, profile); } },
+      { name: 'OPTIONAL_SUBMISSION_SYNC', run: function() { applyStrictSubmissionDateAndMonth06b_(ss, rows, index, { sheets: ['EV-Bike', 'Doss', 'TPL', 'Drone', 'Special Case'] }); } },
       { name: 'SANITIZE', run: function() { sanitizeProblematicDataValidations06_(ss, profile); } },
       { name: 'EXCLUSION_TAT', run: function() { recomputeExclusionTat_(ss, profile); } },
       { name: 'RAW_REORDER', run: function() { reorderRawDataColumns06_(rawSheet); } },
@@ -1893,7 +1903,7 @@ function runMainPipelineStage2_() {
       } },
       { name: 'FILTERS', bestEffort: true, run: function() {
         const seen = Object.create(null);
-        getOperationalSheetNames06b_(profile).concat(['B2B', 'EV-Bike', 'Doss', 'Special Case', 'Daily Report Base', 'Weekly Report Base']).forEach(function(name) {
+        getOperationalSheetNames06b_(profile).concat(['B2B', 'EV-Bike', 'Doss', 'TPL', 'Drone', 'Special Case', 'Daily Report Base', 'Weekly Report Base']).forEach(function(name) {
           if (!name || seen[name]) return;
           seen[name] = true;
           const sh = ss.getSheetByName(name);

@@ -13,7 +13,7 @@ function sheet(name, rows) {
   const colors = rows.map(() => ['#ffffff']);
   return {
     rows, writes, notes, colors, getName: () => name,
-    getLastRow: () => rows.length, getLastColumn: () => rows[0].length,
+    getMaxRows: () => 1000, getLastRow: () => rows.length, getLastColumn: () => rows[0].length,
     getRange(row, col, count, width) {
       return {
         getValues: () => rows.slice(row - 1, row - 1 + count).map(r => r.slice(col - 1, col - 1 + width).map(v => String(v).startsWith('=') ? 'calculated' : v)),
@@ -35,11 +35,12 @@ function sheet(name, rows) {
 }
 
 test('SUB EV-Bike and Doss append new claims and write only two existing columns', () => {
-  for (const [name, token] of [['EV-Bike', 'VVMAR'], ['Doss', 'DOSS']]) {
+  for (const [name, token] of [['EV-Bike', 'VVMAR'], ['Doss', 'DOSS'], ['TPL', 'CAH8'], ['Drone', 'HDSH']]) {
     const header = ['Claim Number', 'Last Status', 'Last Status Aging', 'Status', 'Remarks', 'DB Link', 'TAT', 'Owner Name'];
     const sh = sheet(name, [header, [token + '-001', 'OLD', 8, 'Manual', 'Keep', 'rich-link', '=1+1', 'Original']]);
     const before = sh.rows[1].slice();
-    const api = loadFunctions(optionalSource, ['updateTokenOptionalSheetFromSubRaw05c_', 'processEVBike_', 'processDoss_'], {
+    const api = loadFunctions(optionalSource, ['updateTokenOptionalSheetFromSubRaw05c_', 'processEVBike_', 'processDoss_', 'processTPL_', 'processDrone_', 'matchesVerifiedOptionalRow05c_'], {
+      VERIFIED_OPTIONAL_SHEET_POLICY: evaluateInitializer(fs.readFileSync('00_Config.gs', 'utf8'), 'VERIFIED_OPTIONAL_SHEET_POLICY'),
       RUNTIME: { flowName: 'sub' }, CONFIG: { headers: { claimNumber: 'claim_number', lastStatus: 'claim_last_status_name', businessPartner: 'partner_name' }, patterns: { evBikePartners: ['Ofero'] } },
       __getHeaderRow05c_: () => header, buildHeaderIndex_: h => Object.fromEntries(h.map((v, i) => [v, i])),
       __isDryRun05c__: () => false, safeSetValues_: (range, values) => range.setValues(values),
@@ -47,9 +48,9 @@ test('SUB EV-Bike and Doss append new claims and write only two existing columns
       buildSubmissionDateCell_: () => '', __setDbLinkRichTextSegments_: () => {},
       __sortOptionalSheetBySubmissionDate05c_: () => {}
     });
-    const index = { claim_number: 0, claim_last_status_name: 1, days_aging_from_last_activity: 2, holder_name: 3, partner_name: 4 };
-    const raw = [[token + '-001', 'NEW', 0, 'Changed owner', ''], [token + '-002', 'NEW', 2, 'New owner', ''], [token + '-002', 'DUPLICATE', 9, '', '']];
-    const process = () => name === 'Doss' ? api.processDoss_({ getSheetByName: () => sh }, raw, index, 'SUB') : api.processEVBike_({ getSheetByName: () => sh }, raw, index, 'SUB');
+    const index = { claim_number: 0, claim_last_status_name: 1, days_aging_from_last_activity: 2, holder_name: 3, partner_name: 4, partner_code: 5 };
+    const raw = [[token + '-001', 'NEW', 0, 'Changed owner', '', token], [token + '-002', 'NEW', 2, 'New owner', '', token], [token + '-002', 'DUPLICATE', 9, '', '', token]];
+    const process = () => name === 'TPL' ? api.processTPL_({ getSheetByName: () => sh }, raw, index, 'SUB') : name === 'Drone' ? api.processDrone_({ getSheetByName: () => sh }, raw, index, 'SUB') : name === 'Doss' ? api.processDoss_({ getSheetByName: () => sh }, raw, index, 'SUB') : api.processEVBike_({ getSheetByName: () => sh }, raw, index, 'SUB');
     process();
     assert.equal(sh.rows.length, 3);
     assert.equal(sh.rows[1][1], 'NEW');
@@ -65,6 +66,86 @@ test('SUB EV-Bike and Doss append new claims and write only two existing columns
     assert.equal(sh.rows[1][1], 'NEW', 'blank source preserves prior status');
     assert.equal(sh.rows[1][2], 0);
   }
+});
+
+test('TPL and Drone accept each verification independently and reject unrelated claims', () => {
+  const api = loadFunctions(optionalSource, ['matchesVerifiedOptionalRow05c_'], {
+    VERIFIED_OPTIONAL_SHEET_POLICY: evaluateInitializer(fs.readFileSync('00_Config.gs', 'utf8'), 'VERIFIED_OPTIONAL_SHEET_POLICY')
+  });
+  const cases = [
+    ['TPL', 'business_partner_name', 'Cahaya ID'], ['TPL', 'partner_name', 'Cahaya ID'], ['TPL', 'partner_code', 'CAH8'],
+    ['Drone', 'product_name', 'Qoala Drone 12 Month'], ['Drone', 'device_brand', 'DJI'],
+    ['Drone', 'device_type', 'DJI FLIP (DJI RC 2 GL)'], ['Drone', 'device_type', 'CAMERA DRONE'],
+    ['Drone', 'device_type', 'DJI LITO X1 - CAMERA DRONE'], ['Drone', 'partner_code', 'HDSH'],
+    ['Drone', 'repairer_location_store_name', 'Skylensindo Service Center'], ['Drone', 'sc_name', 'Skylensindo Service Center']
+  ];
+  for (const [name, header, value] of cases) {
+    assert.equal(api.matchesVerifiedOptionalRow05c_(name, [value.toLowerCase()], { [header]: 0 }), true, header + ':' + value);
+    assert.equal(api.matchesVerifiedOptionalRow05c_(name, [''], { [header]: 0 }), false);
+    assert.equal(api.matchesVerifiedOptionalRow05c_(name, ['unrelated'], { [header]: 0 }), false);
+  }
+  for (const name of ['TPL', 'Drone']) {
+    assert.equal(api.matchesVerifiedOptionalRow05c_(name, ['CAH8-HDSH'], { claim_number: 0 }), false);
+    assert.equal(api.matchesVerifiedOptionalRow05c_(name, ['CAH8'], { insurance_partner_code: 0 }), false);
+    assert.equal(api.matchesVerifiedOptionalRow05c_(name, [], {}), false);
+  }
+  assert.equal(api.matchesVerifiedOptionalRow05c_('Drone', ['HDSHX'], { partner_code: 0 }), false);
+  assert.equal(api.matchesVerifiedOptionalRow05c_('TPL', ['CAH80'], { partner_code: 0 }), false);
+  assert.equal(api.matchesVerifiedOptionalRow05c_('Drone', ['Drone', 'DJI', 'Skylensindo'], { product_name: 0, device_type: 1, sc_name: 2 }), true);
+});
+
+test('MAIN TPL and Drone upsert matching Raw claims with aging and preserve manual columns', () => {
+  for (const [name, code, processor] of [['TPL', 'CAH8', 'processTPL_'], ['Drone', 'HDSH', 'processDrone_']]) {
+    const header = ['Claim Number', 'Last Status', 'Last Status Aging', 'Status', 'Remarks', 'Owner Name'];
+    const sh = sheet(name, [header, ['C-001', 'OLD', 8, 'Manual', 'Keep', 'Original']]);
+    const api = loadFunctions(optionalSource, ['processEVBike_', 'processTPL_', 'processDrone_', 'matchesVerifiedOptionalRow05c_'], {
+      VERIFIED_OPTIONAL_SHEET_POLICY: evaluateInitializer(fs.readFileSync('00_Config.gs', 'utf8'), 'VERIFIED_OPTIONAL_SHEET_POLICY'),
+      RUNTIME: { flowName: 'main', enableEvBike: false },
+      CONFIG: { headers: { claimNumber: 'claim_number', lastStatus: 'claim_last_status_name', businessPartner: 'business_partner_name' }, patterns: {} },
+      __getHeaderRow05c_: () => header, buildHeaderIndex_: h => Object.fromEntries(h.map((v, i) => [v, i])),
+      __normalizeHeaderText05c_: value => value, getSpecialCaseExcludedStatuses_: () => new Set(),
+      getEvBikeExcludedPolicyNumberSet_: () => new Set(['EV-only-excluded']),
+      __isDryRun05c__: () => false, safeSetValues_: (range, values) => range.setValues(values),
+      normalizeInt_: value => Number(value), mapInsuranceShort_: value => value,
+      buildSubmissionDateCell_: () => '', __sortOptionalSheetBySubmissionDate05c_: () => {}
+    });
+    const index = { claim_number: 0, claim_last_status_name: 1, days_aging_from_last_activity: 2, holder_name: 3, partner_code: 4, policy_number: 5 };
+    const raw = [['C-001', 'MAIN', 0, 'Changed owner', code, 'EV-only-excluded'], ['C-002', 'NEW', 2, 'New owner', code], ['C-002', 'DUPLICATE', 9, '', code], ['VVMAR-REJECT', 'NEW', 4, 'Unrelated', 'OTHER']];
+    const ss = { getSheetByName: sheetName => sheetName === name ? sh : null };
+    api[processor](ss, raw, index, 'Master');
+    assert.equal(sh.rows.length, 3);
+    assert.deepEqual(sh.rows[1], ['C-001', 'MAIN', 0, 'Manual', 'Keep', 'Changed owner']);
+    assert.equal(sh.rows[2][0], 'C-002');
+    api[processor](ss, raw, index, 'Master');
+    assert.equal(sh.rows.length, 3);
+    assert.throws(() => api[processor]({ getSheetByName: () => null }, raw, index, 'Master'), /Optional sheet missing/);
+  }
+});
+
+test('SUB optional refresh calls TPL and Drone after each OLD/NEW source and surfaces failures', () => {
+  const source = fs.readFileSync('06a_EntryPoints.gs', 'utf8');
+  const calls = [];
+  const context = { buildHeaderIndex_: () => ({ claim_number: 0 }) };
+  for (const name of ['processEVBike_', 'processDoss_', 'processTPL_', 'processDrone_']) {
+    context[name] = (_ss, rows, _index, pic) => { calls.push([name, rows[0][0], pic]); return 1; };
+  }
+  const ss = { getSheetByName: name => ({ getLastRow: () => 2, getLastColumn: () => 1, getRange: () => ({ getValues: () => [['claim_number'], [name]] }) }) };
+  const api = loadFunctions(source, ['__refreshTokenOptionalSheetsFromSubRaw06a_', '__getSubRelocationSheetNames06a_'], context);
+  const result = api.__refreshTokenOptionalSheetsFromSubRaw06a_(ss, ['Raw OLD', 'Raw NEW']);
+  assert.equal(result.tpl, 2); assert.equal(result.drone, 2);
+  assert.deepEqual(calls.filter(c => c[0] === 'processDrone_'), [['processDrone_', 'Raw OLD', 'SUB'], ['processDrone_', 'Raw NEW', 'SUB']]);
+  assert.deepEqual(Array.from(api.__getSubRelocationSheetNames06a_(['TPL', 'Drone', 'Doss', 'EV-Bike', 'Start', 'Exclusion'])), ['Start', 'Exclusion']);
+  context.processDrone_ = () => { throw new Error('Drone write failed'); };
+  const failed = loadFunctions(source, ['__refreshTokenOptionalSheetsFromSubRaw06a_'], context);
+  assert.throws(() => failed.__refreshTokenOptionalSheetsFromSubRaw06a_(ss, ['Raw NEW']), /Drone write failed/);
+});
+
+test('SUB submission date sync cannot write into the four selective optional sheets', () => {
+  const api = loadFunctions(pipelineSource, ['applyStrictSubmissionDateAndMonth06b_'], {
+    RUNTIME: { flowName: 'sub' }, resolveRawIdx06_: (index, aliases) => aliases.map(name => index[name]).find(value => value != null)
+  });
+  api.applyStrictSubmissionDateAndMonth06b_({ getSheetByName() { throw new Error('Optional sheet must not be touched'); } },
+    [['C-001', '2026-10-09']], { claim_number: 0, claim_submitted_datetime: 1 }, { sheets: ['EV-Bike', 'Doss', 'TPL', 'Drone'] });
 });
 
 function flags(sh, extras = {}) {
@@ -181,7 +262,7 @@ test('SUB generic enrichment excludes optional sheets and waits for pending MAIN
     withTryScriptLock_: (_timeout, fn) => ({ acquired: true, result: fn() }),
     __markSubPendingAfterBusyLock06a_: () => { marked = true; }
   });
-  api.__updateOperationalSheetsFromRaw06a_({ getSheetByName() { throw new Error('Optional sheet must not enter generic updater'); } }, ['EV-Bike', 'Doss'], new Map(), {});
+  api.__updateOperationalSheetsFromRaw06a_({ getSheetByName() { throw new Error('Optional sheet must not enter generic updater'); } }, ['EV-Bike', 'Doss', 'TPL', 'Drone'], new Map(), {});
   const result = api.__withTryLockSub06a_(() => { ran = true; });
   assert.equal(result.pending, true);
   assert.equal(marked, true);
@@ -232,7 +313,7 @@ test('stage 2 resumes flagging and delays cleanup and SUB until complete', () =>
     shouldRunWeeklyReportBaseNow06b_: () => false, getOperationalSheetNames06b_: () => [],
     flushTrashQueueBestEffort_: () => calls.push('TRASH'), __drainPendingSubAfterMain06a_: () => calls.push('SUB')
   };
-  for (const name of ['applyTemplateRowToOperationalSheets_', 'restoreOpsFieldsFromRawBackup_', 'restoreNamedOpsFieldsFromRaw06c_', 'applyUpdateStatusRichTextToOperational_', 'applyRemarksRichTextToOperational_', 'restoreOpsManualFromMainTempForSub06c_', 'restoreOpsManualFromBackupSheet06c_', 'enrichOperationalSheetsFromRaw06_', 'applyStrictSubmissionDateAndMonth06b_', 'autofillBranchInScSheets06_', 'applyFinishTypeInScSheets06_', 'processB2B_', 'processSpecialCase_', 'processEVBike_', 'processDoss_', 'sanitizeProblematicDataValidations06_', 'recomputeExclusionTat_', 'reorderRawDataColumns06_', 'sortOperationalSheetsPreserveFilter06b_', 'refreshReportBaseFromOperational06_']) context[name] = () => calls.push(name);
+  for (const name of ['applyTemplateRowToOperationalSheets_', 'restoreOpsFieldsFromRawBackup_', 'restoreNamedOpsFieldsFromRaw06c_', 'applyUpdateStatusRichTextToOperational_', 'applyRemarksRichTextToOperational_', 'restoreOpsManualFromMainTempForSub06c_', 'restoreOpsManualFromBackupSheet06c_', 'enrichOperationalSheetsFromRaw06_', 'applyStrictSubmissionDateAndMonth06b_', 'autofillBranchInScSheets06_', 'applyFinishTypeInScSheets06_', 'processB2B_', 'processSpecialCase_', 'processEVBike_', 'processDoss_', 'processTPL_', 'processDrone_', 'sanitizeProblematicDataValidations06_', 'recomputeExclusionTat_', 'reorderRawDataColumns06_', 'sortOperationalSheetsPreserveFilter06b_', 'refreshReportBaseFromOperational06_']) context[name] = () => calls.push(name);
   let highlighted = false;
   context.applyOperationalClaimHighlightsByRaw_ = (_ss, _rows, _index, _profile, opts) => {
     opts.onCheckpoint({ sheet: 0, row: 502 });
@@ -248,6 +329,8 @@ test('stage 2 resumes flagging and delays cleanup and SUB until complete', () =>
   api.runMainPipelineStage2_();
   assert.equal(calls.filter(c => c === 'CLEAR').length, 1);
   assert.equal(calls.filter(c => c === 'ROUTE').length, 1);
+  assert.equal(calls.filter(c => c === 'processTPL_').length, 1);
+  assert.equal(calls.filter(c => c === 'processDrone_').length, 1);
   assert.deepEqual(calls.slice(-2), ['TRASH', 'SUB']);
   assert.equal(payload, null);
 });

@@ -338,7 +338,7 @@ const SV03_TEMPLATES = Object.freeze({
 });
 
 // Optional sheets used in the single-master workbook (always enabled)
-const SV03_OPTIONAL_SHEETS_DEFAULT = Object.freeze(['B2B', 'EV-Bike', 'Doss', 'Special Case']);
+const SV03_OPTIONAL_SHEETS_DEFAULT = Object.freeze(['B2B', 'EV-Bike', 'Doss', 'TPL', 'Drone', 'Special Case']);
 
 
 /** ---------- Fixed schema guard ---------- */
@@ -597,8 +597,8 @@ function ensurePicSheets_(ss, pic) {
         return;
       }
 
-      if (name === 'Doss') {
-        sv03_ensureSheetWithHeader_(ss, 'Doss', SV03_TEMPLATES.EV_BIKE, pic);
+      if (['Doss', 'TPL', 'Drone'].indexOf(name) >= 0) {
+        sv03_ensureSheetWithHeader_(ss, name, SV03_TEMPLATES.EV_BIKE, pic);
         return;
       }
 
@@ -641,7 +641,7 @@ function sv03_removeAllFiltersForPic_(ss, rawSheet, pic) {
   targets.forEach(name => {
     // Keep EV-Bike/Doss filter criteria; runtime expands their filter ranges before writes.
     const optionalTokenSheet = String(name || '').trim();
-    if (optionalTokenSheet === 'EV-Bike' || optionalTokenSheet === 'Doss') return;
+    if (['EV-Bike', 'Doss', 'TPL', 'Drone'].indexOf(optionalTokenSheet) >= 0) return;
     const sh = ss.getSheetByName(name);
     if (sh) sv03_removeSheetFilter_(sh);
   });

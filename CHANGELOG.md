@@ -4,6 +4,8 @@ Perubahan material repository dicatat di sini berdasarkan outcome, flow/project 
 
 ## Unreleased
 
+- TPL dan Drone memakai optional upsert by Claim Number pada MAIN dan SUB. TPL menerima Cahaya ID atau partner_code CAH8; Drone menerima salah satu keyword Drone/DJI/Skylensindo atau partner_code HDSH. SUB existing hanya meng-update Last Status/Last Status Aging; registrasi schema, MAIN continuation, SUB refresh, filter, validation, dan pengecualian relocation/generic updater disinkronkan.
+
 - Branch Salvage menormalisasi CV Berkah Athallah menjadi `CV Berkah`, GH Store Pontianak menjadi `GH Store`, Deltasindo Sorong menjadi `Deltafone`, dan Skylensindo Service Center menjadi `Skylensindo`; PIC Farhan/Meindar existing tetap sesuai mapping, tanpa menambahkan owner baru untuk Skylensindo.
 
 - Salvage menentukan PIC Meindar langsung dari Service Center J-Bros, B-Store, Deltasindo, dan GH Store termasuk nama panjang/suffix lokasi, tanpa bergantung pada Branch kosong atau stale; CV Berkah Athallah tetap Farhan, dan nama panjang di Branch juga dikenali saat Service Center kosong. Override EzCare Apple tetap diprioritaskan.

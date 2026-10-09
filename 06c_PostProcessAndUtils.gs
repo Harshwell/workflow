@@ -1057,7 +1057,7 @@ function sanitizeProblematicDataValidations06_(ss, pic) {
   });
 
   // 2) EV-Bike/Doss: clear DV on Last Status to avoid validation violations when writing statuses
-  ['EV-Bike', 'Doss'].forEach(function(sheetName) {
+  ['EV-Bike', 'Doss', 'TPL', 'Drone'].forEach(function(sheetName) {
     try {
       const ev = ss.getSheetByName(sheetName);
       if (!ev) return;
@@ -1860,7 +1860,7 @@ function enforceOperationalLayout06_(ss) {
     'Aging Post': 'Stage Aging'
   };
 
-  const allCleanupSheets = ['Submission', 'Ask Detail', 'OR - OLD', 'Start', 'Finish', 'Expired Claim', 'Reject Claim', 'SC - Farhan', 'SC - Meilani', 'SC - Meindar', 'SC - Unmapped', 'PO', 'Exclusion', 'B2B', 'EV-Bike', 'Doss', 'Special Case'];
+  const allCleanupSheets = ['Submission', 'Ask Detail', 'OR - OLD', 'Start', 'Finish', 'Expired Claim', 'Reject Claim', 'SC - Farhan', 'SC - Meilani', 'SC - Meindar', 'SC - Unmapped', 'PO', 'Exclusion', 'B2B', 'EV-Bike', 'Doss', 'TPL', 'Drone', 'Special Case'];
   allCleanupSheets.forEach(function(name) {
     const sh = ss.getSheetByName(name);
     if (!sh) return;
@@ -1875,7 +1875,7 @@ function enforceOperationalLayout06_(ss) {
     if (name === 'Submission') touched += __removeHeaderColumns06_(sh, ['Start Date', 'End Date', 'Details', 'Submission Date', 'Stage Aging', 'Aging Position', 'Aging Post.', 'Aging Post'], { 'Submission Date': true });
   });
 
-  ['EV-Bike', 'Doss', 'B2B'].forEach(function(name) {
+  ['EV-Bike', 'Doss', 'TPL', 'Drone', 'B2B'].forEach(function(name) {
     const sh = ss.getSheetByName(name);
     if (!sh) return;
     touched += __removeHeaderColumns06_(sh, evDossB2bDeprecated, {});
@@ -3282,6 +3282,8 @@ function runSelfCheck_() {
     'processSpecialCase_',
     'processEVBike_',
     'processDoss_',
+    'processTPL_',
+    'processDrone_',
     '__expandSheetFilterToUsedRange06_',
     '__expandWorkbookFiltersToUsedRange06_',
     'sortOperationalSheetsPreserveFilter06b_',

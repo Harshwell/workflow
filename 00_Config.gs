@@ -70,7 +70,7 @@ const CONFIG_SECTION_INDEX = Object.freeze({
   workbook: Object.freeze(['MASTER_SPREADSHEET_ID', 'MASTER_RAW_SHEET_NAME', 'WORKBOOK_PROFILES']),
   routing: Object.freeze(['OPS_ROUTING_POLICY', 'STATUS_TYPE_BY_LAST_STATUS', 'POSITION_BY_LAST_STATUS', 'FINISH_STATUSES']),
   validationAndPresentation: Object.freeze(['VALIDATION_POLICY', 'VALIDATION_FALLBACKS', 'STATUS_DROPDOWN_TEMPLATE', 'CHECKBOX_POLICY', 'LINK_POLICY', 'COLUMN_TYPES', 'COLUMN_ALIGNMENT']),
-  optionalSheets: Object.freeze(['SPECIAL_CASE_WRITER_POLICY', 'EVBIKE_POLICY', 'EXCLUSION_TAT_POLICY', 'OPTIONAL_SHEETS_FLAGS']),
+  optionalSheets: Object.freeze(['SPECIAL_CASE_WRITER_POLICY', 'EVBIKE_POLICY', 'VERIFIED_OPTIONAL_SHEET_POLICY', 'EXCLUSION_TAT_POLICY', 'OPTIONAL_SHEETS_FLAGS']),
   observability: Object.freeze(['LOG_POLICY', 'MAPPING_ERROR_LOG_POLICY', 'DETAILS_LOG_POLICY', 'UI_FLAGS'])
 });
 
@@ -313,7 +313,9 @@ const SUB_FLOW_SPEC = Object.freeze({
     'Expired Claim',
     'Reject Claim',
     'EV-Bike',
-    'Doss'
+    'Doss',
+    'TPL',
+    'Drone'
   ]),
 
   // Standard operational headers (destination)
@@ -690,6 +692,20 @@ const EVBIKE_POLICY = Object.freeze({
   // Runtime behavior
   UPSERT_ON_EVERY_RUN: true,
   DO_NOT_RESET_FILTER: true
+});
+
+const VERIFIED_OPTIONAL_SHEET_POLICY = Object.freeze({
+  TPL: Object.freeze([
+    Object.freeze({ headers: ['business_partner_name', 'partner_name'], keywords: ['cahaya id'] }),
+    Object.freeze({ headers: ['partner_code'], exact: ['CAH8'] })
+  ]),
+  Drone: Object.freeze([
+    Object.freeze({ headers: ['product_name'], keywords: ['drone'] }),
+    Object.freeze({ headers: ['device_brand'], keywords: ['dji'] }),
+    Object.freeze({ headers: ['device_type'], keywords: ['dji', 'drone'] }),
+    Object.freeze({ headers: ['repairer_location_store_name', 'sc_name'], keywords: ['skylensindo'] }),
+    Object.freeze({ headers: ['partner_code'], exact: ['HDSH'] })
+  ])
 });
 
 const DOSS_POLICY = Object.freeze({
@@ -2064,7 +2080,7 @@ const CONFIG = Object.freeze({
         OPS_ROUTING_POLICY.SHEETS.PO,
         OPS_ROUTING_POLICY.SHEETS.EXCLUSION
       ]),
-      optional: Object.freeze(['B2B', 'EV-Bike', 'Doss', 'Special Case'])
+      optional: Object.freeze(['B2B', 'EV-Bike', 'Doss', 'TPL', 'Drone', 'Special Case'])
     }),
     [WORKBOOK_PROFILES.ADMIN]: Object.freeze({
       core: Object.freeze([MASTER_RAW_SHEET_NAME]),

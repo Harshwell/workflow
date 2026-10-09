@@ -186,7 +186,7 @@ MAIN adalah refresh utama. Ia mengambil file export claim terbaru, menjadikannya
 | Input file | File utama, dengan aging/standardization bila tersedia | File utama wajib ditemukan; file tambahan memperkaya aging. |
 | Landing source | `Raw Data` | Snapshot mentah/canonical dan tempat backup durable field manual. |
 | Target operasional | `Submission`, `Ask Detail`, `OR - OLD`, `Start`, `Finish`, `Expired Claim`, `Reject Claim`, `SC - Farhan`, `SC - Meilani`, `SC - Meindar`, `SC - Unmapped`, `PO`, `Exclusion` | Claim masuk ke sheet sesuai `Last Status`; claim SC juga dipisahkan menurut Service Center. |
-| Target opsional | `B2B`, `EV-Bike`, `Doss`, `Special Case` | Dibentuk dari aturan eligibility masing-masing, bukan diedit sebagai source utama. |
+| Target opsional | `B2B`, `EV-Bike`, `Doss`, `TPL`, `Drone`, `Special Case` | Dibentuk dari aturan eligibility masing-masing, bukan diedit sebagai source utama. |
 | Target laporan | `Daily Report Base`, `Weekly Report Base` | Snapshot untuk kebutuhan reporting setelah routing/enrichment. |
 | Observability | `Overview`, `Log - Main`, details/progress terkait | Tempat operator melihat flow, progress, durasi, hasil, dan error. |
 
@@ -571,6 +571,8 @@ Branch Salvage dinormalisasi dari Service Center: `CV Berkah Athallah Branch Sto
 | `B2B` | MAIN: `id_business_partner_category_name = B2B Partnership`; closed/expired exclusions berlaku. | `processB2B_`; tidak memakai partner-pattern/claim-token fallback. SUB tidak rebuild/append, hanya update claim existing. |
 | `EV-Bike` | Claim token `VVMAR` atau partner EV terdaftar, plus Submission overlay pada MAIN. | `processEVBike_`; SUB menambah claim baru dan hanya menulis `Last Status`/`Last Status Aging` pada claim existing, tanpa rewrite kolom lain. Source blank tidak menghapus nilai existing. |
 | `Doss` | Claim token `DOSS`, tanpa partner fallback; MAIN juga membaca Submission. | Memakai EV-Bike writer; SUB mempunyai kontrak dua kolom yang sama. Formula, rich text/link, dan field manual existing dipertahankan. |
+| `TPL` | Cahaya ID pada business_partner_name/partner_name, atau partner_code CAH8. | `processTPL_`; MAIN upsert dari Raw Data, SUB existing hanya Last Status/Last Status Aging. |
+| `Drone` | Salah satu keyword Drone/DJI/Skylensindo pada kolom sumber yang ditentukan, atau partner_code HDSH. | `processDrone_`; MAIN/SUB mengikuti optional writer; tidak masuk generic update/relocation SUB. |
 | `Special Case` | MAIN-only flags: Flex, `month_policy_aging > 12`, first-month policy, atau policy remaining under 30 days. | Fixed schema, upsert, all flagged claims retained; `Reason`, Start/End/Details remain active. |
 
 ## Data-Contract Registry
@@ -625,6 +627,10 @@ Reconciled contract: current runtime treats `claim_submitted_datetime` as primar
 | `Update Status Asso`, `Timestamp Asso`, `Update Status Admin`, `Timestamp Admin` | Deprecated. | Removed/ignored by layout enforcement and writers. |
 
 Dropdown `Status` pada Raw Data dan seluruh target memakai urutan canonical: `Pending Logistic`, `Pending Front`, `DONE`, `Pending Insurance`, `Pending TO`, `Pending Finance`, `Pending PIC`, `Pending Cust`, `Pending Buss. Team`, `Pending SC (TA)`, `Pending SC (Repair)`, `Pending SC (Estimation)`, `Delivering`, `Delivered`, `Waiting Courier`, dan `Re-pickup`. Pembaruan validation tidak memutasi nilai manual lama yang telah dibackup.
+
+TPL dan Drone merupakan optional sheets dengan schema yang sama seperti Doss/EV-Bike. MAIN memakai Raw Data untuk upsert by Claim Number dan memperbarui field sumber (termasuk Last Status/Last Status Aging), sambil mempertahankan kolom manual Status, Update Status, Timestamp, dan Remarks. SUB memproses Raw OLD lalu Raw NEW; claim baru di-append, claim existing hanya ditulis Last Status dan Last Status Aging. Source kosong tidak menghapus status/aging lama, angka aging 0 tetap valid, dan rerun tidak menambah duplicate. Kedua sheet dikecualikan dari updater operational umum dan relocation, serta memakai checkpoint MAIN terpisah.
+
+Filter TPL: business_partner_name (atau partner_name) mengandung Cahaya ID, atau partner_code tepat CAH8. Filter Drone memakai OR: product_name mengandung Drone; device_brand mengandung DJI; device_type mengandung DJI atau Drone; repairer_location_store_name/sc_name mengandung Skylensindo; atau partner_code tepat HDSH. Semua pencocokan tidak peka huruf besar/kecil; satu kriteria sudah cukup. Claim dapat masuk beberapa optional sheets bila memenuhi masing-masing filter. Nilai CAH8/HDSH hanya diperiksa pada partner_code, bukan Claim Number atau insurance_partner_code. Submission overlay dan exclusion policy khusus EV-Bike tidak dipakai untuk TPL/Drone. Sync source ke Apps Script dan UAT MAIN/SUB pada kedua sheet diperlukan untuk memverifikasi runtime Google Sheets.
 
 Dropdown `Status` menggunakan template native `Overview!C945`, ditetapkan oleh `STATUS_DROPDOWN_TEMPLATE`. Cell ini harus berisi dropdown asli dengan display style chip, warna opsi, dan seluruh opsi yang dibutuhkan; cell boleh kosong atau memiliki pilihan. Backup/restore dan sinkronisasi menyalin hanya data validation melalui `PASTE_DATA_VALIDATION`, tanpa mengambil pilihan dari C945 atau membangun ulang rule. Nilai `Status` per Claim Number tetap dipertahankan, termasuk blank dan nilai legacy; nilai di luar opsi template tidak dipaksa menjadi opsi lain dan mungkin tidak tampil sebagai chip berwarna. MAIN memvalidasi template sebelum mutasi Raw/routing. Template hilang, bukan dropdown, atau gagal disalin harus fail visibly tanpa fallback dropdown panah biasa. `STATUS_DROPDOWN_OPTIONS` tetap tersedia untuk compatibility, tetapi bukan owner tampilan/opsi native template. Metadata chip/warna perlu diverifikasi di runtime Google Sheets.
 

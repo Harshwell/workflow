@@ -611,7 +611,9 @@ function runSubFromFormDrive06a_(req, runId) {
     'Expired Claim',
     'Reject Claim',
     'EV-Bike',
-    'Doss'
+    'Doss',
+    'TPL',
+    'Drone'
   ];
   let opSheets = (Array.isArray(subFlow.OPERATIONAL_SHEETS) && subFlow.OPERATIONAL_SHEETS.length)
     ? subFlow.OPERATIONAL_SHEETS.map(s => String(s || '').trim()).filter(Boolean)
@@ -741,7 +743,7 @@ function __getSubRelocationSheetNames06a_(sheetNames) {
   const names = Array.isArray(sheetNames) ? sheetNames : [];
   // B2B/EV-Bike/Doss are optional buckets; SUB relocation must not move/delete their rows.
   // Exclusion MUST stay in relocation scope so status transitions like DONE_REPAIR -> DONE can move there.
-  const blocked = new Set(['b2b', 'ev-bike', 'doss']);
+  const blocked = new Set(['b2b', 'ev-bike', 'doss', 'tpl', 'drone']);
   return names.filter(function (name) {
     const key = String(name || '').trim().toLowerCase();
     return key && !blocked.has(key);
@@ -859,7 +861,7 @@ function ensureMasterSheets_(ss) {
     // Operational
     'Submission', 'Ask Detail', 'OR - OLD', 'Start', 'Finish', 'Expired Claim', 'Reject Claim', 'SC - Farhan', 'SC - Meilani', 'SC - Meindar', 'SC - Unmapped', 'PO', 'Exclusion',
     // Optional
-    'B2B', 'EV-Bike', 'Doss', 'Special Case'
+    'B2B', 'EV-Bike', 'Doss', 'TPL', 'Drone', 'Special Case'
   ];
 
   // Prefer 03 templates if available; otherwise create minimal sheets.
@@ -876,8 +878,8 @@ function ensureMasterSheets_(ss) {
         sv03_ensureSheetWithHeader_(ss, 'B2B', SV03_TEMPLATES.B2B, 'Master');
       } else if (name === 'EV-Bike' && SV03_TEMPLATES.EV_BIKE) {
         sv03_ensureSheetWithHeader_(ss, 'EV-Bike', SV03_TEMPLATES.EV_BIKE, 'Master');
-      } else if (name === 'Doss' && SV03_TEMPLATES.EV_BIKE) {
-        sv03_ensureSheetWithHeader_(ss, 'Doss', SV03_TEMPLATES.EV_BIKE, 'Master');
+      } else if (['Doss', 'TPL', 'Drone'].indexOf(name) >= 0 && SV03_TEMPLATES.EV_BIKE) {
+        sv03_ensureSheetWithHeader_(ss, name, SV03_TEMPLATES.EV_BIKE, 'Master');
       } else if (name === 'Special Case' && SV03_TEMPLATES.SPECIAL_CASE) {
         sv03_ensureSheetWithHeader_(ss, 'Special Case', SV03_TEMPLATES.SPECIAL_CASE, 'Master');
       } else if (SV03_TEMPLATES.OPS_PIC_DEFAULT) {
@@ -1300,7 +1302,9 @@ function runSubEmailIngest(maxThreads, options) {
       'Expired Claim',
       'Reject Claim',
       'EV-Bike',
-      'Doss'
+      'Doss',
+      'TPL',
+      'Drone'
     ];
     let opSheets = (Array.isArray(subFlow.OPERATIONAL_SHEETS) && subFlow.OPERATIONAL_SHEETS.length)
       ? subFlow.OPERATIONAL_SHEETS.map(s => String(s || '').trim()).filter(Boolean)
@@ -1450,7 +1454,7 @@ function isMainSubHandoffWindow06a_(now) {
 
 function __refreshTokenOptionalSheetsFromSubRaw06a_(ss, rawSheetNames) {
   const names = Array.isArray(rawSheetNames) ? rawSheetNames : [];
-  const out = { sheets: {}, evBike: 0, doss: 0 };
+  const out = { sheets: {}, evBike: 0, doss: 0, tpl: 0, drone: 0 };
   for (let i = 0; i < names.length; i++) {
     const rawName = String(names[i] || '').trim();
     if (!rawName) continue;
@@ -1467,9 +1471,13 @@ function __refreshTokenOptionalSheetsFromSubRaw06a_(ss, rawSheetNames) {
     let doss = 0;
     if (typeof processEVBike_ === 'function') ev = processEVBike_(ss, rows, headerIndex, 'SUB') || 0;
     if (typeof processDoss_ === 'function') doss = processDoss_(ss, rows, headerIndex, 'SUB') || 0;
+    const tpl = processTPL_(ss, rows, headerIndex, 'SUB') || 0;
+    const drone = processDrone_(ss, rows, headerIndex, 'SUB') || 0;
+    out.tpl += tpl;
+    out.drone += drone;
     out.evBike += ev;
     out.doss += doss;
-    out.sheets[rawName] = { evBike: ev, doss: doss };
+    out.sheets[rawName] = { evBike: ev, doss: doss, tpl: tpl, drone: drone };
   }
   return out;
 }
@@ -2009,7 +2017,7 @@ function __updateOperationalSheetsFromRaw06a_(ss, sheetNames, rawMap, ctx) {
     const name = String(names[i] || '').trim();
     if (!name) continue;
 
-    if (name === 'EV-Bike' || name === 'Doss') continue;
+    if (['EV-Bike', 'Doss', 'TPL', 'Drone'].indexOf(name) >= 0) continue;
     const sh = ss.getSheetByName(name);
     if (!sh) {
       try { logLine_('SUB_WARN', 'Operational sheet not found (skip)', name, '', 'WARN'); } catch (e1) {}
