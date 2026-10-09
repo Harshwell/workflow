@@ -4,6 +4,8 @@ Perubahan material repository dicatat di sini berdasarkan outcome, flow/project 
 
 ## Unreleased
 
+- MAIN dimajukan dari 08:00 ke 06:00 Asia/Jakarta. Policy jadwal bersama menyelaraskan skip SUB ke jam MAIN dan handoff/manual restore serta gate Weekly Report Base SUB ke 07:00 (MAIN + satu jam); SUB tetap hourly, force-after-MAIN/lock/pending tetap berlaku, dan FORM SUB tetap immediate. Installer mengganti trigger MAIN lama saat dijalankan ulang.
+
 - TPL dan Drone memakai optional upsert by Claim Number pada MAIN dan SUB. TPL menerima Cahaya ID atau partner_code CAH8; Drone menerima salah satu keyword Drone/DJI/Skylensindo atau partner_code HDSH. SUB existing hanya meng-update Last Status/Last Status Aging; registrasi schema, MAIN continuation, SUB refresh, filter, validation, dan pengecualian relocation/generic updater disinkronkan.
 
 - Branch Salvage menormalisasi CV Berkah Athallah menjadi `CV Berkah`, GH Store Pontianak menjadi `GH Store`, Deltasindo Sorong menjadi `Deltafone`, dan Skylensindo Service Center menjadi `Skylensindo`; PIC Farhan/Meindar existing tetap sesuai mapping, tanpa menambahkan owner baru untuk Skylensindo.

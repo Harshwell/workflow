@@ -924,7 +924,7 @@ function ensureRawTailColumns06_(rawSheet) {
  * Email ingest flow (Dashboard → Raw Data)
  * ========================= */
 function buildDashboardEmailQuery_(policy) {
-  // MAIN (daily 08:00) must be QUEUE-based and deterministic.
+  // MAIN (daily 06:00) must be QUEUE-based and deterministic.
   // Gmail filter should apply label QUEUED_MAIN to matching emails.
   const p = policy || (CONFIG && CONFIG.emailIngest) || {};
 
@@ -1130,12 +1130,12 @@ function runEmailIngest(maxThreads) {
 
 
 /** =========================
- * SUB email ingest (QUEUED_SUB, hourly except 08:00)
+ * SUB email ingest (QUEUED_SUB, hourly except 06:00)
  * ========================= */
 
 /**
- * Install hourly trigger for SUB consumer (runs every hour; handler skips at 08:00).
- * Note: time-based triggers cannot express "every hour except 08:00", so the skip is done in code.
+ * Install hourly trigger for SUB consumer (runs every hour; handler skips at 06:00).
+ * Note: time-based triggers cannot express "every hour except 06:00", so the skip is done in code.
  */
 function installSubEmailIngestTrigger() {
   const triggers = ScriptApp.getProjectTriggers();
@@ -1145,7 +1145,7 @@ function installSubEmailIngestTrigger() {
     }
   });
 
-  // Hourly execution; actual skip at 08:00 is enforced inside runSubEmailIngest().
+  // Hourly execution; actual skip at 06:00 is enforced inside runSubEmailIngest().
   ScriptApp.newTrigger('runSubEmailIngest')
     .timeBased()
     .everyHours(1)
@@ -1154,7 +1154,7 @@ function installSubEmailIngestTrigger() {
 }
 
 /**
- * SUB queue consumer (hourly, skip at 08:00).
+ * SUB queue consumer (hourly, skip at 06:00).
  * - Reads 1 email thread from label:QUEUED_SUB with subject "Claim Monitoring Operational Dashboard"
  * - Expects 2 XLSX attachments: OLD + NEW
  * - Process order: OLD first, then NEW
@@ -1171,13 +1171,13 @@ function runSubEmailIngest(maxThreads, options) {
   try { if (typeof runtimePreflight06f_ === 'function') runtimePreflight06f_('SUB_PIPELINE'); } catch (ePf) {}
   const opt = options || {};
 
-  // Skip 08:00 hour to avoid collision with MAIN daily ingest.
+  // Skip 06:00 hour to avoid collision with MAIN daily ingest.
   try {
     const tz = (typeof getTzSafe_ === 'function') ? getTzSafe_() : (Session.getScriptTimeZone() || 'Asia/Jakarta');
     const hr = Number(Utilities.formatDate(new Date(), tz, 'H'));
-    if (hr === 8 && !opt.forceAfterMain) {
-      try { resetRunState_(); logLine_('SUB_SKIP', 'Skip SUB at 08:00 to avoid MAIN', '', '', 'INFO'); } catch (e1) {}
-      return { severity: 'INFO', message: 'Skip SUB at 08:00', processed: 0, failed: 0, skipped: true };
+    if (hr === FLOW_SCHEDULE_POLICY.MAIN_HOUR && !opt.forceAfterMain) {
+      try { resetRunState_(); logLine_('SUB_SKIP', 'Skip SUB during MAIN hour ' + FLOW_SCHEDULE_POLICY.MAIN_HOUR, '', '', 'INFO'); } catch (e1) {}
+      return { severity: 'INFO', message: 'Skip SUB during MAIN hour ' + FLOW_SCHEDULE_POLICY.MAIN_HOUR, processed: 0, failed: 0, skipped: true };
     }
   } catch (e0) {}
 
@@ -1408,7 +1408,7 @@ function runSubEmailIngest(maxThreads, options) {
       if (typeof refreshReportBaseFromOperational06_ === 'function') refreshReportBaseFromOperational06_(masterSs);
     } catch (eRb) { try { logLine_('SUB_WARN', 'Report Base refresh failed', String(eRb), '', 'WARN'); } catch (eRb2) {} }
 
-    // MAIN→SUB handoff is valid only for the 09:00 SUB window; later hourly SUB runs must not restore it.
+    // MAIN→SUB handoff is valid only for the 07:00 SUB window; later hourly SUB runs must not restore it.
     if (isMainSubHandoffWindow06a_()) {
       try {
         if (typeof restoreOpsManualFromMainTempForSub06c_ === 'function') {
@@ -1418,7 +1418,7 @@ function runSubEmailIngest(maxThreads, options) {
         }
       } catch (eTr) { try { logLine_('SUB_TEMP_RESTORE_WARN', 'MAIN temp restore failed (non-fatal)', String(eTr), '', 'WARN'); } catch (eTr3) {} }
     } else {
-      try { logLine_('SUB_TEMP_RESTORE_SKIP', 'Skip MAIN handoff outside 09:00 window', '', '', 'INFO'); } catch (eTrSkip) {}
+      try { logLine_('SUB_TEMP_RESTORE_SKIP', 'Skip MAIN handoff outside configured window', '', '', 'INFO'); } catch (eTrSkip) {}
     }
 
 
@@ -1449,7 +1449,8 @@ function runSubEmailIngest(maxThreads, options) {
 function isMainSubHandoffWindow06a_(now) {
   const d = now || new Date();
   const tz = (typeof getTzSafe_ === 'function') ? getTzSafe_() : Session.getScriptTimeZone();
-  return Number(Utilities.formatDate(d, tz, 'H')) === 9;
+  const handoffHour = (FLOW_SCHEDULE_POLICY.MAIN_HOUR + FLOW_SCHEDULE_POLICY.SUB_HANDOFF_OFFSET_HOURS) % 24;
+  return Number(Utilities.formatDate(d, tz, 'H')) === handoffHour;
 }
 
 function __refreshTokenOptionalSheetsFromSubRaw06a_(ss, rawSheetNames) {
@@ -3335,14 +3336,14 @@ function __sortOperationalSheetsSub06a_(ss, sheetNames, sortSpecs) {
 
 
 function installEmailIngestTrigger() {
-  // MAIN: daily at 08:00 (script timezone)
+  // MAIN: daily at 06:00 (script timezone)
   const triggers = ScriptApp.getProjectTriggers();
   triggers.forEach(t => {
     if (t.getHandlerFunction && t.getHandlerFunction() === 'runEmailIngest') {
       ScriptApp.deleteTrigger(t);
     }
   });
-  ScriptApp.newTrigger('runEmailIngest').timeBased().everyDays(1).atHour(8).create();
+  ScriptApp.newTrigger('runEmailIngest').timeBased().everyDays(1).atHour(FLOW_SCHEDULE_POLICY.MAIN_HOUR).create();
 }
 
 

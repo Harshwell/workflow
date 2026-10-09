@@ -7,6 +7,66 @@ const optionalSource = fs.readFileSync('05c_Pipeline_OptionalSheets.gs', 'utf8')
 const routingSource = fs.readFileSync('05b_Pipeline_RoutingOperational.gs', 'utf8');
 const pipelineSource = fs.readFileSync('06b_PipelineAndEnrichment.gs', 'utf8');
 
+test('MAIN installer replaces only MAIN triggers and uses the shared six AM schedule', () => {
+  const source = fs.readFileSync('06a_EntryPoints.gs', 'utf8');
+  const policy = evaluateInitializer(fs.readFileSync('00_Config.gs', 'utf8'), 'FLOW_SCHEDULE_POLICY');
+  assert.equal(policy.MAIN_HOUR, 6);
+  let triggers = [{ getHandlerFunction: () => 'runEmailIngest' }, { getHandlerFunction: () => 'runSubEmailIngest' }];
+  const hours = [];
+  const api = loadFunctions(source, ['installEmailIngestTrigger'], {
+    FLOW_SCHEDULE_POLICY: policy,
+    ScriptApp: {
+      getProjectTriggers: () => triggers.slice(), deleteTrigger: trigger => { triggers = triggers.filter(t => t !== trigger); },
+      newTrigger(handler) {
+        const builder = { timeBased() { return this; }, everyDays(days) { assert.equal(days, 1); return this; },
+          atHour(hour) { hours.push(hour); return this; }, create() { triggers.push({ getHandlerFunction: () => handler }); } };
+        return builder;
+      }
+    }
+  });
+  api.installEmailIngestTrigger(); api.installEmailIngestTrigger();
+  assert.deepEqual(hours, [6, 6]);
+  assert.equal(triggers.filter(t => t.getHandlerFunction() === 'runEmailIngest').length, 1);
+  assert.equal(triggers.filter(t => t.getHandlerFunction() === 'runSubEmailIngest').length, 1);
+});
+
+test('SUB skips the MAIN hour, allows eight AM, and retains force-after-MAIN handoff', () => {
+  const source = fs.readFileSync('06a_EntryPoints.gs', 'utf8');
+  let hour = 6;
+  const policy = { MAIN_HOUR: 6, SUB_HANDOFF_OFFSET_HOURS: 1 };
+  const api = loadFunctions(source, ['runSubEmailIngest', 'isMainSubHandoffWindow06a_'], {
+    FLOW_SCHEDULE_POLICY: policy, getTzSafe_: () => 'Asia/Jakarta',
+    Utilities: { formatDate: (_date, tz) => { assert.equal(tz, 'Asia/Jakarta'); return String(hour); } },
+    __withTryLockSub06a_: () => ({ reachedLock: true })
+  });
+  assert.equal(api.runSubEmailIngest().skipped, true);
+  assert.equal(api.runSubEmailIngest(1, { forceAfterMain: true }).reachedLock, true);
+  for (hour of [5, 7, 8, 9]) assert.equal(api.runSubEmailIngest().reachedLock, true);
+  for (hour of [6, 8, 9]) assert.equal(api.isMainSubHandoffWindow06a_(), false);
+  hour = 7; assert.equal(api.isMainSubHandoffWindow06a_(), true);
+  policy.MAIN_HOUR = 10;
+  hour = 10; assert.equal(api.runSubEmailIngest().skipped, true);
+  hour = 11; assert.equal(api.isMainSubHandoffWindow06a_(), true);
+  policy.MAIN_HOUR = 23;
+  hour = 0; assert.equal(api.isMainSubHandoffWindow06a_(), true);
+});
+
+test('SUB Weekly Report Base shares the seven AM handoff gate and remains once per day', () => {
+  const source = fs.readFileSync('06a_EntryPoints.gs', 'utf8') + '\n' + pipelineSource;
+  let hour = 6, day = '2026-10-09', lastDate = '';
+  const api = loadFunctions(source, ['isMainSubHandoffWindow06a_', 'shouldRunWeeklyReportBaseForSub06b_', 'shouldRunWeeklyReportBaseNow06b_'], {
+    FLOW_SCHEDULE_POLICY: { MAIN_HOUR: 6, SUB_HANDOFF_OFFSET_HOURS: 1 }, getTzSafe_: () => 'Asia/Jakarta',
+    Utilities: { formatDate: (_date, _tz, format) => format === 'H' ? String(hour) : day },
+    PropertiesService: { getScriptProperties: () => ({ getProperty: () => lastDate, setProperty: (_key, value) => { lastDate = value; } }) }
+  });
+  assert.equal(api.shouldRunWeeklyReportBaseForSub06b_(), false); assert.equal(lastDate, '');
+  hour = 7; assert.equal(api.shouldRunWeeklyReportBaseForSub06b_(), true);
+  assert.equal(api.shouldRunWeeklyReportBaseForSub06b_(), false);
+  hour = 9; day = '2026-10-10'; assert.equal(api.shouldRunWeeklyReportBaseForSub06b_(), false);
+  assert.equal(api.shouldRunWeeklyReportBaseNow06b_('form', 'FORM_SUB'), true);
+  hour = 7; assert.equal(api.shouldRunWeeklyReportBaseNow06b_('sub', ''), true);
+});
+
 function sheet(name, rows) {
   const writes = [];
   const notes = rows.map(() => ['']);

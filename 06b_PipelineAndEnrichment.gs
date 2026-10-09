@@ -1179,10 +1179,10 @@ function shouldRunWeeklyReportBaseNow06b_(flowName, sourceName) {
   const flow = String(flowName || '').trim().toLowerCase();
   const src = String(sourceName || '').trim().toUpperCase();
 
-  // FORM - SUB: run immediately (not tied to 09:00 gate).
+  // FORM - SUB: run immediately (not tied to 07:00 gate).
   if (flow === 'form' && src === 'FORM_SUB') return true;
 
-  // Pure SUB: strict gate 09:00 + once/day.
+  // Pure SUB: strict gate 07:00 + once/day.
   if (flow === 'sub') return shouldRunWeeklyReportBaseForSub06b_();
 
   return false;
@@ -1192,8 +1192,7 @@ function shouldRunWeeklyReportBaseForSub06b_() {
   try {
     const tz = (typeof getTzSafe_ === 'function') ? getTzSafe_() : (Session.getScriptTimeZone() || 'Asia/Jakarta');
     const now = new Date();
-    const hour = Number(Utilities.formatDate(now, tz, 'H'));
-    if (hour !== 9) return false;
+    if (!isMainSubHandoffWindow06a_(now)) return false;
 
     const props = PropertiesService.getScriptProperties();
     const key = 'WEEKLY_REPORT_BASE_LAST_RUN_DATE';
