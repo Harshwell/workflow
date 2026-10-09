@@ -560,6 +560,8 @@ Unknown status/SC harus terlihat sebagai unmapped/error evidence, bukan disamark
 
 Source dan consumer utama: `OPS_ROUTING_POLICY.SC_NAME_KEYWORDS`, `BRANCH_KEYWORDS`, `05b` SC filter/override, PIC enrichment di `06b/06c`, serta mapping lokal di empat standalone scripts. Karena standalone tidak mengimpor root constants, mapping bersama harus dilindungi contract tests.
 
+Pada Salvage, Service Center dengan keyword J-Bros, B-Store, Deltasindo, atau GH Store selalu menghasilkan PIC `Meindar`, termasuk nama panjang dan suffix lokasi, walau Branch kosong atau berisi owner lama. `CV Berkah Athallah Branch Store` menghasilkan `Farhan`. Nama panjang yang hanya tersedia di Branch juga dikenali setelah override Service Center; EzCare Apple tetap Farhan. Normalisasi mengabaikan case, spasi, dan tanda baca.
+
 ### Optional-Sheet Routing
 
 | Sheet | Eligibility | Writer/consumer contract |
