@@ -7,6 +7,16 @@ const optionalSource = fs.readFileSync('05c_Pipeline_OptionalSheets.gs', 'utf8')
 const routingSource = fs.readFileSync('05b_Pipeline_RoutingOperational.gs', 'utf8');
 const pipelineSource = fs.readFileSync('06b_PipelineAndEnrichment.gs', 'utf8');
 
+test('public MAIN retry entry point delegates to the internal checkpoint helper', () => {
+  const source = fs.readFileSync('06a_EntryPoints.gs', 'utf8');
+  const api = loadFunctions(source, ['retryMainPipelineStage2'], {
+    retryMainPipelineStage2_: () => ({ staged: true, message: 'retry scheduled' })
+  });
+  assert.deepEqual(api.retryMainPipelineStage2(), { staged: true, message: 'retry scheduled' });
+  const unavailable = loadFunctions(source, ['retryMainPipelineStage2'], {});
+  assert.throws(() => unavailable.retryMainPipelineStage2(), /06b_PipelineAndEnrichment/);
+});
+
 test('manual snapshot writers clear stale dropdowns before writing timestamps and claims', () => {
   const source = fs.readFileSync('06c_PostProcessAndUtils.gs', 'utf8');
   for (const name of ['_OPS_MANUAL_BACKUP', '_OPS_MAIN_SUB_TEMP']) {
