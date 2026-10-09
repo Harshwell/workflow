@@ -96,3 +96,23 @@ test('Samsung Claim Sync keeps its strict brand, cutoff, and target contracts', 
   assert.doesNotMatch(samsungClaim, /deviceBrand\.includes\('samsung'\)/);
   assert.doesNotMatch(samsungClaim, /SOURCE_SPREADSHEET_PROPERTY|PropertiesService/);
 });
+
+test('Salvage resolves full Service Center names independently of blank or stale Branch', () => {
+  const { salvage: source } = loadSources();
+  const salvage = loadFunctions(source, ['normalizeKey_', 'normalizeServiceCenterKey_', 'resolvePicByBranch_']);
+  for (const [name, pic] of [
+    ['J-Bros Computer Service Center Padang', 'Meindar'],
+    ['B-Store Service Centre Jakarta', 'Meindar'],
+    ['PT DELTASINDO SAGITA MANDIRI - Sorong Papua Barat', 'Meindar'],
+    ['GH Store - Pontianak', 'Meindar'],
+    ['CV Berkah Athallah Branch Store', 'Farhan']
+  ]) {
+    for (const branch of ['', 'Mitracare', 'GSI']) {
+      assert.equal(salvage.resolvePicByBranch_(branch, name, '', '', ''), pic, name + ' with Branch ' + branch);
+      assert.equal(salvage.resolvePicByBranch_(branch, name.toLowerCase(), '', '', ''), pic, name + ' lowercase');
+    }
+    assert.equal(salvage.resolvePicByBranch_(name, '', '', '', ''), pic, name + ' from Branch only');
+  }
+  assert.equal(salvage.resolvePicByBranch_('GH Store - Pontianak', 'EzCare', 'Apple', '', ''), 'Farhan');
+  assert.equal(salvage.resolvePicByBranch_('Other Branch', 'Other Service Center', '', '', ''), 'Unknown');
+});

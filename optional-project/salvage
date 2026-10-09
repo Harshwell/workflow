@@ -1504,11 +1504,13 @@ function normalizeServiceCenterKey_(value) {
 function resolvePicByBranch_(branchValue, serviceCenterValue, deviceBrandValue, deviceTypeValue, submissionDateValue) {
   var scKey = normalizeServiceCenterKey_(serviceCenterValue);
   if (scKey.indexOf('cvberkah') >= 0 || scKey.indexOf('rejekiseluler') >= 0 || scKey.indexOf('rejekiseluller') >= 0) return 'Farhan';
-  if (scKey.indexOf('agungcellular') >= 0 || scKey.indexOf('platinumcare') >= 0) return 'Meindar';
+  var meindarKeywords = ['agungcellular', 'platinumcare', 'jbros', 'bstore', 'deltasindo', 'ghstore'];
+  if (meindarKeywords.some(function(keyword) { return scKey.indexOf(keyword) >= 0; })) return 'Meindar';
   var isApple = /apple/i.test(String(deviceBrandValue || ''));
   if (scKey.indexOf('ezcare') >= 0 && isApple) return 'Farhan';
   var compactBranch = normalizeServiceCenterKey_(branchValue);
-  if (compactBranch.indexOf('agungcellular') >= 0 || compactBranch.indexOf('platinumcare') >= 0) return 'Meindar';
+  if (compactBranch.indexOf('cvberkah') >= 0) return 'Farhan';
+  if (meindarKeywords.some(function(keyword) { return compactBranch.indexOf(keyword) >= 0; })) return 'Meindar';
   const branchKey = normalizeKey_(branchValue);
   if (!branchKey) return '';
 
