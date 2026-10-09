@@ -308,28 +308,14 @@ function runPipeline_(pic, fileIds, opts) {
   // Snapshot user-managed columns (rich text + wrap) from ops BEFORE clearing.
   // This preserves per-cell formatting that is not representable in Raw (e.g., Wrap Strategy).
   let opsManualSnapshot = null;
-  try {
-    if (typeof snapshotOpsManualColumnsRich06c_ === 'function') {
-      opsManualSnapshot = snapshotOpsManualColumnsRich06c_(ss, profileName);
-    }
-  } catch (eSnap) {}
-
-  // MAIN->SUB hardening: persist one-shot temp backup (Claim+SC+4 manual columns) before reset.
-  try {
-    if (flowName === 'main' && typeof persistOpsManualTempForSub06c_ === 'function') {
-      const t = persistOpsManualTempForSub06c_(ss, profileName);
-      try { logLine_('MAIN_TEMP_BAK', 'Persisted MAIN temp backup for SUB restore', 'rows=' + (t ? t.rows : 0), '', 'INFO'); } catch (eT1) {}
-    }
-  } catch (eMainTempBak) {
-    try { logLine_('MAIN_TEMP_BAK_WARN', 'MAIN temp backup failed (non-fatal)', String(eMainTempBak), '', 'WARN'); } catch (eT2) {}
+  if (flowName === 'main') {
+    opsManualSnapshot = persistRequiredMainManualBackups06b_(ss, profileName);
+  } else {
+    try {
+      if (typeof snapshotOpsManualColumnsRich06c_ === 'function') opsManualSnapshot = snapshotOpsManualColumnsRich06c_(ss, profileName);
+      if (opsManualSnapshot && typeof persistOpsManualBackupSheet06c_ === 'function') persistOpsManualBackupSheet06c_(ss, profileName, opsManualSnapshot);
+    } catch (eBakSheet) {}
   }
-
-  // Extra safety: persist latest manual snapshot into dedicated hidden backup sheet.
-  try {
-    if (opsManualSnapshot && typeof persistOpsManualBackupSheet06c_ === 'function') {
-      persistOpsManualBackupSheet06c_(ss, profileName, opsManualSnapshot);
-    }
-  } catch (eBakSheet) {}
 
   // Ensure required operational column layout (Submission by Month @ B, Service Center PIC @ N on Start/Finish).
   try { if (typeof enforceOperationalLayout06_ === 'function') enforceOperationalLayout06_(ss); } catch (eLay) {}
@@ -1802,6 +1788,7 @@ function runMainStage2Steps06b_(state, steps, props, deadline) {
     const started = Date.now();
     try {
       const result = step.run(function() { state.stepAttempts = 0; save(); });
+      SpreadsheetApp.flush();
       if (result && result.complete === false) {
         state.stepAttempts = 0;
         return pending();
@@ -1889,7 +1876,7 @@ function runMainPipelineStage2_() {
       { name: 'HIGHLIGHT', run: function(save) {
         return applyOperationalClaimHighlightsByRaw_(ss, rows, index, profile, {
           strict: true, cursor: state.highlightCursor, deadline: deadline,
-          onCheckpoint: function(cursor) { state.highlightCursor = cursor; save(); }
+          onCheckpoint: function(cursor) { SpreadsheetApp.flush(); state.highlightCursor = cursor; save(); }
         });
       } },
       { name: 'REPORT_BASE', bestEffort: true, run: function() { refreshReportBaseFromOperational06_(ss); } },
@@ -1909,6 +1896,7 @@ function runMainPipelineStage2_() {
           if (sh && typeof __expandSheetFilterToUsedRange06_ === 'function') __expandSheetFilterToUsedRange06_(sh);
         });
       } },
+      { name: 'EMAIL_CLEANUP', run: function() { if (state.email) completeMainEmailCleanup06a_(state.email); } },
       { name: 'TRASH', bestEffort: true, run: function() {
         if (PIPELINE_FLAGS.TRASH_UPLOADED_FILES && (typeof DRY_RUN === 'undefined' || !DRY_RUN) && typeof flushTrashQueueBestEffort_ === 'function') flushTrashQueueBestEffort_('MAIN');
       } }
@@ -1917,4 +1905,17 @@ function runMainPipelineStage2_() {
   });
   if (outcome && !outcome.staged && outcome.message === 'MAIN stage 2 complete.' && typeof __drainPendingSubAfterMain06a_ === 'function') __drainPendingSubAfterMain06a_('MAIN_STAGE2');
   return outcome;
+}
+
+function persistRequiredMainManualBackups06b_(ss, profileName) {
+  try {
+    const snapshot = snapshotOpsManualColumnsRich06c_(ss, profileName);
+    if (!snapshot || !snapshot.map) throw new Error('Manual snapshot is missing.');
+    persistOpsManualTempForSub06c_(ss, profileName);
+    persistOpsManualBackupSheet06c_(ss, profileName, snapshot);
+    SpreadsheetApp.flush();
+    return snapshot;
+  } catch (err) {
+    throw new Error('MAIN manual backup failed before operational reset: ' + (err && err.message ? err.message : err));
+  }
 }

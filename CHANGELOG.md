@@ -4,6 +4,8 @@ Perubahan material repository dicatat di sini berdasarkan outcome, flow/project 
 
 ## Unreleased
 
+- Writer snapshot manual MAIN membersihkan stale data validation sebelum menulis `_OPS_MANUAL_BACKUP`/`_OPS_MAIN_SUB_TEMP`, memastikan kapasitas row/column, dan flush untuk mengaitkan deferred-write error dengan source snapshot. Restore fallback menambahkan source backup dan nama destination sheet pada error; checkpoint MAIN tetap dipertahankan untuk retry. Snapshot yang gagal menghentikan MAIN sebelum reset operational, dan email/temp input MAIN baru dibersihkan setelah stage 2 seluruhnya berhasil.
+
 - MAIN dimajukan dari 08:00 ke 06:00 Asia/Jakarta. Policy jadwal bersama menyelaraskan skip SUB ke jam MAIN dan handoff/manual restore serta gate Weekly Report Base SUB ke 07:00 (MAIN + satu jam); SUB tetap hourly, force-after-MAIN/lock/pending tetap berlaku, dan FORM SUB tetap immediate. Installer mengganti trigger MAIN lama saat dijalankan ulang.
 
 - TPL dan Drone memakai optional upsert by Claim Number pada MAIN dan SUB. TPL menerima Cahaya ID atau partner_code CAH8; Drone menerima salah satu keyword Drone/DJI/Skylensindo atau partner_code HDSH. SUB existing hanya meng-update Last Status/Last Status Aging; registrasi schema, MAIN continuation, SUB refresh, filter, validation, dan pengecualian relocation/generic updater disinkronkan.
