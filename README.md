@@ -285,7 +285,7 @@ SUB tidak membangun ulang semuanya. Ia membaca snapshot monitoring OLD dan/atau 
 #### Flowchart SUB
 
 ```text
-Trigger SUB tiap jam (kecuali jam 08:00)
+Trigger SUB tiap jam (kecuali jam 06:00)
         |
         v
 Cari satu email QUEUED_SUB
@@ -312,7 +312,7 @@ Relokasi full row sesuai Last Status terbaru
 Refresh EV-Bike/Doss + sort + Report Base
         |
         v
-Jam 09:00? Restore handoff manual dari MAIN
+Jam 07:00? Restore handoff manual dari MAIN
         |
         v
 Jika semua sukses: bersihkan email; jika gagal: biarkan queued
@@ -340,9 +340,10 @@ SUB juga mengisi `Activity Log` dari `activity_log` dengan fallback sesuai kontr
 #### Periode, lock, dan retry
 
 - Installer memasang `runSubEmailIngest()` setiap jam di sekitar menit 20.
-- Eksekusi jam **08:00** dilewati agar tidak bertabrakan dengan MAIN.
+- MAIN dijadwalkan pukul **06:00 Asia/Jakarta**; SUB tetap tiap jam dan melewati jam **06:00** agar tidak bertabrakan dengan MAIN. `FLOW_SCHEDULE_POLICY.MAIN_HOUR` menjadi owner jam MAIN/skip SUB, sedangkan handoff dan gate Weekly Report Base SUB dihitung satu jam setelah MAIN (**07:00**).
+- Setelah sync source, jalankan `installEmailIngestTrigger()` sekali untuk mengganti trigger MAIN lama dengan jadwal baru. Trigger SUB hourly tidak perlu dipasang ulang. Trigger time-driven mengikuti window jam, bukan jaminan tepat pada menit 00; attachment MAIN harus sudah tersedia di queue sebelum eksekusi.
 - Jika MAIN sedang memegang lock, SUB menulis pending handoff; MAIN mencoba menjalankannya setelah selesai.
-- Handoff backup manual MAIN hanya direstore pada window **09:00**; SUB di jam lain tidak memakai backup tersebut.
+- Handoff backup manual MAIN hanya direstore pada window **07:00**; SUB di jam lain tidak memakai backup tersebut.
 - Kontrak operasional mewajibkan pasangan OLD dan NEW yang valid. Implementasi saat ini masih menoleransi OLD-only atau NEW-only dengan warning; anggap ini compatibility behavior yang perlu direkonsiliasi, bukan prosedur normal yang boleh diandalkan.
 
 #### Checklist operator SUB
@@ -481,7 +482,7 @@ Run = COMPLETED atau PARTIAL; event masuk _Audit
 | Continuation | MAIN menyimpan `MAIN_PIPELINE_STAGE2`; stage 2 memakai checkpoint per step, budget 210 detik per execution, dan watchdog sebelum work. Saat budget habis, one-shot trigger melanjutkan step berikutnya dengan RunID yang sama, tanpa clear/route ulang. Flagging diproses per 500 row dengan cursor sheet/row. |
 | Success boundary | Cleanup Gmail/temp hanya sesudah route/finalization sukses. Jika gagal, queued email dipertahankan untuk retry. |
 | Cleanup | Success: mark read, remove queue label, trash thread/temp sesuai policy. Failure: input tidak dikonsumsi. |
-| Recovery | Stage 2 membaca snapshot durable stage 1. Kegagalan step wajib mempertahankan checkpoint dan menunda cleanup; maksimal tiga attempt per step/preflight. Setelah memperbaiki penyebab di `Log - Main`, jalankan `retryMainPipelineStage2_()` untuk melanjutkan checkpoint. `_OPS_MAIN_SUB_TEMP` dipertahankan untuk handoff SUB pukul 09:00. MAIN baru dan SUB menunggu continuation pending selesai. |
+| Recovery | Stage 2 membaca snapshot durable stage 1. Kegagalan step wajib mempertahankan checkpoint dan menunda cleanup; maksimal tiga attempt per step/preflight. Setelah memperbaiki penyebab di `Log - Main`, jalankan `retryMainPipelineStage2_()` untuk melanjutkan checkpoint. `_OPS_MAIN_SUB_TEMP` dipertahankan untuk handoff SUB pukul 07:00. MAIN baru dan SUB menunggu continuation pending selesai. |
 | UAT minimum | Satu email valid, satu invalid attachment, rerun yang sama, manual-field/formula restore, stage-2 continuation, report refresh, dan cleanup success/failure. |
 
 ### SUB
@@ -493,7 +494,7 @@ Run = COMPLETED atau PARTIAL; event masuk _Audit
 | Processing | Isi `Raw OLD`/`Raw NEW`, append kandidat baru ke `Submission`, update claim existing, relocate lintas operational sheets, refresh EV-Bike/Doss/B2B existing sesuai contract, sort, dan refresh reports. |
 | Success boundary | Kedua input valid dan seluruh core update/relocation selesai. |
 | Cleanup | Email/temp hanya dibersihkan setelah success; state retryable dipertahankan ketika gagal. |
-| Recovery | Handoff `_OPS_MAIN_SUB_TEMP` hanya direstore pada window jam 09:00; fallback manual backup tetap tersedia. Pure SUB menjalankan Weekly Report Base hanya jam 09:00 dan maksimal sekali per tanggal. |
+| Recovery | Handoff `_OPS_MAIN_SUB_TEMP` hanya direstore pada window jam 07:00; fallback manual backup tetap tersedia. Pure SUB menjalankan Weekly Report Base hanya jam 07:00 dan maksimal sekali per tanggal. |
 | UAT minimum | Missing OLD/NEW, same-bucket vs changed-bucket `Stage Aging`, pending lock, cross-sheet relocation, reject/expired movement, manual fields, optional refresh, dan email retry. |
 
 ### FORM and MANUAL
@@ -619,7 +620,7 @@ Reconciled contract: current runtime treats `claim_submitted_datetime` as primar
 | `Update Status`, `Timestamp`, `Status`, `Remarks` | Manual/restored where columns exist. | Snapshot before clear; restore fills blank destination by claim, preserving rich text, formula, wrap, format, and validation where supported. |
 | `Repair Type` | Managed/derived khusus `Finish`. | Exact normalized Last Status pada repair-status policy menghasilkan `Repair`; Last Status lain yang terisi menghasilkan `Replace`; blank tetap blank. |
 | `AWB`, `Timestamp AWB` | Manual/restored, primarily Start contract. | Backed up to Raw and restored after routing; formula retention is required. |
-| `_OPS_MAIN_SUB_TEMP` | Hidden handoff state. | Match by Claim Number + Service Center; consumed by SUB only in the 09:00 handoff window. |
+| `_OPS_MAIN_SUB_TEMP` | Hidden handoff state. | Match by Claim Number + Service Center; consumed by SUB only in the 07:00 handoff window. |
 | `_OPS_MANUAL_BACKUP` | Hidden fallback state. | Match by PIC + Claim Number when normal snapshot restore misses. |
 | `OR` | Template/manual field on relevant layouts. | Do not treat as universal raw field. |
 | `Start Date`, `End Date`, `Details` | Layout-dependent. | Active for operational/Special Case context; deprecated and removed from B2B/EV-Bike/Doss. |
@@ -745,7 +746,7 @@ Jalankan dengan data synthetic/terkontrol pada staging copy bila memungkinkan.
 5. SC: GSI, Rejeki Seluler/Seluller, CV Berkah, Deltasindo, Samsung Unicom variants, EzCare Apple/non-Apple, dan unknown fallback.
 6. Optional: B2B category gate, VVMAR overlay/dedupe, DOSS token, Special Case four flags termasuk exact `month_policy_aging = 12` yang tidak boleh ter-flag.
 7. Data: IMEI leading zero/plain text, valid/invalid Submission Date, month-date format, filters yang hanya mencakup sebagian used range.
-8. Reports: Daily uniqueness/Position/PIC; Weekly same-date replace, previous/change helpers, pure SUB 09:00 once/day, FORM SUB immediate, dan manual refresh.
+8. Reports: Daily uniqueness/Position/PIC; Weekly same-date replace, previous/change helpers, pure SUB 07:00 once/day, FORM SUB immediate, dan manual refresh.
 9. Standalone: lock contention, no-data, duplicate key, unmapped route, retry/queue, post-write verification, serta cleanup success/failure per project.
 10. Observability: start/progress/failure/success terlihat dengan RunID yang sama dan tanpa raw restricted data.
 

@@ -66,7 +66,7 @@ const DRY_RUN = false;
  */
 const CONFIG_SECTION_INDEX = Object.freeze({
   foundation: Object.freeze(['App.Registry', 'APP_VERSION', 'SCHEMA_VERSION', 'DRY_RUN']),
-  ingestion: Object.freeze(['EMAIL_INGEST_POLICY', 'SUB_EMAIL_INGEST_POLICY', 'SUB_FLOW_SPEC', 'FORM_INGEST_POLICY']),
+  ingestion: Object.freeze(['EMAIL_INGEST_POLICY', 'SUB_EMAIL_INGEST_POLICY', 'SUB_FLOW_SPEC', 'FORM_INGEST_POLICY', 'FLOW_SCHEDULE_POLICY']),
   workbook: Object.freeze(['MASTER_SPREADSHEET_ID', 'MASTER_RAW_SHEET_NAME', 'WORKBOOK_PROFILES']),
   routing: Object.freeze(['OPS_ROUTING_POLICY', 'STATUS_TYPE_BY_LAST_STATUS', 'POSITION_BY_LAST_STATUS', 'FINISH_STATUSES']),
   validationAndPresentation: Object.freeze(['VALIDATION_POLICY', 'VALIDATION_FALLBACKS', 'STATUS_DROPDOWN_TEMPLATE', 'CHECKBOX_POLICY', 'LINK_POLICY', 'COLUMN_TYPES', 'COLUMN_ALIGNMENT']),
@@ -210,8 +210,13 @@ const GMAIL_QUEUE_LABELS = Object.freeze({
   SUB:  getPropString_('GMAIL_QUEUE_LABEL_SUB',  'QUEUED_SUB')
 });
 
+const FLOW_SCHEDULE_POLICY = Object.freeze({
+  MAIN_HOUR: 6,
+  SUB_HANDOFF_OFFSET_HOURS: 1
+});
+
 /**
- * MAIN flow (daily ~08:00)
+ * MAIN flow (daily ~06:00)
  * - MUST be sourced only from label:QUEUED_MAIN
  */
 const EMAIL_INGEST_POLICY = Object.freeze({
