@@ -1350,31 +1350,46 @@ function sv03_ensureTypeDropdownIfMissing_(sh, header) {
   const rows = Math.max(0, endRow - 1);
   if (rows <= 0) return;
 
-  // Preferred: copy data validation (and safe format) from an existing template cell in this workbook.
-  // This preserves dropdown-chip colors & the exact option set.
+  // Copy native Type validation from an existing SC template cell.
+  // Rebuilding a list rule degrades Google Sheets chips into arrow dropdowns.
   try {
     const ss = sh.getParent();
-    const sheetNames = ss.getSheets().map(s => s.getName());
-    const tpl = sv03_getTemplateRuleCell_(ss, sheetNames, 'Type');
-    if (tpl && tpl.cell) {
-      sv03_applyRuleCopyToColumn_(tpl.cell, sh, idx + 1, rows, { copyFormat: true });
+    const tpl = sv03_getCanonicalTypeTemplateCell_(ss);
+    if (tpl) {
+      tpl.copyTo(sh.getRange(2, idx + 1, rows, 1), SpreadsheetApp.CopyPasteType.PASTE_DATA_VALIDATION, false);
       return;
     }
   } catch (eTpl) {}
 
-  // Last resort fallback: create classic list-based DV (may degrade chip/colors).
+  // Do not silently install a classic arrow dropdown when the native template is missing.
   try {
-    const typeOpts = (typeof getScTypeDropdownOptions_ === 'function')
-      ? getScTypeDropdownOptions_()
-      : ['SC - Rcvd','SC - Est','Insurance','OR','Finish','SC - Wait Rep','SC - On Rep'];
+    if (typeof logLine_ === 'function') {
+      logLine_('WARN', 'TYPE_TEMPLATE_MISSING', sh.getName() + '!R2C' + (idx + 1),
+        'Native Type chip template not found; validation was left unchanged', 'WARN');
+    }
+  } catch (eLog) {}
+}
 
-    const rule = SpreadsheetApp.newDataValidation()
-      .requireValueInList(typeOpts, true)
-      .setAllowInvalid(true)
-      .build();
+function sv03_getCanonicalTypeTemplateCell_(ss) {
+  if (!ss) return null;
+  const names = (typeof __getScSheetNames06_ === 'function')
+    ? __getScSheetNames06_()
+    : ['SC - Farhan', 'SC - Meilani', 'SC - Meindar'];
 
-    sh.getRange(2, idx + 1, rows, 1).setDataValidation(rule);
-  } catch (e) {}
+  for (let i = 0; i < names.length; i++) {
+    const sh = ss.getSheetByName(names[i]);
+    if (!sh || sh.getLastColumn() < 1) continue;
+    const header = sh.getRange(1, 1, 1, sh.getLastColumn()).getValues()[0]
+      .map(v => sv03_normHeaderText_(v));
+    const idx = header.indexOf('Type');
+    if (idx < 0) continue;
+    const cell = sh.getRange(2, idx + 1);
+    const rule = cell.getDataValidation();
+    if (!rule) continue;
+    const criteria = String(rule.getCriteriaType() || '');
+    if (criteria === 'VALUE_IN_LIST' || criteria === 'VALUE_IN_RANGE') return cell;
+  }
+  return null;
 }
 
 
