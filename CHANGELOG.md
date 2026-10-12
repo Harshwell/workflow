@@ -4,6 +4,8 @@ Perubahan material repository dicatat di sini berdasarkan outcome, flow/project 
 
 ## Unreleased
 
+- MAIN `RESTORE_FIELDS` now clears and flushes stale validation on non-Status restore targets before writing Timestamp, Remarks, and OR values, preventing contaminated dropdown rules from rejecting writes in cells such as `A4319`.
+- MAIN→SUB manual restore no longer copies backup-cell validation for `Status` after restoring its value; Status validation remains exclusively sourced from the native chip template `Overview!C945`.
 - MAIN restore now flushes cleared data validation before writing backup/status values, preventing deferred stale dropdown rules from rejecting writes such as `A2946`; the canonical Status rule is still restored from `Overview!C945`.
 
 - Writer snapshot manual MAIN membersihkan stale data validation sebelum menulis `_OPS_MANUAL_BACKUP`/`_OPS_MAIN_SUB_TEMP`, memastikan kapasitas row/column, dan flush untuk mengaitkan deferred-write error dengan source snapshot. Restore fallback menambahkan source backup dan nama destination sheet pada error; checkpoint MAIN tetap dipertahankan untuk retry. Snapshot yang gagal menghentikan MAIN sebelum reset operational, dan email/temp input MAIN baru dibersihkan setelah stage 2 seluruhnya berhasil.
