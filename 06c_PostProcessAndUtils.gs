@@ -393,9 +393,7 @@ function __writeManualBackupSnapshot06c_(sh, rows, width) {
     if (width > sh.getMaxColumns()) sh.insertColumnsAfter(sh.getMaxColumns(), width - sh.getMaxColumns());
     // clearContents retains stale rules, including Status dropdowns on timestamp/claim columns.
     sh.getRange(1, 1, rowBound, width).clearDataValidations();
-    if (typeof SpreadsheetApp !== 'undefined' && SpreadsheetApp && typeof SpreadsheetApp.flush === 'function') {
-      SpreadsheetApp.flush();
-    }
+    if (typeof SpreadsheetApp !== 'undefined' && SpreadsheetApp && typeof SpreadsheetApp.flush === 'function') SpreadsheetApp.flush();
     sh.clearContents();
     sh.getRange(1, 1, rows.length, width).setValues(rows);
     SpreadsheetApp.flush();
@@ -648,9 +646,7 @@ function __restoreStatusValuesWithCanonicalValidation06c_(sh, startRow, col1, va
     throw new Error('Status restore validation clear failed | source=' + sourceLabel + ' | sheet=' + sheetName + ' | range=' + rangeA1 + ' | error=' + (eClear && eClear.message ? eClear.message : eClear));
   }
   try {
-    if (typeof SpreadsheetApp !== 'undefined' && SpreadsheetApp && typeof SpreadsheetApp.flush === 'function') {
-      SpreadsheetApp.flush();
-    }
+    if (typeof SpreadsheetApp !== 'undefined' && SpreadsheetApp && typeof SpreadsheetApp.flush === 'function') SpreadsheetApp.flush();
   } catch (eFlush) {
     throw new Error('Status restore validation flush failed | source=' + sourceLabel + ' | sheet=' + sheetName + ' | range=' + rangeA1 + ' | error=' + (eFlush && eFlush.message ? eFlush.message : eFlush));
   }
@@ -663,9 +659,7 @@ function __restoreStatusValuesWithCanonicalValidation06c_(sh, startRow, col1, va
       const cell = sh.getRange(startRow + i, col1, 1, 1);
       try {
         cell.clearDataValidations();
-        if (typeof SpreadsheetApp !== 'undefined' && SpreadsheetApp && typeof SpreadsheetApp.flush === 'function') {
-          SpreadsheetApp.flush();
-        }
+        if (typeof SpreadsheetApp !== 'undefined' && SpreadsheetApp && typeof SpreadsheetApp.flush === 'function') SpreadsheetApp.flush();
         cell.setValue(values[i][0]);
         written++;
       } catch (cellErr) {
@@ -1108,6 +1102,75 @@ function sanitizeProblematicDataValidations06_(ss, pic) {
 }
 
 /**
+ * Remove validation that is illegal on operational non-dropdown columns before
+ * restore writes. A contaminated template row must not be able to propagate a
+ * Status rule into column A or any other data column.
+ */
+function sanitizeOperationalRestoreValidations06c_(ss, pic) {
+  if (DRY_RUN || !ss) return;
+  const isAdmin = (pic === 'Admin');
+  const sheets = isAdmin
+    ? (CONFIG.sheetsByPic.adminOperational || [])
+    : (CONFIG.sheetsByPic.picOperational || []);
+
+  sheets.forEach(function(name) {
+    const sh = ss.getSheetByName(name);
+    if (!sh) return;
+    const lastCol = sh.getLastColumn();
+    const maxRows = sh.getMaxRows();
+    if (lastCol < 1 || maxRows < 2) return;
+
+    const headers = sh.getRange(1, 1, 1, lastCol).getValues()[0]
+      .map(__normalizeHeaderText06_);
+    const allowed = new Set(['Status', 'OR', 'Type'].map(function(headerName) {
+      return __findHeaderIndexFlexible06_(headers, headerName);
+    }).filter(function(idx) { return idx !== -1; }));
+
+    for (let col0 = 0; col0 < lastCol; col0++) {
+      if (allowed.has(col0)) continue;
+      const range = sh.getRange(2, col0 + 1, maxRows - 1, 1);
+      try {
+        range.clearDataValidations();
+      } catch (e) {
+        throw new Error(
+          'Operational restore validation cleanup failed' +
+          ' | sheet=' + name +
+          ' | range=' + (range.getA1Notation ? range.getA1Notation() : ('R2C' + (col0 + 1) + ':R' + maxRows + 'C' + (col0 + 1))) +
+          ' | header=' + String(headers[col0] || '') +
+          ' | error=' + (e && e.message ? e.message : e)
+        );
+      }
+    }
+    if (typeof SpreadsheetApp !== 'undefined' && SpreadsheetApp && typeof SpreadsheetApp.flush === 'function') SpreadsheetApp.flush();
+  });
+}
+
+function __restoreWriteValuesWithContext06c_(sh, row1, col1, values, fieldName, headerName, claims) {
+  if (!sh || !values || !values.length) return;
+  const row2 = row1 + values.length - 1;
+  const range = sh.getRange(row1, col1, values.length, 1);
+  const rangeA1 = range.getA1Notation ? range.getA1Notation() : ('R' + row1 + 'C' + col1 + ':R' + row2 + 'C' + col1);
+  try {
+    range.clearDataValidations();
+    if (typeof SpreadsheetApp !== 'undefined' && SpreadsheetApp && typeof SpreadsheetApp.flush === 'function') SpreadsheetApp.flush();
+    range.setValues(values);
+  } catch (e) {
+    const msg = e && e.message ? e.message : e;
+    const claim = claims && claims.length ? String(claims[0][0] || '') : '';
+    throw new Error(
+      'RESTORE_FIELDS write failed' +
+      ' | sheet=' + (sh.getName ? sh.getName() : '?') +
+      ' | range=' + rangeA1 +
+      ' | field=' + fieldName +
+      ' | header=' + String(headerName || '') +
+      ' | rows=' + row1 + ':' + row2 +
+      ' | firstClaim=' + claim +
+      ' | error=' + msg
+    );
+  }
+}
+
+/**
  * Restore operational fields from Raw backup after CLR + ROUTE.
  * Restores:
  * - Status (values)
@@ -1119,6 +1182,7 @@ function sanitizeProblematicDataValidations06_(ss, pic) {
 function restoreOpsFieldsFromRawBackup_(ss, rawSheet, headerIndexRaw, pic) {
   if (DRY_RUN) return;
   if (!ss || !rawSheet || !headerIndexRaw) return;
+  sanitizeOperationalRestoreValidations06c_(ss, pic);
 
   const h = CONFIG.headers;
   const idxClaimRaw = headerIndexRaw[h.claimNumber];
@@ -1230,8 +1294,21 @@ function restoreOpsFieldsFromRawBackup_(ss, rawSheet, headerIndexRaw, pic) {
 
     // Apply checkbox validation first (then values)
     if (idxOrOps !== -1 && outOR) {
-      try { sh.getRange(2, idxOrOps + 1, m, 1).insertCheckboxes(); } catch (e) {}
-      try { sh.getRange(2, idxOrOps + 1, m, 1).setValues(outOR); } catch (e) {}
+      const orRange = sh.getRange(2, idxOrOps + 1, m, 1);
+      try {
+        orRange.clearDataValidations();
+        if (typeof SpreadsheetApp !== 'undefined' && SpreadsheetApp && typeof SpreadsheetApp.flush === 'function') SpreadsheetApp.flush();
+        orRange.insertCheckboxes();
+        orRange.setValues(outOR);
+      } catch (e) {
+        throw new Error(
+          'RESTORE_FIELDS checkbox write failed' +
+          ' | sheet=' + name +
+          ' | range=' + (orRange.getA1Notation ? orRange.getA1Notation() : '?') +
+          ' | field=OR | header=' + String(header[idxOrOps] || '') +
+          ' | error=' + (e && e.message ? e.message : e)
+        );
+      }
     }
 
     if (idxStatusOps !== -1 && outStatus) {
@@ -1239,7 +1316,7 @@ function restoreOpsFieldsFromRawBackup_(ss, rawSheet, headerIndexRaw, pic) {
     }
 
     if (idxTsOps !== -1 && outTs) {
-      try { sh.getRange(2, idxTsOps + 1, m, 1).setValues(outTs); } catch (e) {}
+      __restoreWriteValuesWithContext06c_(sh, 2, idxTsOps + 1, outTs, 'Timestamp', header[idxTsOps], claimsOps);
     }
 
     // IMPORTANT:
@@ -1249,7 +1326,7 @@ function restoreOpsFieldsFromRawBackup_(ss, rawSheet, headerIndexRaw, pic) {
     // Update Status and unexpectedly refresh Timestamp for many rows in one run.
 
     if (idxRemarksOps !== -1 && outRemarks) {
-      try { sh.getRange(2, idxRemarksOps + 1, m, 1).setValues(outRemarks); } catch (e) {}
+      __restoreWriteValuesWithContext06c_(sh, 2, idxRemarksOps + 1, outRemarks, 'Remarks', header[idxRemarksOps], claimsOps);
     }
 
     // Tail/manual columns (best-effort)

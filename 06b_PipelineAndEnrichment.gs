@@ -362,7 +362,12 @@ function runPipeline_(pic, fileIds, opts) {
 
   // Round-trip restore operational fields from Raw backup AFTER clear+route.
   if (PIPELINE_FLAGS.ENABLE_BACKUP_FROM_OPS && didFullBackup) {
-    try { restoreOpsFieldsFromRawBackup_(ss, rawSheet, headerIndexRaw, profileName); } catch (e) {}
+    try {
+      restoreOpsFieldsFromRawBackup_(ss, rawSheet, headerIndexRaw, profileName);
+    } catch (eRestoreFields) {
+      try { logLine_('ERROR', 'RESTORE_FIELDS', 'flow=MAIN', String(eRestoreFields), 'ERROR'); } catch (eLogRestoreFields) {}
+      throw eRestoreFields;
+    }
     try { restoreNamedOpsFieldsFromRaw06c_(ss, rawSheet, headerIndexRaw, profileName, ['AWB', 'Timestamp AWB']); } catch (eAwbRestore) {}
   }
 

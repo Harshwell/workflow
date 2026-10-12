@@ -45,6 +45,15 @@ test('manual snapshot writers clear stale dropdowns before writing timestamps an
   }
 });
 
+test('RESTORE_FIELDS sanitizes all operational non-Status columns before restore', () => {
+  const source = fs.readFileSync('06c_PostProcessAndUtils.gs', 'utf8');
+  assert.match(source, /sanitizeOperationalRestoreValidations06c_\(ss, pic\);/);
+  assert.match(source, /const maxRows = sh\.getMaxRows\(\)/);
+  assert.match(source, /new Set\(\['Status', 'OR', 'Type'\]/);
+  assert.match(source, /RESTORE_FIELDS write failed/);
+  assert.match(source, /sheet=' \+ \(sh\.getName/);
+});
+
 test('snapshot validation and deferred-write errors identify the backup sheet', () => {
   const source = fs.readFileSync('06c_PostProcessAndUtils.gs', 'utf8');
   let contentsCleared = false, failValidation = true;
