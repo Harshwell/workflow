@@ -54,6 +54,23 @@ test('RESTORE_FIELDS sanitizes all operational non-Status columns before restore
   assert.match(source, /sheet=' \+ \(sh\.getName/);
 });
 
+test('MAIN restore hotspots use sparse or single-column batch writes', () => {
+  const source = fs.readFileSync('06c_PostProcessAndUtils.gs', 'utf8');
+  const mainTemp = source.slice(
+    source.indexOf('function restoreOpsManualFromMainTempForSub06c_'),
+    source.indexOf('function __restoreStatusValuesWithCanonicalValidation06c_')
+  );
+  assert.match(mainTemp, /writeSparseValues\(iU, rowsU, mapU\)/);
+  assert.match(mainTemp, /writeSparseRich/);
+  assert.doesNotMatch(mainTemp, /sh\.getRange\(2, iU \+ 1, n, 1\)\.setValues\(outU\)/);
+  const remarks = source.slice(
+    source.indexOf('function applyRemarksRichTextToOperational_'),
+    source.indexOf('/**\n \\* Snapshot Operational columns')
+  );
+  assert.match(remarks, /const currentRich = sh\.getRange\(2, idxRemarks \+ 1, rows, 1\)\.getRichTextValues\(\)/);
+  assert.match(remarks, /sh\.getRange\(2, idxRemarks \+ 1, rows, 1\)\.setRichTextValues\(currentRich\)/);
+});
+
 test('snapshot validation and deferred-write errors identify the backup sheet', () => {
   const source = fs.readFileSync('06c_PostProcessAndUtils.gs', 'utf8');
   let contentsCleared = false, failValidation = true;
@@ -389,6 +406,22 @@ test('MAIN mandatory flag failure preserves checkpoint and suppresses cleanup', 
   assert.throws(() => env.api.runMainStage2Steps06b_({ stepAttempts: 3 }, steps, env.props, 100), /Retry limit/);
 });
 
+test('MAIN continuation does not duplicate an active checkpoint worker', () => {
+  const env = continuation({ time: 1000 });
+  let routed = false;
+  const steps = [{ name: 'ROUTE', run() { routed = true; } }];
+  const result = env.api.runMainStage2Steps06b_({
+    nextStep: 0,
+    activeRunId: 'older-worker',
+    activeStep: 'ROUTE',
+    activeUntil: 5000
+  }, steps, env.props, 2000);
+  assert.equal(result.staged, true);
+  assert.equal(result.message, 'MAIN stage 2 already running.');
+  assert.equal(routed, false);
+  assert.equal(env.triggers.at(-1), 60000);
+});
+
 test('SUB generic enrichment excludes optional sheets and waits for pending MAIN', () => {
   const source = fs.readFileSync('06a_EntryPoints.gs', 'utf8');
   let ran = false;
@@ -517,7 +550,7 @@ test('MAIN temp restore does not copy backup Status validation over the C945 rul
   const start = source.indexOf('function restoreOpsManualFromMainTempForSub06c_');
   const end = source.indexOf('function restoreOpsManualFromBackupSheet06c_');
   const restoreSource = source.slice(start, end);
-  assert.match(restoreSource, /if \(outS\) __restoreStatusValuesWithCanonicalValidation06c_/);
+  assert.match(restoreSource, /__restoreStatusValuesWithCanonicalValidation06c_\(sh, seg\[0\], iS \+ 1/);
   assert.doesNotMatch(restoreSource, /iS !== -1\) styleJobs\.push/);
 });
 
@@ -579,6 +612,6 @@ test('MAIN temp restore cannot replace C945 dropdown with an old arrow rule', ()
   const getSheet = fixture.ss.getSheetByName;
   fixture.ss.getSheetByName = name => name === '_OPS_MAIN_SUB_TEMP' ? backup : getSheet(name);
   fixture.api.restoreOpsManualFromMainTempForSub06c_(fixture.ss, 'Master', { deleteAfterRestore: false });
-  assert.deepEqual(fixture.range.values, [['DONE']]);
+  assert.equal(JSON.stringify(fixture.range.values), JSON.stringify([['DONE']]));
   assert.equal(fixture.range.metadata, fixture.metadata);
 });

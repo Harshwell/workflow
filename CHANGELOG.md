@@ -4,6 +4,11 @@ Perubahan material repository dicatat di sini berdasarkan outcome, flow/project 
 
 ## Unreleased
 
+- MAIN stage 2 restore performance improved: Update Status/Remarks rich-text restore now writes one merged column per sheet, and MAIN→SUB temp restore writes/copies only rows that actually need restored values instead of rewriting whole manual columns.
+- MAIN continuation no longer blocks on a cosmetic Raw Data reorder failure; rightward adjacent moves are corrected and the step remains checkpointed/logged as best effort.
+- MAIN→SUB temp restore now restores rich text, wrapping, and timestamp formats through sparse batch metadata writes instead of per-cell full-format copy operations.
+- MAIN stage 2 no longer runs the redundant `_OPS_MAIN_SUB_TEMP` restore; MAIN uses Raw/manual backup restore while the temp sheet remains reserved for SUB handoff.
+- MAIN continuation now uses an active-worker lease so watchdog triggers do not re-run the same long checkpoint step while a previous execution is still working.
 - MAIN `RESTORE_FIELDS` now sanitizes validation across all operational non-Status columns through `maxRows` before restore writes, and restore errors include sheet, range, field, header, row span, and first claim context instead of being silently swallowed.
 - MAIN `RESTORE_FIELDS` now clears and flushes stale validation on non-Status restore targets before writing Timestamp, Remarks, and OR values, preventing contaminated dropdown rules from rejecting writes in cells such as `A4319`.
 - MAIN→SUB manual restore no longer copies backup-cell validation for `Status` after restoring its value; Status validation remains exclusively sourced from the native chip template `Overview!C945`.
