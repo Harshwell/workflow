@@ -48,10 +48,22 @@ test('manual snapshot writers clear stale dropdowns before writing timestamps an
 test('RESTORE_FIELDS sanitizes all operational non-Status columns before restore', () => {
   const source = fs.readFileSync('06c_PostProcessAndUtils.gs', 'utf8');
   assert.match(source, /sanitizeOperationalRestoreValidations06c_\(ss, pic\);/);
+  assert.match(source, /typeof getOperationalSheetsForBackup_ === 'function'/);
   assert.match(source, /const maxRows = sh\.getMaxRows\(\)/);
   assert.match(source, /new Set\(\['Status', 'OR', 'Type'\]/);
   assert.match(source, /RESTORE_FIELDS write failed/);
   assert.match(source, /sheet=' \+ \(sh\.getName/);
+});
+
+test('RESTORE_BACKUP clears validation before writing manual fields with context', () => {
+  const source = fs.readFileSync('06c_PostProcessAndUtils.gs', 'utf8');
+  const start = source.indexOf('function restoreOpsManualFromBackupSheet06c_');
+  const end = source.indexOf('function restoreOpsManualColumnsRich06c_');
+  const restore = source.slice(start, end);
+  assert.match(restore, /__restoreWriteValuesWithContext06c_\(sh, 2, iU \+ 1, outU/);
+  assert.match(restore, /__restoreWriteValuesWithContext06c_\(sh, 2, iT \+ 1, outT/);
+  assert.match(restore, /__restoreWriteValuesWithContext06c_\(sh, 2, iR \+ 1, outR/);
+  assert.doesNotMatch(restore, /sh\.getRange\(2,iU\+1,n,1\)\.setValues\(outU\)/);
 });
 
 test('MAIN restore hotspots use sparse or single-column batch writes', () => {
