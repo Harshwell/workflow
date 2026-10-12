@@ -503,6 +503,15 @@ test('Status restore uses Overview C945 native metadata and preserves filled, bl
   assert.deepEqual(fixture.range.values, values);
 });
 
+test('MAIN temp restore does not copy backup Status validation over the C945 rule', () => {
+  const source = fs.readFileSync('06c_PostProcessAndUtils.gs', 'utf8');
+  const start = source.indexOf('function restoreOpsManualFromMainTempForSub06c_');
+  const end = source.indexOf('function restoreOpsManualFromBackupSheet06c_');
+  const restoreSource = source.slice(start, end);
+  assert.match(restoreSource, /if \(outS\) __restoreStatusValuesWithCanonicalValidation06c_/);
+  assert.doesNotMatch(restoreSource, /iS !== -1\) styleJobs\.push/);
+});
+
 test('invalid Status template is rejected before restore mutates values or validation', () => {
   const fixture = statusTemplateFixture();
   fixture.invalidate();

@@ -599,7 +599,9 @@ function restoreOpsManualFromMainTempForSub06c_(ss, pic, opts) {
       if (rec.rowNo) {
         if (iU !== -1) styleJobs.push({ srcRow: rec.rowNo, srcCol: 6, dstRow: r + 2, dstCol: iU + 1 });
         if (iT !== -1) styleJobs.push({ srcRow: rec.rowNo, srcCol: 7, dstRow: r + 2, dstCol: iT + 1 });
-        if (iS !== -1) styleJobs.push({ srcRow: rec.rowNo, srcCol: 8, dstRow: r + 2, dstCol: iS + 1 });
+        // Status values come from the backup, but its validation never does.
+        // Re-copying the full source cell here can restore a stale/non-chip rule
+        // after the canonical Overview!C945 validation was applied.
         if (iR !== -1) styleJobs.push({ srcRow: rec.rowNo, srcCol: 9, dstRow: r + 2, dstCol: iR + 1 });
       }
     }
