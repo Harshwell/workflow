@@ -45,6 +45,17 @@ test('manual snapshot writers clear stale dropdowns before writing timestamps an
   }
 });
 
+test('RESTORE_FIELDS clears stale validation before writing non-Status manual fields', () => {
+  const source = fs.readFileSync('06c_PostProcessAndUtils.gs', 'utf8');
+  const restoreFields = source.slice(
+    source.indexOf('function restoreOpsFieldsFromRawBackup_'),
+    source.indexOf('function buildRawValuesFromMain_')
+  );
+  assert.match(restoreFields, /orRange\.clearDataValidations\(\)[\s\S]*?orRange\.insertCheckboxes\(\)/);
+  assert.match(restoreFields, /tsRange\.clearDataValidations\(\)[\s\S]*?setValues\(outTs\)/);
+  assert.match(restoreFields, /remarksRange\.clearDataValidations\(\)[\s\S]*?setValues\(outRemarks\)/);
+});
+
 test('snapshot validation and deferred-write errors identify the backup sheet', () => {
   const source = fs.readFileSync('06c_PostProcessAndUtils.gs', 'utf8');
   let contentsCleared = false, failValidation = true;

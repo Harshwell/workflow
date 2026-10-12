@@ -1228,7 +1228,12 @@ function restoreOpsFieldsFromRawBackup_(ss, rawSheet, headerIndexRaw, pic) {
 
     // Apply checkbox validation first (then values)
     if (idxOrOps !== -1 && outOR) {
-      try { sh.getRange(2, idxOrOps + 1, m, 1).insertCheckboxes(); } catch (e) {}
+      try {
+        const orRange = sh.getRange(2, idxOrOps + 1, m, 1);
+        orRange.clearDataValidations();
+        if (typeof SpreadsheetApp !== 'undefined' && SpreadsheetApp && typeof SpreadsheetApp.flush === 'function') SpreadsheetApp.flush();
+        orRange.insertCheckboxes();
+      } catch (e) {}
       try { sh.getRange(2, idxOrOps + 1, m, 1).setValues(outOR); } catch (e) {}
     }
 
@@ -1237,6 +1242,11 @@ function restoreOpsFieldsFromRawBackup_(ss, rawSheet, headerIndexRaw, pic) {
     }
 
     if (idxTsOps !== -1 && outTs) {
+      try {
+        const tsRange = sh.getRange(2, idxTsOps + 1, m, 1);
+        tsRange.clearDataValidations();
+        if (typeof SpreadsheetApp !== 'undefined' && SpreadsheetApp && typeof SpreadsheetApp.flush === 'function') SpreadsheetApp.flush();
+      } catch (e) {}
       try { sh.getRange(2, idxTsOps + 1, m, 1).setValues(outTs); } catch (e) {}
     }
 
@@ -1247,6 +1257,11 @@ function restoreOpsFieldsFromRawBackup_(ss, rawSheet, headerIndexRaw, pic) {
     // Update Status and unexpectedly refresh Timestamp for many rows in one run.
 
     if (idxRemarksOps !== -1 && outRemarks) {
+      try {
+        const remarksRange = sh.getRange(2, idxRemarksOps + 1, m, 1);
+        remarksRange.clearDataValidations();
+        if (typeof SpreadsheetApp !== 'undefined' && SpreadsheetApp && typeof SpreadsheetApp.flush === 'function') SpreadsheetApp.flush();
+      } catch (e) {}
       try { sh.getRange(2, idxRemarksOps + 1, m, 1).setValues(outRemarks); } catch (e) {}
     }
 
