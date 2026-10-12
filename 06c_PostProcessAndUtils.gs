@@ -819,10 +819,10 @@ function restoreOpsManualFromBackupSheet06c_(ss, pic) {
       if (outS && String(outS[r][0]||'').trim()==='' && String(rec.s||'').trim()!=='') { outS[r][0]=rec.s; restored++; }
       if (outR && String(outR[r][0]||'').trim()==='' && String(rec.r||'').trim()!=='') { outR[r][0]=rec.r; restored++; }
     }
-    try { if (outU) sh.getRange(2,iU+1,n,1).setValues(outU); } catch(e){}
-    try { if (outT) sh.getRange(2,iT+1,n,1).setValues(outT); } catch(e){}
+    if (outU) __restoreWriteValuesWithContext06c_(sh, 2, iU + 1, outU, 'Update Status', h[iU], claims);
+    if (outT) __restoreWriteValuesWithContext06c_(sh, 2, iT + 1, outT, 'Timestamp', h[iT], claims);
     if (outS) __restoreStatusValuesWithCanonicalValidation06c_(sh, 2, iS + 1, outS, claims, 'MANUAL_BACKUP');
-    try { if (outR) sh.getRange(2,iR+1,n,1).setValues(outR); } catch(e){}
+    if (outR) __restoreWriteValuesWithContext06c_(sh, 2, iR + 1, outR, 'Remarks', h[iR], claims);
     } catch (eRestore) {
       throw new Error('Manual backup restore failed | source=_OPS_MANUAL_BACKUP | sheet=' + sheetNames[si] + ' | error=' + (eRestore && eRestore.message ? eRestore.message : eRestore));
     }
@@ -1179,10 +1179,12 @@ function sanitizeProblematicDataValidations06_(ss, pic) {
  */
 function sanitizeOperationalRestoreValidations06c_(ss, pic) {
   if (DRY_RUN || !ss) return;
-  const isAdmin = (pic === 'Admin');
-  const sheets = isAdmin
-    ? (CONFIG.sheetsByPic.adminOperational || [])
-    : (CONFIG.sheetsByPic.picOperational || []);
+  const sheets = (typeof getOperationalSheetsForBackup_ === 'function')
+    ? getOperationalSheetsForBackup_(pic)
+    : Array.from(new Set([].concat(
+      (CONFIG && CONFIG.sheetsByPic && CONFIG.sheetsByPic.picOperational) || [],
+      (CONFIG && CONFIG.sheetsByPic && CONFIG.sheetsByPic.adminOperational) || []
+    )));
 
   sheets.forEach(function(name) {
     const sh = ss.getSheetByName(name);
