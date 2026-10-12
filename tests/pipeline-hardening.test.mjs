@@ -39,10 +39,19 @@ test('manual snapshot writers clear stale dropdowns before writing timestamps an
     const ss = { getSheetByName: () => backup };
     if (name === '_OPS_MANUAL_BACKUP') api.persistOpsManualBackupSheet06c_(ss, 'Master', { map: { 'C-1': { s: { v: 'Legacy status' } } } });
     else api.persistOpsManualTempForSub06c_(ss, 'Master');
-    assert.deepEqual(calls, ['validation', 'contents', 'write', 'flush']);
+    assert.deepEqual(calls, ['validation', 'flush', 'contents', 'write', 'flush']);
     assert.equal(rowsWritten[0][0], 'Backup Timestamp');
     if (name === '_OPS_MANUAL_BACKUP') assert.equal(rowsWritten[1][5], 'Legacy status');
   }
+});
+
+test('RESTORE_FIELDS sanitizes all operational non-Status columns before restore', () => {
+  const source = fs.readFileSync('06c_PostProcessAndUtils.gs', 'utf8');
+  assert.match(source, /sanitizeOperationalRestoreValidations06c_\(ss, pic\);/);
+  assert.match(source, /const maxRows = sh\.getMaxRows\(\)/);
+  assert.match(source, /new Set\(\['Status', 'OR', 'Type'\]/);
+  assert.match(source, /RESTORE_FIELDS write failed/);
+  assert.match(source, /sheet=' \+ \(sh\.getName/);
 });
 
 test('snapshot validation and deferred-write errors identify the backup sheet', () => {

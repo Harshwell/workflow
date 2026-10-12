@@ -4,6 +4,7 @@ Perubahan material repository dicatat di sini berdasarkan outcome, flow/project 
 
 ## Unreleased
 
+- MAIN `RESTORE_FIELDS` now sanitizes validation across all operational non-Status columns through `maxRows` before restore writes, and restore errors include sheet, range, field, header, row span, and first claim context instead of being silently swallowed.
 - MAIN `RESTORE_FIELDS` now clears and flushes stale validation on non-Status restore targets before writing Timestamp, Remarks, and OR values, preventing contaminated dropdown rules from rejecting writes in cells such as `A4319`.
 - MAIN→SUB manual restore no longer copies backup-cell validation for `Status` after restoring its value; Status validation remains exclusively sourced from the native chip template `Overview!C945`.
 - MAIN restore now flushes cleared data validation before writing backup/status values, preventing deferred stale dropdown rules from rejecting writes such as `A2946`; the canonical Status rule is still restored from `Overview!C945`.
