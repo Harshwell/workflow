@@ -1757,6 +1757,9 @@ function retryMainPipelineStage2_() {
     state.stepAttempts = 0;
     state.preflightAttempts = 0;
     state.updatedAt = Date.now();
+    delete state.activeRunId;
+    delete state.activeStep;
+    delete state.activeUntil;
     delete state.lastError;
     props.setProperty('MAIN_PIPELINE_STAGE2', JSON.stringify(state));
     armMainPipelineStage2Trigger06b_(60000);
@@ -1765,11 +1768,24 @@ function retryMainPipelineStage2_() {
 }
 
 function runMainStage2Steps06b_(state, steps, props, deadline) {
+  const runId = (typeof Utilities !== 'undefined' && Utilities && Utilities.getUuid)
+    ? Utilities.getUuid()
+    : String(Date.now()) + '-' + Math.random();
+  const activeLeaseMs = 40 * 60 * 1000;
   const save = function() {
     state.updatedAt = Date.now();
     props.setProperty('MAIN_PIPELINE_STAGE2', JSON.stringify(state));
   };
+  const releaseLease = function() {
+    if (state.activeRunId === runId) {
+      delete state.activeRunId;
+      delete state.activeStep;
+      delete state.activeUntil;
+      save();
+    }
+  };
   const pending = function() {
+    releaseLease();
     save();
     armMainPipelineStage2Trigger06b_(60000);
     setProgress_(Math.min(0.99, 0.55 + 0.44 * (state.nextStep || 0) / steps.length), 'MAIN continuation pending: ' + steps[state.nextStep || 0].name);
@@ -1780,10 +1796,29 @@ function runMainStage2Steps06b_(state, steps, props, deadline) {
   while ((state.nextStep || 0) < steps.length) {
     if (Date.now() >= deadline) return pending();
     const step = steps[state.nextStep || 0];
+    if (state.activeRunId && state.activeRunId !== runId && Number(state.activeUntil || 0) > Date.now()) {
+      armMainPipelineStage2Trigger06b_(60000);
+      try {
+        logLine_(
+          'INFO',
+          'MAIN_STAGE2_BUSY',
+          'Existing MAIN continuation still active',
+          'step=' + (state.activeStep || step.name) + ' activeUntil=' + state.activeUntil,
+          'INFO'
+        );
+      } catch (eBusyLog) {}
+      return { severity: 'INFO', staged: true, message: 'MAIN stage 2 already running.', step: state.nextStep || 0 };
+    }
+    state.activeRunId = runId;
+    state.activeStep = step.name;
+    state.activeUntil = Date.now() + activeLeaseMs;
     state.stepAttempts = (state.stepAttempts || 0) + 1;
     save();
     if (state.stepAttempts > 3) {
       state.lastError = 'Retry limit reached: ' + step.name;
+      delete state.activeRunId;
+      delete state.activeStep;
+      delete state.activeUntil;
       save();
       ScriptApp.getProjectTriggers().forEach(function(t) {
         if (t.getHandlerFunction && t.getHandlerFunction() === 'runMainPipelineStage2_') ScriptApp.deleteTrigger(t);
@@ -1800,16 +1835,38 @@ function runMainStage2Steps06b_(state, steps, props, deadline) {
       }
     } catch (err) {
       state.lastError = step.name + ': ' + String(err).slice(0, 500);
+      delete state.activeRunId;
+      delete state.activeStep;
+      delete state.activeUntil;
       save();
-      logLine_('ERROR', 'MAIN_STAGE2_' + step.name, 'Checkpoint retained for retry', state.lastError, 'ERROR');
+      const retryDelayMs = 60000;
+      let retryArmed = false;
+      try {
+        armMainPipelineStage2Trigger06b_(retryDelayMs);
+        retryArmed = true;
+      } catch (eRetry) {
+        state.lastError += ' | retryTrigger=' + String(eRetry).slice(0, 300);
+        save();
+      }
+      logLine_(
+        'ERROR',
+        'MAIN_STAGE2_' + step.name,
+        'Checkpoint retained for retry',
+        state.lastError + ' | attempt=' + state.stepAttempts + ' | retryInMs=' + retryDelayMs + ' | retryArmed=' + retryArmed,
+        'ERROR'
+      );
       if (!step.bestEffort) throw err;
     }
     state.nextStep = (state.nextStep || 0) + 1;
     state.stepAttempts = 0;
     delete state.lastError;
+    delete state.activeRunId;
+    delete state.activeStep;
+    delete state.activeUntil;
     save();
     logLine_('INFO', 'MAIN_STAGE2_STEP', step.name, 'durationMs=' + (Date.now() - started), 'INFO');
   }
+  releaseLease();
   props.deleteProperty('MAIN_PIPELINE_STAGE2');
   ScriptApp.getProjectTriggers().forEach(function(t) {
     if (t.getHandlerFunction && t.getHandlerFunction() === 'runMainPipelineStage2_') ScriptApp.deleteTrigger(t);
@@ -1861,7 +1918,9 @@ function runMainPipelineStage2_() {
       { name: 'RESTORE_AWB', run: function() { restoreNamedOpsFieldsFromRaw06c_(ss, rawSheet, index, profile, ['AWB', 'Timestamp AWB']); } },
       { name: 'RESTORE_UPDATE_STATUS', run: function() { applyUpdateStatusRichTextToOperational_(ss, rawSheet, index, profile); } },
       { name: 'RESTORE_REMARKS', run: function() { applyRemarksRichTextToOperational_(ss, rawSheet, index, profile); } },
-      { name: 'RESTORE_MAIN_TEMP', run: function() { restoreOpsManualFromMainTempForSub06c_(ss, profile, { deleteAfterRestore: false }); } },
+      // Keep the checkpoint name stable for existing state, but do not repeat
+      // the expensive SUB handoff restore during MAIN.
+      { name: 'RESTORE_MAIN_TEMP', run: function() { return { skipped: true, reason: 'SUB_HANDOFF_ONLY' }; } },
       { name: 'RESTORE_BACKUP', run: function() { restoreOpsManualFromBackupSheet06c_(ss, profile); } },
       { name: 'ENRICH', run: function() { enrichOperationalSheetsFromRaw06_(ss, rows, index, profile, { flow: 'main' }); } },
       { name: 'SUBMISSION_SYNC', run: function() { applyStrictSubmissionDateAndMonth06b_(ss, rows, index); } },
@@ -1876,7 +1935,7 @@ function runMainPipelineStage2_() {
       { name: 'OPTIONAL_SUBMISSION_SYNC', run: function() { applyStrictSubmissionDateAndMonth06b_(ss, rows, index, { sheets: ['EV-Bike', 'Doss', 'TPL', 'Drone', 'Special Case'] }); } },
       { name: 'SANITIZE', run: function() { sanitizeProblematicDataValidations06_(ss, profile); } },
       { name: 'EXCLUSION_TAT', run: function() { recomputeExclusionTat_(ss, profile); } },
-      { name: 'RAW_REORDER', run: function() { reorderRawDataColumns06_(rawSheet); } },
+      { name: 'RAW_REORDER', bestEffort: true, run: function() { reorderRawDataColumns06_(rawSheet); } },
       { name: 'SORT', run: function() { sortOperationalSheetsPreserveFilter06b_(ss, profile); } },
       { name: 'HIGHLIGHT', run: function(save) {
         return applyOperationalClaimHighlightsByRaw_(ss, rows, index, profile, {

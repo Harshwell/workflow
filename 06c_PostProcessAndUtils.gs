@@ -94,13 +94,12 @@ function applyUpdateStatusRichTextToOperational_(ss, rawSheet, headerIndexRaw, p
 
     if (!rowNums.length) continue;
 
-    const segments = __groupConsecutiveRows_(rowNums);
-    for (let k = 0; k < segments.length; k++) {
-      const seg = segments[k];
-      const startRow = seg[0];
-      const rich2d = seg.map(rn => [rowMap[rn]]);
-      sh.getRange(startRow, idxUpdate + 1, rich2d.length, 1).setRichTextValues(rich2d);
+    const currentRich = sh.getRange(2, idxUpdate + 1, rows, 1).getRichTextValues();
+    for (let k = 0; k < rowNums.length; k++) {
+      const rn = rowNums[k];
+      currentRich[rn - 2][0] = rowMap[rn];
     }
+    sh.getRange(2, idxUpdate + 1, rows, 1).setRichTextValues(currentRich);
   }
 }
 
@@ -174,13 +173,12 @@ function applyRemarksRichTextToOperational_(ss, rawSheet, headerIndexRaw, pic) {
 
     if (!rowNums.length) continue;
 
-    const segments = __groupConsecutiveRows_(rowNums);
-    for (let k = 0; k < segments.length; k++) {
-      const seg = segments[k];
-      const startRow = seg[0];
-      const rich2d = seg.map(rn => [rowMap[rn]]);
-      sh.getRange(startRow, idxRemarks + 1, rich2d.length, 1).setRichTextValues(rich2d);
+    const currentRich = sh.getRange(2, idxRemarks + 1, rows, 1).getRichTextValues();
+    for (let k = 0; k < rowNums.length; k++) {
+      const rn = rowNums[k];
+      currentRich[rn - 2][0] = rowMap[rn];
     }
+    sh.getRange(2, idxRemarks + 1, rows, 1).setRichTextValues(currentRich);
   }
 }
 
@@ -552,6 +550,36 @@ function restoreOpsManualFromMainTempForSub06c_(ss, pic, opts) {
     : (CONFIG && CONFIG.sheetsByPic ? Array.from(new Set([].concat(CONFIG.sheetsByPic.picOperational || [], CONFIG.sheetsByPic.adminOperational || []))) : []);
 
   let restored = 0;
+  const groupRows = (typeof __groupConsecutiveRows_ === 'function')
+    ? __groupConsecutiveRows_
+    : function(nums) {
+      if (!nums || !nums.length) return [];
+      const a = nums.slice().sort(function(x, y) { return x - y; });
+      const segments = [];
+      let seg = [a[0]];
+      for (let i = 1; i < a.length; i++) {
+        if (a[i] === a[i - 1] + 1) seg.push(a[i]);
+        else { segments.push(seg); seg = [a[i]]; }
+      }
+      segments.push(seg);
+      return segments;
+    };
+  const tempRowCount = vals.length;
+  const tempRichU = idxUpd !== -1 && shBak.getRange(2, idxUpd + 1, tempRowCount, 1).getRichTextValues
+    ? shBak.getRange(2, idxUpd + 1, tempRowCount, 1).getRichTextValues()
+    : null;
+  const tempWrapU = idxUpd !== -1 && shBak.getRange(2, idxUpd + 1, tempRowCount, 1).getWrapStrategies
+    ? shBak.getRange(2, idxUpd + 1, tempRowCount, 1).getWrapStrategies()
+    : null;
+  const tempFormatsT = idxTs !== -1 && shBak.getRange(2, idxTs + 1, tempRowCount, 1).getNumberFormats
+    ? shBak.getRange(2, idxTs + 1, tempRowCount, 1).getNumberFormats()
+    : null;
+  const tempRichR = idxRem !== -1 && shBak.getRange(2, idxRem + 1, tempRowCount, 1).getRichTextValues
+    ? shBak.getRange(2, idxRem + 1, tempRowCount, 1).getRichTextValues()
+    : null;
+  const tempWrapR = idxRem !== -1 && shBak.getRange(2, idxRem + 1, tempRowCount, 1).getWrapStrategies
+    ? shBak.getRange(2, idxRem + 1, tempRowCount, 1).getWrapStrategies()
+    : null;
   for (let si = 0; si < sheetNames.length; si++) {
     const sh = ss.getSheetByName(sheetNames[si]);
     if (!sh) continue;
@@ -582,44 +610,87 @@ function restoreOpsManualFromMainTempForSub06c_(ss, pic, opts) {
     const outT = iT !== -1 ? sh.getRange(2, iT + 1, n, 1).getValues() : null;
     const outS = iS !== -1 ? sh.getRange(2, iS + 1, n, 1).getValues() : null;
     const outR = iR !== -1 ? sh.getRange(2, iR + 1, n, 1).getValues() : null;
-    const styleJobs = [];
+    const rowsU = [], rowsT = [], rowsS = [], rowsR = [];
+    const mapU = Object.create(null), mapT = Object.create(null), mapS = Object.create(null), mapR = Object.create(null);
+    const richU = Object.create(null), wrapU = Object.create(null), formatT = Object.create(null);
+    const richR = Object.create(null), wrapR = Object.create(null);
+
+    const pushRestore = function(rowsList, mapObj, rowNo, value) {
+      rowsList.push(rowNo);
+      mapObj[rowNo] = value;
+    };
 
     for (let r = 0; r < n; r++) {
       const k = keyOf(claims[r][0], scs[r][0]);
       const rec = map[k];
       if (!rec) continue;
-      if (outU && String(outU[r][0] || '').trim() === '' && String(rec.u || '').trim() !== '') { outU[r][0] = rec.u; restored++; }
-      if (outT && String(outT[r][0] || '').trim() === '' && String(rec.t || '').trim() !== '') { outT[r][0] = rec.t; restored++; }
-      if (outS && String(outS[r][0] || '').trim() === '' && String(rec.s || '').trim() !== '') { outS[r][0] = rec.s; restored++; }
-      if (outR && String(outR[r][0] || '').trim() === '' && String(rec.r || '').trim() !== '') { outR[r][0] = rec.r; restored++; }
+      const dstRow = r + 2;
+      if (outU && String(outU[r][0] || '').trim() === '' && String(rec.u || '').trim() !== '') { pushRestore(rowsU, mapU, dstRow, rec.u); restored++; }
+      if (outT && String(outT[r][0] || '').trim() === '' && String(rec.t || '').trim() !== '') { pushRestore(rowsT, mapT, dstRow, rec.t); restored++; }
+      if (outS && String(outS[r][0] || '').trim() === '' && String(rec.s || '').trim() !== '') { pushRestore(rowsS, mapS, dstRow, rec.s); restored++; }
+      if (outR && String(outR[r][0] || '').trim() === '' && String(rec.r || '').trim() !== '') { pushRestore(rowsR, mapR, dstRow, rec.r); restored++; }
 
-      // Preserve style 1:1 from temp sheet (rich text, font color, wrap, DV)
-      // after value writes. If copyTo runs before setValues(), the later value
-      // batch can flatten rich text/font styling and recreate the shifted color
-      // issue during MAIN -> SUB restore.
       if (rec.rowNo) {
-        if (iU !== -1) styleJobs.push({ srcRow: rec.rowNo, srcCol: 6, dstRow: r + 2, dstCol: iU + 1 });
-        if (iT !== -1) styleJobs.push({ srcRow: rec.rowNo, srcCol: 7, dstRow: r + 2, dstCol: iT + 1 });
-        // Status values come from the backup, but its validation never does.
-        // Re-copying the full source cell here can restore a stale/non-chip rule
-        // after the canonical Overview!C945 validation was applied.
-        if (iR !== -1) styleJobs.push({ srcRow: rec.rowNo, srcCol: 9, dstRow: r + 2, dstCol: iR + 1 });
+        const srcRow = rec.rowNo - 2;
+        if (mapU[dstRow] != null) {
+          if (tempRichU && tempRichU[srcRow]) richU[dstRow] = tempRichU[srcRow][0];
+          if (tempWrapU && tempWrapU[srcRow]) wrapU[dstRow] = tempWrapU[srcRow][0];
+        }
+        if (mapT[dstRow] != null && tempFormatsT && tempFormatsT[srcRow]) formatT[dstRow] = tempFormatsT[srcRow][0];
+        if (mapR[dstRow] != null) {
+          if (tempRichR && tempRichR[srcRow]) richR[dstRow] = tempRichR[srcRow][0];
+          if (tempWrapR && tempWrapR[srcRow]) wrapR[dstRow] = tempWrapR[srcRow][0];
+        }
       }
     }
 
-    try { if (outU) sh.getRange(2, iU + 1, n, 1).setValues(outU); } catch (e) {}
-    try { if (outT) sh.getRange(2, iT + 1, n, 1).setValues(outT); } catch (e) {}
-    if (outS) __restoreStatusValuesWithCanonicalValidation06c_(sh, 2, iS + 1, outS, claims, 'MAIN_TEMP');
-    try { if (outR) sh.getRange(2, iR + 1, n, 1).setValues(outR); } catch (e) {}
-    for (let j = 0; j < styleJobs.length; j++) {
-      const job = styleJobs[j];
-      try {
-        const src = shBak.getRange(job.srcRow, job.srcCol);
-        const dst = sh.getRange(job.dstRow, job.dstCol);
-        src.copyTo(dst, { contentsOnly: false });
-      } catch (eCopy) {}
+    const writeSparseValues = function(idxCol0, rowNums, rowMap) {
+      if (idxCol0 === -1 || !rowNums.length) return;
+      groupRows(rowNums).forEach(function(seg) {
+        const vals = seg.map(function(rn) { return [rowMap[rn]]; });
+        sh.getRange(seg[0], idxCol0 + 1, vals.length, 1).setValues(vals);
+      });
+    };
+
+    writeSparseValues(iU, rowsU, mapU);
+    writeSparseValues(iT, rowsT, mapT);
+    if (iS !== -1 && rowsS.length) {
+      groupRows(rowsS).forEach(function(seg) {
+        const vals = seg.map(function(rn) { return [mapS[rn]]; });
+        const claim2d = seg.map(function(rn) { return claims[rn - 2] || ['']; });
+        __restoreStatusValuesWithCanonicalValidation06c_(sh, seg[0], iS + 1, vals, claim2d, 'MAIN_TEMP');
+      });
     }
-    if (outS) sv03_applyGeneralStatusValidationToRange_(sh.getRange(2, iS + 1, n, 1));
+    writeSparseValues(iR, rowsR, mapR);
+
+    const writeSparseRich = function(idxCol0, rowNums, rowMap) {
+      if (idxCol0 === -1 || !rowNums.length) return;
+      groupRows(rowNums).forEach(function(seg) {
+        const rich = seg.map(function(rn) { return [rowMap[rn]]; });
+        if (rich.every(function(cell) { return cell[0] != null; })) {
+          try { sh.getRange(seg[0], idxCol0 + 1, rich.length, 1).setRichTextValues(rich); } catch (eRich) {}
+        }
+      });
+    };
+    const writeSparseMatrix = function(idxCol0, rowNums, rowMap, setter) {
+      if (idxCol0 === -1 || !rowNums.length) return;
+      groupRows(rowNums).forEach(function(seg) {
+        const matrix = seg.map(function(rn) { return [rowMap[rn]]; });
+        if (matrix.every(function(cell) { return cell[0] != null; })) {
+          try { setter(sh.getRange(seg[0], idxCol0 + 1, matrix.length, 1), matrix); } catch (eMatrix) {}
+        }
+      });
+    };
+    writeSparseRich(iU, rowsU, richU);
+    writeSparseMatrix(iU, rowsU, wrapU, function(range, matrix) { range.setWrapStrategies(matrix); });
+    writeSparseMatrix(iT, rowsT, formatT, function(range, matrix) { range.setNumberFormats(matrix); });
+    writeSparseRich(iR, rowsR, richR);
+    writeSparseMatrix(iR, rowsR, wrapR, function(range, matrix) { range.setWrapStrategies(matrix); });
+    if (iS !== -1 && rowsS.length) {
+      groupRows(rowsS).forEach(function(seg) {
+        sv03_applyGeneralStatusValidationToRange_(sh.getRange(seg[0], iS + 1, seg.length, 1));
+      });
+    }
   }
 
   if (opts.deleteAfterRestore !== false) {
@@ -3051,7 +3122,16 @@ function reorderColumnsByHeaderPriority06_(sheet, headers, desiredHeaders) {
     // Move entire column (all rows) to destination position.
     const maxRows = sheet.getMaxRows ? sheet.getMaxRows() : Math.max(1, sheet.getLastRow ? sheet.getLastRow() : 1);
     try {
-      sheet.moveColumns(sheet.getRange(1, currentCol, maxRows, 1), dest);
+      if (currentCol < dest) {
+        // Moving the desired column right into its adjacent destination is
+        // rejected as overlapping. Shift the intervening block left instead.
+        sheet.moveColumns(
+          sheet.getRange(1, currentCol + 1, maxRows, dest - currentCol),
+          currentCol
+        );
+      } else {
+        sheet.moveColumns(sheet.getRange(1, currentCol, maxRows, 1), dest);
+      }
     } catch (eMove) {
       const sheetName = sheet.getName ? sheet.getName() : 'Raw Data';
       throw new Error('Raw column reorder failed | sheet=' + sheetName + ' | header=' + h + ' | fromCol=' + currentCol + ' | toCol=' + dest + ' | rows=1:' + maxRows + ' | error=' + (eMove && eMove.message ? eMove.message : eMove));
