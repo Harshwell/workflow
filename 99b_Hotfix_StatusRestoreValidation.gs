@@ -89,7 +89,7 @@
 
     // Delegate the actual canonical-validation/template handling to the
     // existing hardened implementation, but never pass it an invalid value.
-    const result = original(sh, startRow, col1, filtered, claims, sourceLabel);
+    let result = original(sh, startRow, col1, filtered, claims, sourceLabel);
     result = result || {};
     result.skippedInvalid = skippedInvalid;
     return result;
