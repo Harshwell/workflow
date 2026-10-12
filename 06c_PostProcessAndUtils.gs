@@ -2722,32 +2722,13 @@ function applyFinishTypeInScSheets06_(ss) {
     return '';
   };
 
-  // Ensure Type dropdown exists (preserve dropdown-chip/colors by copying DV from a template cell).
+  // Ensure Type dropdown exists by copying native chip validation from the SC template.
   let typeDvTemplateCell = null;
   try {
-    for (let ti = 0; ti < sheetNames.length; ti++) {
-      const shT = ss.getSheetByName(sheetNames[ti]);
-      if (!shT) continue;
-      const lcT = shT.getLastColumn();
-      if (lcT < 1) continue;
-      const headerT = shT.getRange(1, 1, 1, lcT).getValues()[0].map(__normalizeHeaderText06_);
-      const idxTypeT = __findHeaderIndexFlexible06_(headerT, 'Type');
-      if (idxTypeT === -1) continue;
-      const cell = shT.getRange(2, idxTypeT + 1, 1, 1);
-      const dv = cell.getDataValidation();
-      if (dv) { typeDvTemplateCell = cell; break; }
+    if (typeof sv03_getCanonicalTypeTemplateCell_ === 'function') {
+      typeDvTemplateCell = sv03_getCanonicalTypeTemplateCell_(ss);
     }
   } catch (e) {}
-
-  // Fallback list-based rule (may lose dropdown-chip styling if chips are required).
-  const fallbackTypeOpts = (typeof getScTypeDropdownOptions_ === 'function')
-    ? getScTypeDropdownOptions_()
-    : ['SC - Rcvd','Start','SC - Est','Insurance','OR','Finish','SC - Wait Rep','SC - On Rep'];
-
-  const fallbackDvRule = SpreadsheetApp.newDataValidation()
-    .requireValueInList(fallbackTypeOpts, true)
-    .setAllowInvalid(true)
-    .build();
 
   for (let si = 0; si < sheetNames.length; si++) {
     const sh = ss.getSheetByName(sheetNames[si]);
@@ -2778,7 +2759,12 @@ function applyFinishTypeInScSheets06_(ss) {
             try { typeDvTemplateCell.copyTo(dst, SpreadsheetApp.CopyPasteType.PASTE_DATA_VALIDATION, false); } catch (e1) {}
             try { typeDvTemplateCell.copyTo(dst, SpreadsheetApp.CopyPasteType.PASTE_FORMAT, false); } catch (e2) {}
           } else {
-            try { dst.setDataValidation(fallbackDvRule); } catch (e3) {}
+            try {
+              if (typeof logLine_ === 'function') {
+                logLine_('WARN', 'TYPE_TEMPLATE_MISSING', sh.getName() + '!R2C' + (idxType + 1),
+                  'Native Type chip template not found; validation was left unchanged', 'WARN');
+              }
+            } catch (e3) {}
           }
         }
       }

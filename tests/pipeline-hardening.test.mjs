@@ -627,3 +627,13 @@ test('MAIN temp restore cannot replace C945 dropdown with an old arrow rule', ()
   assert.equal(JSON.stringify(fixture.range.values), JSON.stringify([['DONE']]));
   assert.equal(fixture.range.metadata, fixture.metadata);
 });
+
+test('SUB Type relocation never rebuilds an arrow dropdown when the native chip template is missing', () => {
+  const validationSource = fs.readFileSync('03_SheetsAndValidation.gs', 'utf8');
+  const entrySource = fs.readFileSync('06a_EntryPoints.gs', 'utf8');
+  const finishSource = fs.readFileSync('06c_PostProcessAndUtils.gs', 'utf8');
+  assert.match(validationSource, /sv03_getCanonicalTypeTemplateCell_/);
+  assert.doesNotMatch(entrySource, /ensureForcedTypeDropdown[\s\S]*?requireValueInList/);
+  assert.doesNotMatch(finishSource, /fallbackDvRule/);
+  assert.match(entrySource, /Type chip template missing/);
+});

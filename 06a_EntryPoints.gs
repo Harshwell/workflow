@@ -3039,14 +3039,22 @@ function __relocateOperationalRowsByLastStatusSub06a_(ss, sheetNames) {
     const typeIdx = tgt.norm.indexOf('type');
     if (typeIdx < 0) return;
     try {
-      let rule = tgt.sh.getRange(2, typeIdx + 1).getDataValidation();
-      if (!rule) {
-        const options = (typeof getScTypeDropdownOptions_ === 'function')
-          ? getScTypeDropdownOptions_()
-          : ['SC - Rcvd', 'Start', 'SC - Est', 'Insurance', 'OR', 'Finish', 'SC - Wait Rep', 'SC - On Rep'];
-        rule = SpreadsheetApp.newDataValidation().requireValueInList(options, true).setAllowInvalid(true).build();
+      let source = tgt.sh.getRange(2, typeIdx + 1);
+      let rule = source.getDataValidation();
+      if (!rule && typeof sv03_getCanonicalTypeTemplateCell_ === 'function') {
+        source = sv03_getCanonicalTypeTemplateCell_(tgt.sh.getParent());
+        rule = source ? source.getDataValidation() : null;
       }
-      tgt.sh.getRange(targetRow, typeIdx + 1).setDataValidation(rule);
+      if (!rule) {
+        try {
+          logLine_('SUB_WARN', 'Type chip template missing',
+            tgt.sh.getName() + '!R' + targetRow + 'C' + (typeIdx + 1),
+            'Type=Start was written without rebuilding validation; configure a native Type dropdown template in an SC sheet row 2',
+            'WARN');
+        } catch (eMissingLog) {}
+        return;
+      }
+      source.copyTo(tgt.sh.getRange(targetRow, typeIdx + 1), SpreadsheetApp.CopyPasteType.PASTE_DATA_VALIDATION, false);
     } catch (eTypeDv) {
       try { logLine_('SUB_WARN', 'Delivered mirror Type dropdown failed', tgt.sh.getName() + ' row=' + targetRow, String(eTypeDv), 'WARN'); } catch (eTypeDvLog) {}
     }
