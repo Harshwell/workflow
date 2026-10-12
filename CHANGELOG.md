@@ -4,6 +4,8 @@ Perubahan material repository dicatat di sini berdasarkan outcome, flow/project 
 
 ## Unreleased
 
+- MAIN restore now flushes cleared data validation before writing backup/status values, preventing deferred stale dropdown rules from rejecting writes such as `A2946`; the canonical Status rule is still restored from `Overview!C945`.
+
 - Writer snapshot manual MAIN membersihkan stale data validation sebelum menulis `_OPS_MANUAL_BACKUP`/`_OPS_MAIN_SUB_TEMP`, memastikan kapasitas row/column, dan flush untuk mengaitkan deferred-write error dengan source snapshot. Restore fallback menambahkan source backup dan nama destination sheet pada error; checkpoint MAIN tetap dipertahankan untuk retry. Snapshot yang gagal menghentikan MAIN sebelum reset operational, dan email/temp input MAIN baru dibersihkan setelah stage 2 seluruhnya berhasil.
 - Menambahkan `retryMainPipelineStage2` sebagai entry point publik Apps Script untuk memanggil helper checkpoint internal `retryMainPipelineStage2_`, sehingga recovery muncul di dropdown Run editor.
 
