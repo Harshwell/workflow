@@ -393,6 +393,9 @@ function __writeManualBackupSnapshot06c_(sh, rows, width) {
     if (width > sh.getMaxColumns()) sh.insertColumnsAfter(sh.getMaxColumns(), width - sh.getMaxColumns());
     // clearContents retains stale rules, including Status dropdowns on timestamp/claim columns.
     sh.getRange(1, 1, rowBound, width).clearDataValidations();
+    if (typeof SpreadsheetApp !== 'undefined' && SpreadsheetApp && typeof SpreadsheetApp.flush === 'function') {
+      SpreadsheetApp.flush();
+    }
     sh.clearContents();
     sh.getRange(1, 1, rows.length, width).setValues(rows);
     SpreadsheetApp.flush();
@@ -644,6 +647,13 @@ function __restoreStatusValuesWithCanonicalValidation06c_(sh, startRow, col1, va
   try { range.clearDataValidations(); } catch (eClear) {
     throw new Error('Status restore validation clear failed | source=' + sourceLabel + ' | sheet=' + sheetName + ' | range=' + rangeA1 + ' | error=' + (eClear && eClear.message ? eClear.message : eClear));
   }
+  try {
+    if (typeof SpreadsheetApp !== 'undefined' && SpreadsheetApp && typeof SpreadsheetApp.flush === 'function') {
+      SpreadsheetApp.flush();
+    }
+  } catch (eFlush) {
+    throw new Error('Status restore validation flush failed | source=' + sourceLabel + ' | sheet=' + sheetName + ' | range=' + rangeA1 + ' | error=' + (eFlush && eFlush.message ? eFlush.message : eFlush));
+  }
 
   try {
     range.setValues(values);
@@ -653,6 +663,9 @@ function __restoreStatusValuesWithCanonicalValidation06c_(sh, startRow, col1, va
       const cell = sh.getRange(startRow + i, col1, 1, 1);
       try {
         cell.clearDataValidations();
+        if (typeof SpreadsheetApp !== 'undefined' && SpreadsheetApp && typeof SpreadsheetApp.flush === 'function') {
+          SpreadsheetApp.flush();
+        }
         cell.setValue(values[i][0]);
         written++;
       } catch (cellErr) {

@@ -39,7 +39,7 @@ test('manual snapshot writers clear stale dropdowns before writing timestamps an
     const ss = { getSheetByName: () => backup };
     if (name === '_OPS_MANUAL_BACKUP') api.persistOpsManualBackupSheet06c_(ss, 'Master', { map: { 'C-1': { s: { v: 'Legacy status' } } } });
     else api.persistOpsManualTempForSub06c_(ss, 'Master');
-    assert.deepEqual(calls, ['validation', 'contents', 'write', 'flush']);
+    assert.deepEqual(calls, ['validation', 'flush', 'contents', 'write', 'flush']);
     assert.equal(rowsWritten[0][0], 'Backup Timestamp');
     if (name === '_OPS_MANUAL_BACKUP') assert.equal(rowsWritten[1][5], 'Legacy status');
   }
