@@ -341,6 +341,7 @@ SUB juga mengisi `Activity Log` dari `activity_log` dengan fallback sesuai kontr
 
 - Installer memasang `runSubEmailIngest()` setiap jam di sekitar menit 20.
 - MAIN dijadwalkan pukul **06:00 Asia/Jakarta**; SUB tetap tiap jam dan melewati jam **06:00** agar tidak bertabrakan dengan MAIN. `FLOW_SCHEDULE_POLICY.MAIN_HOUR` menjadi owner jam MAIN/skip SUB, sedangkan handoff dan gate Weekly Report Base SUB dihitung satu jam setelah MAIN (**07:00**).
+- Scheduler MAIN memakai polling 5 menit dengan execution window **06:00-06:15 Asia/Jakarta** dan guard satu kali per tanggal; trigger di luar window hanya skip. Manual test/replay gunakan `runMainEmailManual()` atau `runEmailIngest()` tanpa guard tanggal.
 - Setelah sync source, jalankan `installEmailIngestTrigger()` sekali untuk mengganti trigger MAIN lama dengan jadwal baru. Trigger SUB hourly tidak perlu dipasang ulang. Trigger time-driven mengikuti window jam, bukan jaminan tepat pada menit 00; attachment MAIN harus sudah tersedia di queue sebelum eksekusi.
 - Jika MAIN sedang memegang lock, SUB menulis pending handoff; MAIN mencoba menjalankannya setelah selesai.
 - Handoff backup manual MAIN hanya direstore pada window **07:00**; SUB di jam lain tidak memakai backup tersebut.

@@ -112,26 +112,28 @@ test('manual backup restore identifies the destination sheet on failure', () => 
     /source=_OPS_MANUAL_BACKUP.*sheet=SC - Meindar.*A2946/);
 });
 
-test('MAIN installer replaces only MAIN triggers and uses the shared six AM schedule', () => {
+test('MAIN installer replaces only MAIN triggers and installs the 15-minute schedule wrapper', () => {
   const source = fs.readFileSync('06a_EntryPoints.gs', 'utf8');
   const policy = evaluateInitializer(fs.readFileSync('00_Config.gs', 'utf8'), 'FLOW_SCHEDULE_POLICY');
   assert.equal(policy.MAIN_HOUR, 6);
+  assert.equal(policy.MAIN_WINDOW_MINUTES, 15);
   let triggers = [{ getHandlerFunction: () => 'runEmailIngest' }, { getHandlerFunction: () => 'runSubEmailIngest' }];
-  const hours = [];
+  const intervals = [];
   const api = loadFunctions(source, ['installEmailIngestTrigger'], {
     FLOW_SCHEDULE_POLICY: policy,
     ScriptApp: {
       getProjectTriggers: () => triggers.slice(), deleteTrigger: trigger => { triggers = triggers.filter(t => t !== trigger); },
       newTrigger(handler) {
-        const builder = { timeBased() { return this; }, everyDays(days) { assert.equal(days, 1); return this; },
-          atHour(hour) { hours.push(hour); return this; }, create() { triggers.push({ getHandlerFunction: () => handler }); } };
+        const builder = { timeBased() { return this; }, everyMinutes(minutes) { intervals.push(minutes); return this; },
+          create() { triggers.push({ getHandlerFunction: () => handler }); } };
         return builder;
       }
     }
   });
   api.installEmailIngestTrigger(); api.installEmailIngestTrigger();
-  assert.deepEqual(hours, [6, 6]);
-  assert.equal(triggers.filter(t => t.getHandlerFunction() === 'runEmailIngest').length, 1);
+  assert.deepEqual(intervals, [5, 5]);
+  assert.equal(triggers.filter(t => t.getHandlerFunction() === 'runEmailIngest').length, 0);
+  assert.equal(triggers.filter(t => t.getHandlerFunction() === 'runScheduledMainIngest').length, 1);
   assert.equal(triggers.filter(t => t.getHandlerFunction() === 'runSubEmailIngest').length, 1);
 });
 

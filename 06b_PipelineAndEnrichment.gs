@@ -287,9 +287,6 @@ function runPipeline_(pic, fileIds, opts) {
       submissionDateVal: ''
     }], { profile: profileName });
 
-    // Finalize Raw Data column order (non-destructive)
-    try { reorderRawDataColumns06_(rawSheet); } catch (eR) { try { logLine_('WARN', 'Raw Data reorder failed', '', String(eR), 'WARN'); } catch (e2) {} }
-
     setProgress_(1.0, 'Done (safety stop).');
     return {
       severity: 'WARN',
@@ -476,9 +473,6 @@ function runPipeline_(pic, fileIds, opts) {
   try { sanitizeProblematicDataValidations06_(ss, profileName); } catch (eSan) {}
 
   endSegment_(segOpt, 'b2b=' + b2bCount + ' sc=' + scCount + ' ev=' + evCount, scMetrics || '', 'INFO');
-
-  // Finalize Raw Data column order
-  try { reorderRawDataColumns06_(rawSheet); } catch (eR) { try { logLine_('WARN', 'Raw Data reorder failed', '', String(eR), 'WARN'); } catch (e2) {} }
 
   // Trash uploaded files only after successful run (best effort)
   try {
@@ -1935,7 +1929,6 @@ function runMainPipelineStage2_() {
       { name: 'OPTIONAL_SUBMISSION_SYNC', run: function() { applyStrictSubmissionDateAndMonth06b_(ss, rows, index, { sheets: ['EV-Bike', 'Doss', 'TPL', 'Drone', 'Special Case'] }); } },
       { name: 'SANITIZE', run: function() { sanitizeProblematicDataValidations06_(ss, profile); } },
       { name: 'EXCLUSION_TAT', run: function() { recomputeExclusionTat_(ss, profile); } },
-      { name: 'RAW_REORDER', bestEffort: true, run: function() { reorderRawDataColumns06_(rawSheet); } },
       { name: 'SORT', run: function() { sortOperationalSheetsPreserveFilter06b_(ss, profile); } },
       { name: 'HIGHLIGHT', run: function(save) {
         return applyOperationalClaimHighlightsByRaw_(ss, rows, index, profile, {
