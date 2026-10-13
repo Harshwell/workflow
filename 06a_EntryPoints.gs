@@ -972,8 +972,9 @@ function runEmailIngest(maxThreads) {
   let mainOkForPendingSub = false;
   try {
     const mainResult = withLock_(() => {
+    resetStaleMainState06b_();
     if (PropertiesService.getScriptProperties().getProperty('MAIN_PIPELINE_STAGE2')) {
-      return { severity: 'INFO', staged: true, message: 'MAIN continuation pending; queued email retained.' };
+      return { severity: 'INFO', staged: true, message: 'MAIN continuation still active; queued email retained.' };
     }
     resetRunState_();
     if (PIPELINE_FLAGS.CLEAR_LOG_BEFORE_RUN) clearLogSheet_();
@@ -3441,8 +3442,9 @@ function runManual(picOrFileIdsCsv, fileIdsCsvMaybe) {
   let mainOkForPendingSub = false;
   try {
     const mainResult = withLock_(() => {
+    resetStaleMainState06b_({ force: true });
     if (PropertiesService.getScriptProperties().getProperty('MAIN_PIPELINE_STAGE2')) {
-      return { severity: 'INFO', staged: true, message: 'MAIN continuation pending; manual input retained.' };
+      return { severity: 'INFO', staged: true, message: 'MAIN continuation still active; manual input retained.' };
     }
     resetRunState_();
     if (PIPELINE_FLAGS.CLEAR_LOG_BEFORE_RUN) clearLogSheet_();

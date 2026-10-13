@@ -639,3 +639,18 @@ test('SUB Type relocation never rebuilds an arrow dropdown when the native chip 
   assert.doesNotMatch(finishSource, /fallbackDvRule/);
   assert.match(entrySource, /Type chip template missing/);
 });
+
+test('Raw Data canonical order keeps manual tail and unknown Excel headers at the right', () => {
+  const source = fs.readFileSync('00_Config.gs', 'utf8');
+  const canonical = source.slice(
+    source.indexOf('const RAW_DATA_CANONICAL_ORDER'),
+    source.indexOf('const RAW_DATA_REORDER_POLICY')
+  );
+  const order = [...canonical.matchAll(/'([^']+)'/g)].map(m => m[1]);
+  assert.equal(source.includes('ENABLE: true'), true);
+  assert.equal(order[0], 'qoala_policy_number');
+  assert.equal(order[1], 'claim_number');
+  assert.equal(order.at(-8), 'Update Status');
+  assert.equal(order.at(-1), 'Timestamp AWB');
+  assert.equal(order.includes('claim_excess_fee_amount'), true);
+});

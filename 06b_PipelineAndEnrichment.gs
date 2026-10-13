@@ -6,7 +6,43 @@
 /** =========================
  * Pipeline Orchestrator
  * ========================= */
+function resetStaleMainState06b_(opts) {
+  const options = opts || {};
+  const props = PropertiesService.getScriptProperties();
+  const raw = props.getProperty('MAIN_PIPELINE_STAGE2');
+  if (!raw) return { reset: false, reason: 'none' };
+
+  let state = null;
+  try { state = JSON.parse(raw); } catch (e) { state = null; }
+  const now = Date.now();
+  const activeUntil = state ? Number(state.activeUntil || 0) : 0;
+  const updatedAt = state ? Number(state.updatedAt || state.createdAt || 0) : 0;
+  const stale = !state || !updatedAt || (now - updatedAt > 30 * 60 * 1000) || (activeUntil > 0 && activeUntil <= now);
+  const force = options.force === true;
+  if (!stale && !force) return { reset: false, reason: 'active', state: state };
+
+  props.deleteProperty('MAIN_PIPELINE_STAGE2');
+  props.deleteProperty('WORKFLOW_SUB_PENDING_AFTER_MAIN');
+  try {
+    ScriptApp.getProjectTriggers().forEach(function(t) {
+      if (t.getHandlerFunction && t.getHandlerFunction() === 'runMainPipelineStage2_') ScriptApp.deleteTrigger(t);
+    });
+  } catch (eTrigger) {}
+  try {
+    if (typeof logLine_ === 'function') {
+      logLine_('WARN', 'MAIN_STALE_CHECKPOINT_RESET', 'Reset stale MAIN checkpoint before new run',
+        'reason=' + (force ? 'manual_force' : 'stale_or_expired') + ' previousStep=' + (state && state.activeStep || state && state.nextStep || ''),
+        'WARN');
+    }
+  } catch (eLog) {}
+  return { reset: true, reason: force ? 'manual_force' : 'stale_or_expired' };
+}
+
 function runPipeline_(pic, fileIds, opts) {
+  const stateReset = resetStaleMainState06b_(opts);
+  if (!stateReset.reset && stateReset.reason === 'active') {
+    throw new Error('MAIN continuation still active; use retryMainPipelineStage2 or wait for the current worker.');
+  }
   if (PropertiesService.getScriptProperties().getProperty('MAIN_PIPELINE_STAGE2')) {
     throw new Error('MAIN continuation pending; finish or recover it before replacing Raw Data.');
   }
@@ -320,6 +356,11 @@ function runPipeline_(pic, fileIds, opts) {
   // MAIN is intentionally split after the durable Raw/manual snapshots are complete.
   // The continuation reads Raw Data, so it does not depend on in-memory state from this execution.
   if (flowName === 'main' && options.deferRouting === true) {
+    // Stage 2 re-reads the header and rows after this normalization.
+    try { reorderRawDataColumns06_(rawSheet); } catch (eRawOrder) {
+      try { logLine_('ERROR', 'RAW_ORDER', 'Raw Data canonical ordering failed', String(eRawOrder), 'ERROR'); } catch (eRawOrderLog) {}
+      throw eRawOrder;
+    }
     const token = scheduleMainPipelineStage2_(profileName, rawSheet.getSheetId(), rawValues.length, getRunId_());
     setProgress_(0.50, 'Execution 1 complete; pending execution 2.');
     return { severity: 'INFO', message: 'MAIN stage 1 complete; routing queued.', staged: true, stageToken: token, rawRows: rawValues.length, routedTotal: 0 };
@@ -523,6 +564,13 @@ function runPipeline_(pic, fileIds, opts) {
       if (typeof __expandSheetFilterToUsedRange06_ === 'function') __expandSheetFilterToUsedRange06_(sh);
     });
   } catch (eFlt) { try { logLine_('WARN', 'Filter range sync failed', '', String(eFlt), 'WARN'); } catch (e2) {} }
+
+  // Direct/manual runs still normalize at the end, after every consumer has
+  // finished using the original in-memory header indexes.
+  try { reorderRawDataColumns06_(rawSheet); } catch (eRawOrderFinal) {
+    try { logLine_('ERROR', 'RAW_ORDER', 'Raw Data canonical ordering failed', String(eRawOrderFinal), 'ERROR'); } catch (eRawOrderFinalLog) {}
+    throw eRawOrderFinal;
+  }
 
   setProgress_(1.0, 'Done.');
   logLine_(
@@ -1765,7 +1813,9 @@ function runMainStage2Steps06b_(state, steps, props, deadline) {
   const runId = (typeof Utilities !== 'undefined' && Utilities && Utilities.getUuid)
     ? Utilities.getUuid()
     : String(Date.now()) + '-' + Math.random();
-  const activeLeaseMs = 40 * 60 * 1000;
+  // Apps Script execution budget is 210s. Keep the lease above one execution
+  // but short enough that a hard timeout does not block recovery for 40 minutes.
+  const activeLeaseMs = 5 * 60 * 1000;
   const save = function() {
     state.updatedAt = Date.now();
     props.setProperty('MAIN_PIPELINE_STAGE2', JSON.stringify(state));
@@ -1790,18 +1840,33 @@ function runMainStage2Steps06b_(state, steps, props, deadline) {
   while ((state.nextStep || 0) < steps.length) {
     if (Date.now() >= deadline) return pending();
     const step = steps[state.nextStep || 0];
-    if (state.activeRunId && state.activeRunId !== runId && Number(state.activeUntil || 0) > Date.now()) {
-      armMainPipelineStage2Trigger06b_(60000);
+    if (state.activeRunId && state.activeRunId !== runId) {
+      const activeUntil = Number(state.activeUntil || 0);
+      if (activeUntil > Date.now()) {
+        armMainPipelineStage2Trigger06b_(60000);
+        try {
+          logLine_(
+            'INFO',
+            'MAIN_STAGE2_BUSY',
+            'Existing MAIN continuation still active',
+            'step=' + (state.activeStep || step.name) + ' activeUntil=' + state.activeUntil,
+            'INFO'
+          );
+        } catch (eBusyLog) {}
+        return { severity: 'INFO', staged: true, message: 'MAIN stage 2 already running.', step: state.nextStep || 0 };
+      }
+
+      // A timed-out Apps Script execution cannot run finally blocks, so its
+      // lease may remain in properties. Let the next worker recover the step.
       try {
         logLine_(
-          'INFO',
-          'MAIN_STAGE2_BUSY',
-          'Existing MAIN continuation still active',
-          'step=' + (state.activeStep || step.name) + ' activeUntil=' + state.activeUntil,
-          'INFO'
+          'WARN',
+          'MAIN_STAGE2_STALE_LEASE_TAKEOVER',
+          'Previous MAIN continuation lease expired; taking over checkpoint',
+          'staleRunId=' + state.activeRunId + ' step=' + (state.activeStep || step.name) + ' expiredAt=' + activeUntil,
+          'WARN'
         );
-      } catch (eBusyLog) {}
-      return { severity: 'INFO', staged: true, message: 'MAIN stage 2 already running.', step: state.nextStep || 0 };
+      } catch (eStaleLeaseLog) {}
     }
     state.activeRunId = runId;
     state.activeStep = step.name;

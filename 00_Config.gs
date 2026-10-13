@@ -1921,49 +1921,37 @@ const COLUMN_ALIGNMENT = Object.freeze({
  * -------------------------
  * Requirement: reorder these headers to the front (keep all other columns after, preserving relative order).
  */
+const RAW_DATA_CANONICAL_ORDER = Object.freeze([
+  'qoala_policy_number','claim_number','dashboard_link','days_aging_from_submission','days_aging_from_last_activity',
+  'claim_last_status_name','done_status_name','is_claim_done','claim_submitted_datetime','claim_submitted_month',
+  'last_update_datetime','product_name','holder_name','holder_phone_number','holder_email','policy_issued_datetime',
+  'policy_start_datetime','policy_end_datetime','policy_period_month','month_policy_aging','days_to_end_policies',
+  'insurance_partner_name','insurance_partner_code','imei_number','device_category','device_brand','device_type',
+  'repairer_location_store_name','repairer_location_city_name','repairer_location_province_name','sum_insured_amount',
+  'claim_amount','claim_own_risk_amount','claim_excess_fee_amount','nett_claim_amount','claim_initiate_datetime',
+  'last_activity_log_datetime','Aging Activity Log','last_activity_log_name','qoala_inquiry_start_datetime',
+  'qoala_inquiry_end_datetime','qoala_approve_cust_datetime','qoala_reject_cust_datetime','device_checkin_option_name',
+  'device_checkin_datetime','Aging Start','sc_receive_datetime','Aging SC Receive','sc_start_process_datetime',
+  'sc_end_process_datetime','qoala_approve_sc_datetime','qoala_reject_sc_datetime','ins_approve_datetime',
+  'Aging Ins Approve','ins_reject_datetime','cust_paid_deductible_fee_datetime','repair_started_datetime',
+  'replace_started_datetime','repair_done_datetime','replace_done_datetime','repair_or_replace_status',
+  'device_checkout_datetime','device_checkout_option_name','Aging Finish','claim_complete_datetime',
+  'business_partner_name','id_business_partner_category_name','pm_name','apm_name','spa_name','pa_name','outlet_name',
+  'pic_name','Aging Ask Detail','Aging Expired','Activity Log Aging','Q-L (Months)','M-L (Months)','M-Q (Months)',
+  'customer_receive_datetime','is_sla_device_checkin_done','sla_device_checkin_working_second',
+  'sla_device_checkin_calendar_second','is_sla_device_checkout_done','sla_device_checkout_working_second',
+  'sla_device_checkout_calendar_second','is_sla_device_delivery_achieved','claim_flow_name',
+  'insurance_claim_approve_datetime','insurance_claim_paid_datetime','is_sla_insurance_claim_approve_done',
+  'sla_reimburse_insurance_claim_approve_working_second','sla_reimburse_insurance_claim_approve_calendar_second',
+  'is_sla_reimburse_insurance_paid_done','sla_reimburse_insurance_paid_working_second',
+  'sla_reimburse_insurance_paid_calendar_second','claim_flow_name_dashboard_view',
+  'id_business_partner_category_name__2','Update Status','Timestamp','Status','Type','OR','Remarks','AWB','Timestamp AWB'
+]);
+
 const RAW_DATA_REORDER_POLICY = Object.freeze({
-  // Disabled by default to preserve custom tail columns on the far-right of Raw Data.
-  ENABLE: getPropBool_('RAW_DATA_REORDER_ENABLE', false),
+  ENABLE: true,
   SHEET_NAME: 'Raw Data',
-  PRIORITY_HEADERS: Object.freeze([
-    
-    'qoala_policy_number',
-    'source_system_name',
-    'claim_number',
-    'claim_submitted_datetime',
-    'claim_submitted_month',
-    'policy_start_datetime',
-    'policy_end_datetime',
-    'policy_issued_datetime',
-    'claim_last_status_name',
-    'last_update_datetime',
-    'claim_last_updated_datetime',
-    'month_policy_aging',
-    'days_aging_from_last_activity',
-    'last_activity_log_datetime',
-    'last_activity_log_name',
-    'days_to_end_policies',
-    'business_partner_name',
-    'id_business_partner_category_name',
-    'pm_name',
-    'apm_name',
-    'insurance_partner_name',
-    'insurance_partner_code',
-    'dashboard_link',
-    'repairer_location_store_name',
-    'repairer_location_city_name',
-    'device_type',
-    'device_checkin_option_name',
-    'device_checkout_option_name',
-    'device_checkout_datetime',
-    'device_brand',
-    'imei_number',
-    'sum_insured_amount',
-    'claim_amount',
-    'claim_own_risk_amount',
-    'nett_claim_amount'
-  
-  ])
+  PRIORITY_HEADERS: RAW_DATA_CANONICAL_ORDER
 });
 
 
