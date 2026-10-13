@@ -1141,6 +1141,44 @@ function runEmailIngest(maxThreads) {
   }
 }
 
+/**
+ * Explicit manual MAIN email runner.
+ * This intentionally bypasses the scheduled date guard so operators can
+ * replay/test the queued MAIN email from the Apps Script editor.
+ */
+function runMainEmailManual() {
+  return runEmailIngest(1);
+}
+
+/**
+ * Scheduled MAIN wrapper.
+ * Apps Script's atHour() may run anywhere inside the hour, so the installed
+ * 5-minute polling trigger is accepted only during the configured 06:00-06:15 window.
+ */
+function runScheduledMainIngest() {
+  const tz = (typeof getTzSafe_ === 'function') ? getTzSafe_() : (Session.getScriptTimeZone() || 'Asia/Jakarta');
+  const now = new Date();
+  const hour = Number(Utilities.formatDate(now, tz, 'H'));
+  const minute = Number(Utilities.formatDate(now, tz, 'm'));
+  const windowMinutes = Number(FLOW_SCHEDULE_POLICY.MAIN_WINDOW_MINUTES || 15);
+  if (hour !== Number(FLOW_SCHEDULE_POLICY.MAIN_HOUR) || minute >= windowMinutes) {
+    return { severity: 'INFO', message: 'MAIN schedule outside execution window.', skipped: true, hour: hour, minute: minute };
+  }
+
+  const props = PropertiesService.getScriptProperties();
+  const dateKey = Utilities.formatDate(now, tz, 'yyyy-MM-dd');
+  const guardKey = 'MAIN_SCHEDULE_LAST_RUN_DATE';
+  if (String(props.getProperty(guardKey) || '') === dateKey) {
+    return { severity: 'INFO', message: 'MAIN schedule already consumed for date.', skipped: true, date: dateKey };
+  }
+
+  const result = runEmailIngest(1);
+  if (result && Number(result.processed || 0) > 0 && !result.staged && String(result.severity || 'INFO').toUpperCase() !== 'ERROR') {
+    props.setProperty(guardKey, dateKey);
+  }
+  return result;
+}
+
 
 /** =========================
  * SUB email ingest (QUEUED_SUB, hourly except 06:00)
@@ -3357,14 +3395,14 @@ function __sortOperationalSheetsSub06a_(ss, sheetNames, sortSpecs) {
 
 
 function installEmailIngestTrigger() {
-  // MAIN: daily at 06:00 (script timezone)
+  // MAIN: poll every 5 minutes; the wrapper accepts only 06:00-06:15.
   const triggers = ScriptApp.getProjectTriggers();
   triggers.forEach(t => {
-    if (t.getHandlerFunction && t.getHandlerFunction() === 'runEmailIngest') {
+    if (t.getHandlerFunction && ['runEmailIngest', 'runScheduledMainIngest'].indexOf(t.getHandlerFunction()) >= 0) {
       ScriptApp.deleteTrigger(t);
     }
   });
-  ScriptApp.newTrigger('runEmailIngest').timeBased().everyDays(1).atHour(FLOW_SCHEDULE_POLICY.MAIN_HOUR).create();
+  ScriptApp.newTrigger('runScheduledMainIngest').timeBased().everyMinutes(5).create();
 }
 
 /** Public Apps Script editor entry point for a failed MAIN stage-2 checkpoint. */

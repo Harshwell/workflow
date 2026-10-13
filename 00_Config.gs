@@ -212,6 +212,7 @@ const GMAIL_QUEUE_LABELS = Object.freeze({
 
 const FLOW_SCHEDULE_POLICY = Object.freeze({
   MAIN_HOUR: 6,
+  MAIN_WINDOW_MINUTES: 15,
   SUB_HANDOFF_OFFSET_HOURS: 1
 });
 
