@@ -3075,9 +3075,15 @@ function isRawDataReorderDisabled06_() {
 }
 
 function reorderRawDataColumns06_(rawSheet) {
-  // Raw Data mirrors the uploaded Excel layout and is a source-of-truth sheet.
-  // Keep this legacy entry point inert so no caller can move its columns.
-  return 0;
+  if (isRawDataReorderDisabled06_()) return 0;
+  if (!rawSheet) return 0;
+  const lastCol = rawSheet.getLastColumn ? rawSheet.getLastColumn() : 0;
+  if (!lastCol || lastCol < 2) return 0;
+
+  const headers = rawSheet.getRange(1, 1, 1, lastCol).getValues()[0]
+    .map(__normalizeHeaderText06_);
+  const desired = getRawDataReorderPriority06_();
+  return reorderColumnsByHeaderPriority06_(rawSheet, headers, desired);
 }
 
 function reorderColumnsByHeaderPriority06_(sheet, headers, desiredHeaders) {
